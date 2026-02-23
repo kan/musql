@@ -1,6 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use mysql::{prelude::Queryable, OptsBuilder, Pool, Row, Value};
+use mysql::{prelude::Queryable, OptsBuilder, Pool, Row, SslOpts, Value};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::io;
@@ -16,6 +16,10 @@ struct MySqlConfig {
   database: Option<String>,
   username: String,
   password: String,
+  #[serde(default)]
+  tls_enabled: bool,
+  #[serde(default)]
+  tls_skip_verify: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -65,6 +69,16 @@ fn build_opts(mysql: &MySqlConfig, host: &str, port: u16) -> OptsBuilder {
     if !db.trim().is_empty() {
       builder = builder.db_name(Some(db.clone()));
     }
+  }
+
+  if mysql.tls_enabled {
+    let mut ssl_opts = SslOpts::default();
+    if mysql.tls_skip_verify {
+      ssl_opts = ssl_opts
+        .with_danger_accept_invalid_certs(true)
+        .with_danger_skip_domain_validation(true);
+    }
+    builder = builder.ssl_opts(Some(ssl_opts));
   }
 
   builder

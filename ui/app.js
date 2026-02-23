@@ -14,6 +14,8 @@ function collectRequest() {
       database: document.getElementById("mysql-db").value.trim() || null,
       username: document.getElementById("mysql-user").value.trim(),
       password: document.getElementById("mysql-pass").value,
+      tls_enabled: document.getElementById("mysql-tls").checked,
+      tls_skip_verify: document.getElementById("mysql-tls-skip").checked,
     },
     ssh: {
       enabled: sshEnabled,
