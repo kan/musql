@@ -34,8 +34,8 @@
 - `run_query` は任意SQLを実行して列名＋行＋`affected_rows` を返却。
 - 返却はJSON文字列としてUIの `pre` に表示。
 - `ssh.private_key_path` は任意。基本は `ssh-agent` 利用想定。
+- README に TLS 有効化/検証スキップの使い方が追記済み。
 
 ## Limits / defaults
 - 結果行は最大500件まで。
 - SSHトンネル確立待ちタイムアウトは8秒。
-
