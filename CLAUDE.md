@@ -72,6 +72,11 @@
 
 - 設定のパスワードを安全に保存
 - SQL実行の多重クリック抑止
+- SQL入力のSQL整形
+- Tableタブの機能強化
+  - カラム毎のソート対応
+  - 1行を見易く表示
+  - BLOBカラムの取得と表示を回避する機能
 - 見た目の強化
   - ダークモード対応
   - i18n対応
@@ -90,6 +95,16 @@
 ## Strategy
 - パスワード安全保存: OS のキーチェーン（Windows Credential Manager）を利用。Tauri プラグインまたは `keyring` クレートで profile ID をキーにしてパスワードを保存。`connections.json` にはパスワードを含めない。
 - SQL 多重クリック抑止: 実行ボタンを実行中 disabled にし、完了/エラー後に復帰。
+- SQL 整形: `sql-formatter` ライブラリ（UMD スタンドアロンビルド）を vendor して `ui/lib/` に配置。エディタ上にフォーマットボタンを追加、選択範囲またはエディタ全体を整形。Node.js 不要。
+- Table タブ機能強化:
+  - カラムソート: `<th>` クリックで ASC/DESC トグル。JS 側でメモリ上の行データを sort して再描画。ソートインジケータ（▲▼）を表示。
+  - 1 行詳細表示: 行クリックでモーダルまたはサイドパネルに key-value 形式で表示。長テキスト・JSON を折り返し表示。
+  - BLOB 回避: `INFORMATION_SCHEMA.COLUMNS` で BLOB/BINARY 型カラムを検出。Data タブの SELECT 生成時にそのカラムを `'(BLOB)' AS col` に置換。オプションでトグル可能に。
+- ダークモード: CSS 変数を light/dark で切り替え。`prefers-color-scheme` メディアクエリ + 手動切替トグル。設定を localStorage に保存。
+- i18n: 簡易 i18n。`ui/i18n/ja.json`, `ui/i18n/en.json` で言語リソース管理。`t('key')` ヘルパーで文字列取得。localStorage で言語選択を保存。HTML 上のテキストは data 属性または JS で差し替え。
+- アイコン: 軽量 SVG アイコンセット（Lucide 等）を vendor。ボタンやメニューにインライン SVG で適用。
+- favicon: アプリロゴの SVG を作成し `<link rel="icon">` に設定。Tauri ウィンドウアイコン (`tauri.conf.json` の `icon`) も同時に更新。
 - 接続設定インポート/エクスポート: JSON 形式でファイル書き出し/読み込み。`pick_file` / `export_file` を再利用。パスワードを含めるかはオプション。
 - Docker MySQL: `docker ps` でコンテナ一覧を取得し、MySQL コンテナを検出。ポートマッピングから接続先を自動入力。
-- ダークモード: CSS 変数を light/dark で切り替え。`prefers-color-scheme` メディアクエリ + 手動切替トグル。
+- ビルド・配布: `cargo tauri build` で MSI/NSIS インストーラー生成。GitHub Actions で CI 自動ビルド。GitHub Releases で配布。
+- クロスプラットフォーム: macOS/Linux 動作確認。SSH バイナリパス分岐は `cfg!(target_os)` で既に対応済み。CI でマルチプラットフォームビルドを追加。
