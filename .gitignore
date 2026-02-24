@@ -2,3 +2,4 @@ src-tauri/target/
 **/.DS_Store
 rustup-init.exe
 src-tauri/gen/
+.claude/settings.local.json
