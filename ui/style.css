@@ -137,6 +137,14 @@ button.danger {
   background: #d24a4a;
 }
 
+button.success {
+  background: #27ae60;
+}
+
+button.info {
+  background: #2980b9;
+}
+
 button.ghost {
   background: #eef2f7;
   color: var(--ink);
@@ -667,4 +675,167 @@ pre {
   align-items: center;
   gap: 6px;
   margin-left: auto;
+}
+
+/* ── Color palette (settings) ── */
+.color-palette {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+.color-dot {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: transform 0.1s, border-color 0.15s, box-shadow 0.15s;
+  flex-shrink: 0;
+}
+.color-dot:hover {
+  transform: scale(1.15);
+}
+.color-dot.active {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 2px rgba(0, 97, 213, 0.35);
+}
+.color-dot-none {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid var(--line);
+  background: #e9ecf0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--sub);
+  flex-shrink: 0;
+  transition: transform 0.1s, border-color 0.15s;
+}
+.color-dot-none:hover {
+  transform: scale(1.15);
+}
+.color-dot-none.active {
+  border-color: var(--ink);
+}
+
+/* ── Tag input (settings) ── */
+.tag-input-wrapper {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: #fff;
+  position: relative;
+  min-height: 38px;
+}
+.tag-input-wrapper input {
+  border: none;
+  outline: none;
+  padding: 2px 4px;
+  flex: 1;
+  min-width: 80px;
+  font-size: 13px;
+  background: transparent;
+}
+.tag-chips {
+  display: contents;
+}
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #e4eaf3;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.tag-chip-remove {
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--sub);
+  border-radius: 2px;
+  padding: 0 2px;
+}
+.tag-chip-remove:hover {
+  color: #d24a4a;
+}
+.tag-suggestions {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  max-height: 160px;
+  overflow-y: auto;
+  margin-top: 2px;
+}
+.tag-suggestion-item {
+  padding: 6px 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.tag-suggestion-item:hover,
+.tag-suggestion-item.active {
+  background: #eef2f7;
+}
+
+/* ── Tag filter bar (main) ── */
+.tag-filter-bar {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+.tag-filter-chip {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 12px;
+  background: #e4eaf3;
+  color: var(--sub);
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s, color 0.15s;
+}
+.tag-filter-chip:hover {
+  background: #d4dced;
+}
+.tag-filter-chip.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* ── Tree item color bar & tags (main) ── */
+.tree-item-color-bar {
+  width: 4px;
+  align-self: stretch;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.tree-item-tags {
+  display: flex;
+  gap: 4px;
+  margin-top: 2px;
+  flex-wrap: wrap;
+}
+.tree-item-tag {
+  font-size: 11px;
+  background: #e4eaf3;
+  border-radius: 3px;
+  padding: 1px 5px;
+  color: var(--sub);
+  white-space: nowrap;
 }

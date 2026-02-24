@@ -16,6 +16,19 @@
         <div class="grid">
           <label>Profile name <input id="profile-name" placeholder="e.g. prod/analytics" /></label>
         </div>
+        <div class="color-picker-row" style="margin-top: 12px">
+          <label>Color</label>
+          <div id="color-palette" class="color-palette"></div>
+        </div>
+        <div class="tag-input-row" style="margin-top: 12px">
+          <label>Tags
+            <div class="tag-input-wrapper">
+              <div id="tag-chips" class="tag-chips"></div>
+              <input id="tag-input" placeholder="Add tag..." autocomplete="off" />
+              <div id="tag-suggestions" class="tag-suggestions hidden"></div>
+            </div>
+          </label>
+        </div>
       </section>
 
       <section class="panel">
@@ -68,7 +81,8 @@
         </div>
       </section>
       <div class="actions actions-right">
-        <button id="test-btn">接続テスト</button>
+        <button id="test-btn" class="info">接続テスト</button>
+        <button id="connect-btn" class="success">接続</button>
         <button id="profile-save">保存</button>
         <button id="profile-cancel" class="ghost">キャンセル</button>
         <button id="profile-delete" class="danger">削除</button>

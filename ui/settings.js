@@ -8,6 +8,7 @@ const testBtn = document.getElementById("test-btn");
 const saveBtn = document.getElementById("profile-save");
 const cancelBtn = document.getElementById("profile-cancel");
 const deleteBtn = document.getElementById("profile-delete");
+const connectBtn = document.getElementById("connect-btn");
 const sshConfigHostSelect = document.getElementById("ssh-config-host");
 const sshEnabledCheck = document.getElementById("ssh-enabled");
 const sshFieldsDiv = document.getElementById("ssh-fields");
@@ -21,6 +22,158 @@ const sshKeyBrowseBtn = document.getElementById("ssh-key-browse");
 let selectedProfileId = "";
 let selectedGroupId = null;
 let selectedOrder = 0;
+
+// ── Color / Tag state ──
+const COLOR_PALETTE = [
+  { name: "red", value: "#d24a4a" },
+  { name: "orange", value: "#e67e22" },
+  { name: "yellow", value: "#f1c40f" },
+  { name: "green", value: "#27ae60" },
+  { name: "teal", value: "#1abc9c" },
+  { name: "blue", value: "#2980b9" },
+  { name: "purple", value: "#8e44ad" },
+  { name: "pink", value: "#e84393" },
+];
+const PRESET_TAGS = ["production", "staging", "development", "local", "test"];
+let selectedColor = null;
+let selectedTags = [];
+let allExistingTags = [];
+
+const colorPaletteEl = document.getElementById("color-palette");
+const tagChipsEl = document.getElementById("tag-chips");
+const tagInputEl = document.getElementById("tag-input");
+const tagSuggestionsEl = document.getElementById("tag-suggestions");
+
+function renderColorPalette() {
+  colorPaletteEl.innerHTML = "";
+  // None button
+  const none = document.createElement("span");
+  none.className = "color-dot-none" + (selectedColor == null ? " active" : "");
+  none.textContent = "\u00D7";
+  none.title = "None";
+  none.addEventListener("click", () => { selectedColor = null; renderColorPalette(); });
+  colorPaletteEl.appendChild(none);
+  // Color dots
+  COLOR_PALETTE.forEach((c) => {
+    const dot = document.createElement("span");
+    dot.className = "color-dot" + (selectedColor === c.value ? " active" : "");
+    dot.style.backgroundColor = c.value;
+    dot.title = c.name;
+    dot.addEventListener("click", () => {
+      selectedColor = c.value;
+      renderColorPalette();
+    });
+    colorPaletteEl.appendChild(dot);
+  });
+}
+
+function renderTagChips() {
+  tagChipsEl.innerHTML = "";
+  selectedTags.forEach((tag) => {
+    const chip = document.createElement("span");
+    chip.className = "tag-chip";
+    chip.textContent = tag;
+    const rm = document.createElement("span");
+    rm.className = "tag-chip-remove";
+    rm.textContent = "\u00D7";
+    rm.addEventListener("click", () => {
+      selectedTags = selectedTags.filter((t) => t !== tag);
+      renderTagChips();
+    });
+    chip.appendChild(rm);
+    tagChipsEl.appendChild(chip);
+  });
+}
+
+function addTag(tag) {
+  const t = tag.trim().toLowerCase();
+  if (!t || selectedTags.includes(t)) return;
+  selectedTags.push(t);
+  renderTagChips();
+  tagInputEl.value = "";
+  hideSuggestions();
+}
+
+function hideSuggestions() {
+  tagSuggestionsEl.classList.add("hidden");
+  tagSuggestionsEl.innerHTML = "";
+  suggestIndex = -1;
+}
+
+let suggestIndex = -1;
+
+function showSuggestions(query) {
+  const q = query.trim().toLowerCase();
+  // Merge preset + existing, deduplicate
+  const pool = [...new Set([...PRESET_TAGS, ...allExistingTags])];
+  const candidates = pool.filter((t) => !selectedTags.includes(t) && (!q || t.includes(q)));
+  if (candidates.length === 0) { hideSuggestions(); return; }
+
+  tagSuggestionsEl.innerHTML = "";
+  suggestIndex = -1;
+  candidates.forEach((t) => {
+    const el = document.createElement("div");
+    el.className = "tag-suggestion-item";
+    el.textContent = t;
+    el.addEventListener("mousedown", (e) => { e.preventDefault(); addTag(t); });
+    tagSuggestionsEl.appendChild(el);
+  });
+  tagSuggestionsEl.classList.remove("hidden");
+}
+
+tagInputEl.addEventListener("input", () => {
+  showSuggestions(tagInputEl.value);
+});
+
+tagInputEl.addEventListener("focus", () => {
+  showSuggestions(tagInputEl.value);
+});
+
+tagInputEl.addEventListener("blur", () => {
+  // Delay to allow mousedown on suggestion
+  setTimeout(hideSuggestions, 150);
+});
+
+tagInputEl.addEventListener("keydown", (e) => {
+  const items = tagSuggestionsEl.querySelectorAll(".tag-suggestion-item");
+
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    suggestIndex = Math.min(suggestIndex + 1, items.length - 1);
+    items.forEach((el, i) => el.classList.toggle("active", i === suggestIndex));
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    suggestIndex = Math.max(suggestIndex - 1, 0);
+    items.forEach((el, i) => el.classList.toggle("active", i === suggestIndex));
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    if (suggestIndex >= 0 && items[suggestIndex]) {
+      addTag(items[suggestIndex].textContent);
+    } else if (tagInputEl.value.trim()) {
+      addTag(tagInputEl.value);
+    }
+  } else if (e.key === ",") {
+    e.preventDefault();
+    if (tagInputEl.value.trim()) addTag(tagInputEl.value);
+  } else if (e.key === "Backspace" && !tagInputEl.value) {
+    selectedTags.pop();
+    renderTagChips();
+  }
+});
+
+async function loadAllExistingTags() {
+  try {
+    const data = await safeInvoke("list_profiles");
+    const tags = new Set();
+    data.items.forEach((item) => {
+      if (item.tags) item.tags.forEach((t) => tags.add(t));
+    });
+    allExistingTags = [...tags];
+  } catch (_) {}
+}
+
+renderColorPalette();
+renderTagChips();
 
 function show(value) {
   const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
@@ -146,12 +299,20 @@ async function loadProfile(id) {
   saveBtn.disabled = !profile.name.trim();
   selectedGroupId = profile.group_id || null;
   selectedOrder = profile.order || 0;
+  selectedColor = profile.color || null;
+  selectedTags = Array.isArray(profile.tags) ? [...profile.tags] : [];
+  renderColorPalette();
+  renderTagChips();
   applyRequest(profile.request);
   return profile;
 }
 
 function clearForm() {
   profileNameInput.value = "";
+  selectedColor = null;
+  selectedTags = [];
+  renderColorPalette();
+  renderTagChips();
   applyRequest({
     mysql: {
       host: "127.0.0.1",
@@ -196,6 +357,8 @@ saveBtn.addEventListener("click", async () => {
       name,
       group_id: selectedGroupId,
       order: selectedOrder,
+      color: selectedColor || null,
+      tags: selectedTags,
       request: collectRequest(),
     };
     await safeInvoke("save_profile", { profile });
@@ -217,6 +380,16 @@ deleteBtn.addEventListener("click", async () => {
   }
 });
 
+connectBtn.addEventListener("click", async () => {
+  if (!selectedProfileId) return;
+  try {
+    await safeInvoke("open_query_window", { id: selectedProfileId });
+    await safeInvoke("hide_window");
+  } catch (error) {
+    show(String(error));
+  }
+});
+
 cancelBtn.addEventListener("click", async () => {
   await safeInvoke("hide_window");
 });
@@ -228,18 +401,23 @@ profileNameInput.addEventListener("input", () => {
 clearForm();
 saveBtn.disabled = true;
 deleteBtn.disabled = true;
+connectBtn.disabled = true;
 
 if (eventApi && eventApi.listen) {
   eventApi.listen("settings:open", (event) => {
-    const id = event.payload || "";
+    const payload = event.payload || {};
+    const id = (typeof payload === "string") ? payload : (payload.id || "");
+    const groupId = (typeof payload === "object" && payload !== null) ? (payload.group_id || null) : null;
     selectedProfileId = id;
     deleteBtn.disabled = !selectedProfileId;
+    connectBtn.disabled = !selectedProfileId;
     show("");
-    loadSshConfigHosts().then(() => {
+    Promise.all([loadSshConfigHosts(), loadAllExistingTags()]).then(() => {
       if (selectedProfileId) {
         loadProfile(selectedProfileId).catch((error) => show(String(error)));
       } else {
         clearForm();
+        selectedGroupId = groupId;
       }
     });
   });

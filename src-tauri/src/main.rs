@@ -66,6 +66,10 @@ struct ConnectionProfile {
   group_id: Option<String>,
   #[serde(default)]
   order: u32,
+  #[serde(default)]
+  color: Option<String>,
+  #[serde(default)]
+  tags: Vec<String>,
   request: ConnectionRequest,
 }
 
@@ -740,6 +744,8 @@ fn duplicate_profile(app: AppHandle, id: String) -> Result<ProfileListResponse, 
     name: format!("{} (copy)", source.name),
     group_id: source.group_id,
     order: max_order + 1000,
+    color: source.color,
+    tags: source.tags,
     request: source.request,
   };
   store.items.push(new_profile);
@@ -789,12 +795,12 @@ fn reorder(
 }
 
 #[tauri::command]
-fn open_settings_window(app: AppHandle, id: Option<String>) -> Result<(), String> {
+fn open_settings_window(app: AppHandle, id: Option<String>, group_id: Option<String>) -> Result<(), String> {
   let window = app
     .get_webview_window("settings")
     .ok_or("Settings window not found")?;
   window
-    .emit("settings:open", id)
+    .emit("settings:open", json!({ "id": id, "group_id": group_id }))
     .map_err(|e| format!("Failed to send settings event: {e}"))?;
   window
     .show()

@@ -7,10 +7,12 @@ const profileNewBtn = document.getElementById("profile-new");
 const groupNewBtn = document.getElementById("group-new");
 const contextMenuEl = document.getElementById("context-menu");
 const filterInput = document.getElementById("filter-input");
+const tagFilterBarEl = document.getElementById("tag-filter-bar");
 
 let profileData = { groups: [], items: [] };
 let collapsedGroups = JSON.parse(localStorage.getItem("musql:collapsed") || "{}");
 let dragState = null; // { type: "item"|"group", id }
+let activeFilterTag = null;
 
 async function safeInvoke(command, payload) {
   if (!invoke) {
@@ -42,6 +44,14 @@ function buildItemNode(item) {
   el.dataset.id = item.id;
   el.draggable = true;
 
+  // Color bar
+  if (item.color) {
+    const bar = document.createElement("div");
+    bar.className = "tree-item-color-bar";
+    bar.style.backgroundColor = item.color;
+    el.appendChild(bar);
+  }
+
   const meta = document.createElement("div");
   meta.className = "meta";
   const nameEl = document.createElement("div");
@@ -52,6 +62,20 @@ function buildItemNode(item) {
   hintEl.textContent = getItemHint(item);
   meta.appendChild(nameEl);
   meta.appendChild(hintEl);
+
+  // Tag badges
+  if (item.tags && item.tags.length > 0) {
+    const tagsEl = document.createElement("div");
+    tagsEl.className = "tree-item-tags";
+    item.tags.forEach((tag) => {
+      const badge = document.createElement("span");
+      badge.className = "tree-item-tag";
+      badge.textContent = tag;
+      tagsEl.appendChild(badge);
+    });
+    meta.appendChild(tagsEl);
+  }
+
   el.appendChild(meta);
 
   // Double-click → open query
@@ -129,6 +153,8 @@ function buildGroupNode(group, children, forceExpand) {
     e.preventDefault();
     e.stopPropagation();
     showContextMenu(e, [
+      { label: "設定を追加", action: () => openSettings("", group.id) },
+      { separator: true },
       { label: "リネーム", action: () => renameGroup(group.id, group.name) },
       { label: "削除", danger: true, action: () => deleteGroup(group.id) },
     ]);
@@ -160,18 +186,50 @@ function buildGroupNode(group, children, forceExpand) {
 }
 
 function itemMatchesFilter(item, query) {
+  // Tag filter chip
+  if (activeFilterTag) {
+    if (!item.tags || !item.tags.includes(activeFilterTag)) return false;
+  }
   if (!query) return true;
   const q = query.toLowerCase();
-  return item.name.toLowerCase().includes(q) || getItemHint(item).toLowerCase().includes(q);
+  if (item.name.toLowerCase().includes(q)) return true;
+  if (getItemHint(item).toLowerCase().includes(q)) return true;
+  if (item.tags && item.tags.some((t) => t.toLowerCase().includes(q))) return true;
+  return false;
+}
+
+function renderTagFilterBar() {
+  tagFilterBarEl.innerHTML = "";
+  const tags = new Set();
+  (profileData.items || []).forEach((item) => {
+    if (item.tags) item.tags.forEach((t) => tags.add(t));
+  });
+  if (tags.size === 0) {
+    tagFilterBarEl.classList.add("hidden");
+    return;
+  }
+  tagFilterBarEl.classList.remove("hidden");
+  [...tags].sort().forEach((tag) => {
+    const chip = document.createElement("span");
+    chip.className = "tag-filter-chip" + (activeFilterTag === tag ? " active" : "");
+    chip.textContent = tag;
+    chip.addEventListener("click", () => {
+      activeFilterTag = activeFilterTag === tag ? null : tag;
+      renderTagFilterBar();
+      renderTree();
+    });
+    tagFilterBarEl.appendChild(chip);
+  });
 }
 
 function renderTree() {
   treeEl.innerHTML = "";
+  renderTagFilterBar();
 
   const groups = profileData.groups || [];
   const items = profileData.items || [];
   const query = filterInput.value.trim();
-  const filtering = query.length > 0;
+  const filtering = query.length > 0 || activeFilterTag != null;
 
   // Build top-level entries: root items (group_id == null) and groups, interleaved by order
   const rootItems = items.filter((it) => !it.group_id && itemMatchesFilter(it, query));
@@ -198,8 +256,8 @@ function renderTree() {
 
 // ── Actions ──
 
-function openSettings(id) {
-  safeInvoke("open_settings_window", { id: id || null })
+function openSettings(id, groupId) {
+  safeInvoke("open_settings_window", { id: id || null, groupId: groupId || null })
     .catch((error) => alert(String(error)));
 }
 
