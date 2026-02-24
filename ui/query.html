@@ -4,28 +4,42 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>muSQL Query</title>
-    <link rel="stylesheet" href="./style.css?v=3" />
+    <link rel="stylesheet" href="./style.css?v=4" />
   </head>
   <body>
-    <main>
-      <h1>Query</h1>
-      <p class="subtitle">Run SQL for selected connection</p>
+    <!-- DB selection modal -->
+    <div id="db-modal" class="modal-overlay hidden">
+      <div class="modal-box">
+        <h2>Select Database</h2>
+        <div id="db-list" class="db-list"></div>
+        <p id="db-modal-status" class="modal-status"></p>
+      </div>
+    </div>
 
-      <section class="panel split">
-        <div class="split-top">
-          <h2>Query</h2>
-          <textarea id="query">SELECT VERSION();</textarea>
-          <div class="actions">
-            <button id="run-btn">クエリ実行</button>
-          </div>
+    <!-- Explorer -->
+    <div id="explorer" class="explorer hidden">
+      <!-- Sidebar -->
+      <div class="sidebar">
+        <div class="sidebar-header">
+          <span id="sidebar-db-name" class="sidebar-db-name"></span>
+          <button id="db-switch-btn" class="ghost sidebar-btn" title="DB 切替">&#x21C4;</button>
         </div>
-        <div class="split-bottom">
-          <h2>Result</h2>
-          <pre id="result"></pre>
-        </div>
-      </section>
-    </main>
+        <div id="table-list" class="table-list"></div>
+      </div>
 
-    <script src="./query.js?v=3"></script>
+      <!-- Main pane -->
+      <div class="main-pane">
+        <div class="tab-bar">
+          <div id="tab-bar-tabs" class="tab-bar-tabs"></div>
+          <button id="tab-add-btn" class="tab-add-btn" title="SQL タブ追加">+</button>
+        </div>
+        <div id="tab-content" class="tab-content"></div>
+      </div>
+    </div>
+
+    <!-- Context menu -->
+    <div id="context-menu" class="context-menu hidden"></div>
+
+    <script src="./query.js?v=4"></script>
   </body>
 </html>
