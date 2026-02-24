@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>muSQL Settings</title>
+    <link rel="stylesheet" href="./style.css?v=3" />
+  </head>
+  <body>
+    <main>
+      <h1>Settings</h1>
+      <p class="subtitle">Connection profile</p>
+
+      <section class="panel">
+        <h2>General</h2>
+        <div class="grid">
+          <label>Profile name <input id="profile-name" placeholder="e.g. prod/analytics" /></label>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>MySQL</h2>
+        <div class="grid">
+          <label>Host <input id="mysql-host" value="127.0.0.1" /></label>
+          <label>Port <input id="mysql-port" type="number" value="3306" /></label>
+          <label>Database <input id="mysql-db" placeholder="optional" /></label>
+          <label>User <input id="mysql-user" value="root" /></label>
+          <label>Password <input id="mysql-pass" type="password" /></label>
+          <label class="checkbox"><input id="mysql-tls" type="checkbox" /> TLS を使用</label>
+          <label class="checkbox"><input id="mysql-tls-skip" type="checkbox" /> TLS証明書検証をスキップ</label>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>SSH Bastion</h2>
+        <div class="grid">
+          <label class="checkbox"><input id="ssh-enabled" type="checkbox" /> Enable</label>
+          <label>Host <input id="ssh-host" placeholder="bastion.example.com" /></label>
+          <label>Port <input id="ssh-port" type="number" value="22" /></label>
+          <label>User <input id="ssh-user" placeholder="ec2-user" /></label>
+          <label>IdentityFile <input id="ssh-key" placeholder="~/.ssh/id_ed25519.pub" /></label>
+        </div>
+      </section>
+      <div class="actions actions-right">
+        <button id="test-btn">接続テスト</button>
+        <button id="profile-save">保存</button>
+        <button id="profile-cancel" class="ghost">キャンセル</button>
+        <button id="profile-delete" class="danger">削除</button>
+      </div>
+      <pre id="result" class="log" hidden></pre>
+    </main>
+
+    <script src="./settings.js?v=3"></script>
+  </body>
+</html>

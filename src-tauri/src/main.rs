@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager, Window};
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 struct MySqlConfig {
@@ -149,25 +149,24 @@ fn find_free_port() -> Result<u16, String> {
   Ok(addr.port())
 }
 
-fn wait_for_local_port(port: u16, timeout: Duration) -> Result<(), String> {
-  let deadline = Instant::now() + timeout;
-  let addr: SocketAddr = format!("127.0.0.1:{port}")
-    .parse()
-    .map_err(|e| format!("Invalid local address: {e}"))?;
 
-  while Instant::now() < deadline {
-    match TcpStream::connect_timeout(&addr, Duration::from_millis(200)) {
-      Ok(_) => return Ok(()),
-      Err(_) => thread::sleep(Duration::from_millis(120)),
+fn find_ssh_bin() -> String {
+  if cfg!(target_os = "windows") {
+    // Prefer Windows built-in OpenSSH over Git-bundled ssh.exe
+    // because 1Password SSH agent only works with the Windows version.
+    let system_ssh = PathBuf::from(r"C:\Windows\System32\OpenSSH\ssh.exe");
+    if system_ssh.exists() {
+      return system_ssh.to_string_lossy().into_owned();
     }
+    "ssh.exe".to_string()
+  } else {
+    "ssh".to_string()
   }
-
-  Err("SSH tunnel start timed out. Ensure ssh-agent is running and key is loaded.".to_string())
 }
 
 fn start_ssh_tunnel(ssh: &SshConfig, mysql_host: &str, mysql_port: u16) -> Result<SshTunnel, String> {
   let local_port = find_free_port()?;
-  let ssh_bin = if cfg!(target_os = "windows") { "ssh.exe" } else { "ssh" };
+  let ssh_bin = find_ssh_bin();
 
   let mut args: Vec<String> = vec![
     "-N".to_string(),
@@ -185,15 +184,17 @@ fn start_ssh_tunnel(ssh: &SshConfig, mysql_host: &str, mysql_port: u16) -> Resul
 
   if let Some(key) = &ssh.private_key_path {
     if !key.trim().is_empty() {
-      args.push("-i".to_string());
-      args.push(key.clone());
+      args.push("-o".to_string());
+      args.push("IdentitiesOnly=yes".to_string());
+      args.push("-o".to_string());
+      args.push(format!("IdentityFile={key}"));
     }
   }
 
   args.push(format!("{}@{}", ssh.username, ssh.host));
 
-  let child = Command::new(ssh_bin)
-    .args(args)
+  let mut child = Command::new(&ssh_bin)
+    .args(&args)
     .stdin(Stdio::null())
     .stdout(Stdio::null())
     .stderr(Stdio::piped())
@@ -204,9 +205,44 @@ fn start_ssh_tunnel(ssh: &SshConfig, mysql_host: &str, mysql_port: u16) -> Resul
       )
     })?;
 
-  let tunnel = SshTunnel { child, local_port };
-  wait_for_local_port(local_port, Duration::from_secs(8))?;
-  Ok(tunnel)
+  let deadline = Instant::now() + Duration::from_secs(8);
+  let addr: SocketAddr = format!("127.0.0.1:{local_port}")
+    .parse()
+    .map_err(|e| format!("Invalid local address: {e}"))?;
+
+  while Instant::now() < deadline {
+    if let Ok(Some(status)) = child.try_wait() {
+      let stderr_msg = read_child_stderr(&mut child);
+      return Err(format!(
+        "SSH process exited with {status}. cmd: {ssh_bin} {}\nstderr: {stderr_msg}",
+        args.join(" ")
+      ));
+    }
+    match TcpStream::connect_timeout(&addr, Duration::from_millis(200)) {
+      Ok(_) => return Ok(SshTunnel { child, local_port }),
+      Err(_) => thread::sleep(Duration::from_millis(120)),
+    }
+  }
+
+  let stderr_msg = read_child_stderr(&mut child);
+  let _ = child.kill();
+  let _ = child.wait();
+  Err(format!(
+    "SSH tunnel timed out. cmd: {ssh_bin} {}\nstderr: {stderr_msg}",
+    args.join(" ")
+  ))
+}
+
+fn read_child_stderr(child: &mut Child) -> String {
+  use std::io::Read;
+  child
+    .stderr
+    .take()
+    .and_then(|mut s| {
+      let mut buf = String::new();
+      s.read_to_string(&mut buf).ok().map(|_| buf)
+    })
+    .unwrap_or_default()
 }
 
 fn with_connection<R, F>(request: ConnectionRequest, f: F) -> Result<R, String>
@@ -343,14 +379,66 @@ fn delete_profile(app: AppHandle, id: String) -> Result<Vec<ConnectionProfile>, 
   Ok(store.items)
 }
 
+#[tauri::command]
+fn open_settings_window(app: AppHandle, id: Option<String>) -> Result<(), String> {
+  let window = app
+    .get_webview_window("settings")
+    .ok_or("Settings window not found")?;
+  window
+    .emit("settings:open", id)
+    .map_err(|e| format!("Failed to send settings event: {e}"))?;
+  window
+    .show()
+    .map_err(|e| format!("Failed to show settings window: {e}"))?;
+  window
+    .set_focus()
+    .map_err(|e| format!("Failed to focus settings window: {e}"))?;
+  Ok(())
+}
+
+#[tauri::command]
+fn open_query_window(app: AppHandle, id: String) -> Result<(), String> {
+  let window = app
+    .get_webview_window("query")
+    .ok_or("Query window not found")?;
+  window
+    .emit("query:open", id)
+    .map_err(|e| format!("Failed to send query event: {e}"))?;
+  window
+    .show()
+    .map_err(|e| format!("Failed to show query window: {e}"))?;
+  window
+    .set_focus()
+    .map_err(|e| format!("Failed to focus query window: {e}"))?;
+  Ok(())
+}
+
+#[tauri::command]
+fn hide_window(window: Window) -> Result<(), String> {
+  window
+    .hide()
+    .map_err(|e| format!("Failed to hide window: {e}"))
+}
+
 fn main() {
   tauri::Builder::default()
+    .on_window_event(|window, event| {
+      if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+        if window.label() != "main" {
+          api.prevent_close();
+          let _ = window.hide();
+        }
+      }
+    })
     .invoke_handler(tauri::generate_handler![
       test_connection,
       run_query,
       list_profiles,
       save_profile,
-      delete_profile
+      delete_profile,
+      open_settings_window,
+      open_query_window,
+      hide_window
     ])
     .run(tauri::generate_context!())
     .unwrap_or_else(|e| {
