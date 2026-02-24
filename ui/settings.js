@@ -10,6 +10,8 @@ const cancelBtn = document.getElementById("profile-cancel");
 const deleteBtn = document.getElementById("profile-delete");
 
 let selectedProfileId = "";
+let selectedGroupId = null;
+let selectedOrder = 0;
 
 function show(value) {
   const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
@@ -71,12 +73,14 @@ async function safeInvoke(command, payload) {
 }
 
 async function loadProfile(id) {
-  const items = await safeInvoke("list_profiles");
-  const profile = items.find((item) => item.id === id);
+  const data = await safeInvoke("list_profiles");
+  const profile = data.items.find((item) => item.id === id);
   if (!profile) {
     return null;
   }
   profileNameInput.value = profile.name;
+  selectedGroupId = profile.group_id || null;
+  selectedOrder = profile.order || 0;
   applyRequest(profile.request);
   return profile;
 }
@@ -124,6 +128,8 @@ saveBtn.addEventListener("click", async () => {
     const profile = {
       id: selectedProfileId || "",
       name,
+      group_id: selectedGroupId,
+      order: selectedOrder,
       request: collectRequest(),
     };
     await safeInvoke("save_profile", { profile });

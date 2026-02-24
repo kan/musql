@@ -14,7 +14,9 @@
         "title": "muSQL",
         "width": 740,
         "height": 760,
-        "resizable": true
+        "resizable": true,
+        "maximizable": false,
+        "dragDropEnabled": false
       },
       {
         "label": "settings",
@@ -23,7 +25,8 @@
         "width": 920,
         "height": 760,
         "visible": false,
-        "resizable": true
+        "resizable": true,
+        "maximizable": false
       },
       {
         "label": "query",

@@ -13,16 +13,20 @@
 
       <div class="panel-header">
         <h2>Connections</h2>
-        <button id="profile-new">新規</button>
+        <div class="panel-header-buttons">
+          <button id="group-new" class="ghost">新規グループ</button>
+          <button id="profile-new">新規</button>
+        </div>
       </div>
       <section id="list-panel" class="panel">
-        <div id="profile-list" class="list"></div>
+        <input id="filter-input" type="text" placeholder="フィルター..." autocomplete="off" />
+        <div id="profile-tree" class="tree"></div>
       </section>
 
-
+      <div id="context-menu" class="context-menu hidden"></div>
 
     </main>
 
-    <script src="./app.js?v=4"></script>
+    <script src="./app.js?v=5"></script>
   </body>
 </html>

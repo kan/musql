@@ -40,15 +40,34 @@ struct ConnectionRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+struct ProfileGroup {
+  id: String,
+  name: String,
+  order: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 struct ConnectionProfile {
   id: String,
   name: String,
+  #[serde(default)]
+  group_id: Option<String>,
+  #[serde(default)]
+  order: u32,
   request: ConnectionRequest,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
 struct ConnectionProfileStore {
   version: u32,
+  #[serde(default)]
+  groups: Vec<ProfileGroup>,
+  items: Vec<ConnectionProfile>,
+}
+
+#[derive(Debug, Serialize)]
+struct ProfileListResponse {
+  groups: Vec<ProfileGroup>,
   items: Vec<ConnectionProfile>,
 }
 
@@ -110,14 +129,25 @@ fn load_profiles(app: &AppHandle) -> Result<ConnectionProfileStore, String> {
   let path = profiles_path(app)?;
   if !path.exists() {
     return Ok(ConnectionProfileStore {
-      version: 1,
+      version: 2,
+      groups: Vec::new(),
       items: Vec::new(),
     });
   }
   let content = std::fs::read_to_string(&path)
     .map_err(|e| format!("Failed to read profiles: {e}"))?;
-  let store: ConnectionProfileStore =
+  let mut store: ConnectionProfileStore =
     serde_json::from_str(&content).map_err(|e| format!("Failed to parse profiles: {e}"))?;
+
+  // Migrate from version < 2: assign sequential order to items
+  if store.version < 2 {
+    for (i, item) in store.items.iter_mut().enumerate() {
+      item.order = (i as u32 + 1) * 1000;
+    }
+    store.version = 2;
+    save_profiles(app, &store)?;
+  }
+
   Ok(store)
 }
 
@@ -339,18 +369,31 @@ fn run_query(request: ConnectionRequest, query: String) -> Result<QueryResult, S
 }
 
 #[tauri::command]
-fn list_profiles(app: AppHandle) -> Result<Vec<ConnectionProfile>, String> {
+fn list_profiles(app: AppHandle) -> Result<ProfileListResponse, String> {
   let store = load_profiles(&app)?;
-  Ok(store.items)
+  Ok(ProfileListResponse {
+    groups: store.groups,
+    items: store.items,
+  })
 }
 
 #[tauri::command]
-fn save_profile(app: AppHandle, mut profile: ConnectionProfile) -> Result<Vec<ConnectionProfile>, String> {
+fn save_profile(app: AppHandle, mut profile: ConnectionProfile) -> Result<ProfileListResponse, String> {
   if profile.name.trim().is_empty() {
     return Err("Profile name is empty".to_string());
   }
   if profile.id.trim().is_empty() {
     profile.id = generate_profile_id();
+    // Assign order: max order in same group + 1000
+    let store_tmp = load_profiles(&app)?;
+    let max_order = store_tmp
+      .items
+      .iter()
+      .filter(|it| it.group_id == profile.group_id)
+      .map(|it| it.order)
+      .max()
+      .unwrap_or(0);
+    profile.order = max_order + 1000;
   }
   let mut store = load_profiles(&app)?;
   let mut updated = false;
@@ -364,19 +407,145 @@ fn save_profile(app: AppHandle, mut profile: ConnectionProfile) -> Result<Vec<Co
   if !updated {
     store.items.push(profile);
   }
-  if store.version == 0 {
-    store.version = 1;
-  }
   save_profiles(&app, &store)?;
-  Ok(store.items)
+  Ok(ProfileListResponse {
+    groups: store.groups,
+    items: store.items,
+  })
 }
 
 #[tauri::command]
-fn delete_profile(app: AppHandle, id: String) -> Result<Vec<ConnectionProfile>, String> {
+fn delete_profile(app: AppHandle, id: String) -> Result<ProfileListResponse, String> {
   let mut store = load_profiles(&app)?;
   store.items.retain(|item| item.id != id);
   save_profiles(&app, &store)?;
-  Ok(store.items)
+  Ok(ProfileListResponse {
+    groups: store.groups,
+    items: store.items,
+  })
+}
+
+#[tauri::command]
+fn save_group(app: AppHandle, id: Option<String>, name: String) -> Result<ProfileListResponse, String> {
+  if name.trim().is_empty() {
+    return Err("Group name is empty".to_string());
+  }
+  let mut store = load_profiles(&app)?;
+  if let Some(existing_id) = id {
+    // Rename existing group
+    if let Some(group) = store.groups.iter_mut().find(|g| g.id == existing_id) {
+      group.name = name;
+    } else {
+      return Err("Group not found".to_string());
+    }
+  } else {
+    // Create new group
+    let max_order = store.groups.iter().map(|g| g.order).max().unwrap_or(0);
+    let max_item_order = store
+      .items
+      .iter()
+      .filter(|it| it.group_id.is_none())
+      .map(|it| it.order)
+      .max()
+      .unwrap_or(0);
+    let new_order = max_order.max(max_item_order) + 1000;
+    store.groups.push(ProfileGroup {
+      id: generate_profile_id(),
+      name,
+      order: new_order,
+    });
+  }
+  save_profiles(&app, &store)?;
+  Ok(ProfileListResponse {
+    groups: store.groups,
+    items: store.items,
+  })
+}
+
+#[tauri::command]
+fn delete_group(app: AppHandle, id: String) -> Result<ProfileListResponse, String> {
+  let mut store = load_profiles(&app)?;
+  store.groups.retain(|g| g.id != id);
+  // Move children to root
+  for item in store.items.iter_mut() {
+    if item.group_id.as_deref() == Some(&id) {
+      item.group_id = None;
+    }
+  }
+  save_profiles(&app, &store)?;
+  Ok(ProfileListResponse {
+    groups: store.groups,
+    items: store.items,
+  })
+}
+
+#[tauri::command]
+fn duplicate_profile(app: AppHandle, id: String) -> Result<ProfileListResponse, String> {
+  let mut store = load_profiles(&app)?;
+  let source = store
+    .items
+    .iter()
+    .find(|it| it.id == id)
+    .ok_or("Profile not found")?
+    .clone();
+  let max_order = store
+    .items
+    .iter()
+    .filter(|it| it.group_id == source.group_id)
+    .map(|it| it.order)
+    .max()
+    .unwrap_or(0);
+  let new_profile = ConnectionProfile {
+    id: generate_profile_id(),
+    name: format!("{} (copy)", source.name),
+    group_id: source.group_id,
+    order: max_order + 1000,
+    request: source.request,
+  };
+  store.items.push(new_profile);
+  save_profiles(&app, &store)?;
+  Ok(ProfileListResponse {
+    groups: store.groups,
+    items: store.items,
+  })
+}
+
+#[derive(Debug, Deserialize)]
+struct ProfilePatch {
+  id: String,
+  group_id: Option<String>,
+  order: u32,
+}
+
+#[derive(Debug, Deserialize)]
+struct GroupPatch {
+  id: String,
+  order: u32,
+}
+
+#[tauri::command]
+fn reorder(
+  app: AppHandle,
+  profile_patches: Vec<ProfilePatch>,
+  group_patches: Vec<GroupPatch>,
+) -> Result<ProfileListResponse, String> {
+  let mut store = load_profiles(&app)?;
+  for patch in &profile_patches {
+    if let Some(item) = store.items.iter_mut().find(|it| it.id == patch.id) {
+      item.group_id = patch.group_id.clone();
+      item.order = patch.order;
+    }
+  }
+  for patch in &group_patches {
+    if let Some(group) = store.groups.iter_mut().find(|g| g.id == patch.id) {
+      group.order = patch.order;
+    }
+  }
+  save_profiles(&app, &store)?;
+  Ok(ProfileListResponse {
+    groups: store.groups,
+    items: store.items,
+  })
 }
 
 #[tauri::command]
@@ -436,6 +605,10 @@ fn main() {
       list_profiles,
       save_profile,
       delete_profile,
+      save_group,
+      delete_group,
+      duplicate_profile,
+      reorder,
       open_settings_window,
       open_query_window,
       hide_window

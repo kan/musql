@@ -173,8 +173,143 @@ pre {
   align-items: center;
 }
 
+.panel-header-buttons {
+  display: flex;
+  gap: 8px;
+}
+
 .hidden {
   display: none;
+}
+
+#filter-input {
+  width: 100%;
+  margin-bottom: 4px;
+}
+
+/* Tree */
+.tree {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 10px;
+  padding-bottom: 24px;
+  min-height: 60px;
+  user-select: none;
+}
+
+.tree-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: default;
+  border: 2px solid transparent;
+}
+.tree-item:hover {
+  background: #f0f4fa;
+}
+.tree-item .meta {
+  flex: 1;
+  min-width: 0;
+}
+.tree-item .name {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tree-item .hint {
+  color: var(--sub);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tree-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: default;
+  font-weight: 600;
+  border: 2px solid transparent;
+}
+.tree-group-header:hover {
+  background: #f0f4fa;
+}
+.tree-group-header .toggle {
+  width: 16px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--sub);
+}
+.tree-group-header .group-count {
+  color: var(--sub);
+  font-weight: 400;
+  font-size: 12px;
+  margin-left: 4px;
+}
+
+.tree-group-children {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.tree-group-children .tree-item {
+  margin-left: 20px;
+}
+.tree-group.collapsed .tree-group-children {
+  display: none;
+}
+
+/* Drag & Drop */
+.dragging {
+  opacity: 0.4;
+}
+.drop-before {
+  box-shadow: 0 -2px 0 0 var(--accent);
+}
+.drop-after {
+  box-shadow: 0 2px 0 0 var(--accent);
+}
+.drop-into {
+  outline: 2px solid var(--accent);
+  border-radius: 8px;
+}
+.tree.drop-root {
+  outline: 2px dashed var(--accent);
+  outline-offset: 4px;
+  border-radius: 8px;
+}
+
+/* Context menu */
+.context-menu {
+  position: fixed;
+  z-index: 1000;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  padding: 4px 0;
+  min-width: 140px;
+}
+.context-menu-item {
+  padding: 8px 16px;
+  cursor: pointer;
+  font-size: 14px;
+  white-space: nowrap;
+}
+.context-menu-item:hover {
+  background: #eef2f7;
+}
+.context-menu-separator {
+  height: 1px;
+  background: var(--line);
+  margin: 4px 0;
 }
 
 .split {

@@ -20,8 +20,8 @@ async function safeInvoke(command, payload) {
 }
 
 async function loadProfile(id) {
-  const items = await safeInvoke("list_profiles");
-  const profile = items.find((item) => item.id === id);
+  const data = await safeInvoke("list_profiles");
+  const profile = data.items.find((item) => item.id === id);
   if (!profile) {
     throw new Error("profile not found");
   }
