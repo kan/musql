@@ -507,9 +507,17 @@ pre {
   border-bottom: 1px solid var(--line);
   flex-shrink: 0;
 }
-.sql-input-area textarea {
-  min-height: 100px;
-  resize: vertical;
+.sql-editor .CodeMirror {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  min-height: 120px;
+  height: 200px;
+  font-size: 14px;
+  font-family: "Consolas", "Cascadia Code", monospace;
+}
+.cm-sql-error {
+  background: rgba(210, 74, 74, 0.15);
+  border-bottom: 2px wavy #d24a4a;
 }
 .sql-input-area .actions {
   margin-top: 0;

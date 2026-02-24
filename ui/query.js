@@ -20,6 +20,13 @@ const contextMenuEl = document.getElementById("context-menu");
 let requestCache = null;
 let currentDb = null;
 let sqlTabCounter = 0;
+let currentTables = [];
+
+function buildTableHints() {
+  const hints = {};
+  currentTables.forEach((t) => { hints[t] = []; });
+  return hints;
+}
 
 // ── Helpers ──
 
@@ -251,6 +258,15 @@ const tabManager = {
       t.el.classList.toggle("active", t.id === id);
       t.paneEl.classList.toggle("active", t.id === id);
     });
+    // Refresh CodeMirror editors in the newly active pane
+    const activeTab = this.tabs.find((t) => t.id === id);
+    if (activeTab) {
+      requestAnimationFrame(() => {
+        activeTab.paneEl.querySelectorAll(".CodeMirror").forEach((el) => {
+          if (el.CodeMirror) el.CodeMirror.refresh();
+        });
+      });
+    }
   },
 
   closeTab(id) {
@@ -336,6 +352,7 @@ async function loadTableList() {
     const res = await runQuery("SHOW TABLES");
     tableListEl.innerHTML = "";
     const tables = res.rows.map((r) => r[0]);
+    currentTables = tables;
 
     tables.forEach((name) => {
       const el = document.createElement("div");
@@ -550,11 +567,41 @@ function addSqlTab() {
 
   tabManager.addTab(tabId, "sql", title, (pane) => {
     const inputArea = document.createElement("div");
-    inputArea.className = "sql-input-area";
+    inputArea.className = "sql-input-area sql-editor";
 
-    const textarea = document.createElement("textarea");
-    textarea.placeholder = "SELECT ...";
-    inputArea.appendChild(textarea);
+    const editorDiv = document.createElement("div");
+    inputArea.appendChild(editorDiv);
+
+    const editor = CodeMirror(editorDiv, {
+      mode: "text/x-mysql",
+      lineNumbers: true,
+      indentWithTabs: true,
+      smartIndent: true,
+      lineWrapping: false,
+      hintOptions: {
+        completeSingle: false,
+        tables: buildTableHints(),
+      },
+      extraKeys: {
+        "Ctrl-Enter": function () {
+          const stmt = getStatementAtCursor();
+          if (stmt) executeStatements([stmt]);
+        },
+        "Ctrl-Space": "autocomplete",
+      },
+    });
+
+    editor.on("inputRead", function (cm, change) {
+      if (change.origin !== "+input") return;
+      const ch = change.text[change.text.length - 1];
+      if (/[a-zA-Z_.]/.test(ch)) {
+        cm.setOption("hintOptions", {
+          completeSingle: false,
+          tables: buildTableHints(),
+        });
+        cm.showHint({ completeSingle: false });
+      }
+    });
 
     const actions = document.createElement("div");
     actions.className = "actions actions-right";
@@ -582,12 +629,45 @@ function addSqlTab() {
     pane.appendChild(inputArea);
     pane.appendChild(resultArea);
 
+    // Refresh CodeMirror once the pane is visible
+    requestAnimationFrame(() => editor.refresh());
+
     let lastColumns = [];
     let lastRows = [];
+    let errorMarks = [];
+
+    function clearErrorMarks() {
+      errorMarks.forEach((m) => m.clear());
+      errorMarks = [];
+    }
+
+    function markSqlError(errorMsg) {
+      // MySQL error: "... near 'xxx' at line N"
+      const m = /near\s+'([\s\S]*?)'\s+at\s+line\s+(\d+)/i.exec(errorMsg);
+      if (!m) return;
+      const nearText = m[1];
+      const errorLine = parseInt(m[2], 10) - 1; // 0-indexed
+      if (nearText.length === 0) return;
+
+      // Find nearText in the editor starting from errorLine
+      const lineCount = editor.lineCount();
+      for (let ln = errorLine; ln < lineCount; ln++) {
+        const lineText = editor.getLine(ln);
+        const col = lineText.toLowerCase().indexOf(nearText.toLowerCase().split(/\s/)[0]);
+        if (col !== -1) {
+          // Mark the first word of the near text
+          const word = nearText.split(/\s/)[0];
+          const from = { line: ln, ch: col };
+          const to = { line: ln, ch: col + word.length };
+          errorMarks.push(editor.markText(from, to, { className: "cm-sql-error" }));
+          return;
+        }
+      }
+    }
 
     function getStatementAtCursor() {
-      const text = textarea.value;
-      const cursor = textarea.selectionStart;
+      const text = editor.getValue();
+      const cursor = editor.indexFromPos(editor.getCursor());
       let start = 0;
       const parts = text.split(";");
       for (let i = 0; i < parts.length; i++) {
@@ -599,7 +679,7 @@ function addSqlTab() {
     }
 
     function getAllStatements() {
-      return textarea.value.split(";").map((s) => s.trim()).filter((s) => s.length > 0);
+      return editor.getValue().split(";").map((s) => s.trim()).filter((s) => s.length > 0);
     }
 
     async function executeStatements(statements) {
@@ -607,6 +687,7 @@ function addSqlTab() {
       lastColumns = [];
       lastRows = [];
       exportBtn.style.display = "none";
+      clearErrorMarks();
       if (statements.length === 0) return;
 
       const multi = statements.length > 1;
@@ -657,6 +738,7 @@ function addSqlTab() {
         errEl.style.color = "#d24a4a";
         errEl.textContent = String(error);
         resultArea.appendChild(errEl);
+        markSqlError(String(error));
       }
     }
 
@@ -668,14 +750,6 @@ function addSqlTab() {
     runAllBtn.addEventListener("click", () => {
       const stmts = getAllStatements();
       if (stmts.length > 0) executeStatements(stmts);
-    });
-
-    textarea.addEventListener("keydown", (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-        e.preventDefault();
-        const stmt = getStatementAtCursor();
-        if (stmt) executeStatements([stmt]);
-      }
     });
 
     exportBtn.addEventListener("click", (ev) => {

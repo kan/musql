@@ -28,6 +28,8 @@
 - `ui/settings.js` → `test_connection` で接続テスト、`hide_window` でウィンドウを隠す。
 - `ui/query.js` → DB エクスプローラ:
   - DB 選択モーダル → サイドバーにテーブル一覧 → タブで Data/Schema/SQL 表示。
+  - SQL タブは CodeMirror 5 エディタ（MySQL シンタックスハイライト、キーワード＋テーブル名補完）。
+  - 実行時エラーは `near '...' at line N` をパースしてエディタ上に赤波線でマーク。
   - `run_query` でクエリ実行（接続は Pool キャッシュ、DB 切替は `USE` で実行）。
   - `export_file` でネイティブ保存ダイアログ経由のファイル書き出し（CSV/TSV/SQL）。
 - SSH 有効時:
@@ -41,6 +43,7 @@
 - `ui/settings.html` + `ui/settings.js` — 設定画面。
 - `ui/query.html` + `ui/query.js` — DB エクスプローラ画面。
 - `ui/style.css` — 共通スタイル。
+- `ui/lib/codemirror/` — CodeMirror 5 vendored ファイル（コア、SQL モード、補完アドオン）。
 
 ## Behavior notes
 - `test_connection` は `SELECT 1` を実行（per-request 接続、プールは使わない）。
@@ -59,11 +62,11 @@
 ## TODO
 (上から優先度順)
 
-- SQL を簡易的な補完と色付きで入力したい。クエリ履歴の記録・呼び出し機能も欲しい
+- クエリ履歴の記録・呼び出し機能
 - ssh_config の alias を使えるようにしたい
 - TLS 接続時の CA 証明書を指定して検証もできるようにする
 
 ## Strategy
-- SQL 補完/色付け: 軽量エディタを導入して色付け。補完はキーワードのみ → 必要なら接続メタデータから拡張。履歴はローカルストレージまたはファイルに保存。
+- クエリ履歴: ローカルストレージまたはファイルに保存。UI で呼び出し・再実行。
 - ssh_config: まずは `ssh -F <config> <alias>` を許可する UI/実装。必要なら config 解析へ拡張。
 - TLS CA: UI に CA パス入力（ファイルピッカー）。`mysql::SslOpts::with_root_cert_path` で検証対応。
