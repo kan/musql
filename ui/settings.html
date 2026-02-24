@@ -26,19 +26,45 @@
           <label>Database <input id="mysql-db" placeholder="optional" /></label>
           <label>User <input id="mysql-user" value="root" /></label>
           <label>Password <input id="mysql-pass" type="password" /></label>
-          <label class="checkbox"><input id="mysql-tls" type="checkbox" /> TLS を使用</label>
-          <label class="checkbox"><input id="mysql-tls-skip" type="checkbox" /> TLS証明書検証をスキップ</label>
+          <label>SSL Mode
+            <select id="mysql-ssl-mode">
+              <option value="DISABLED">DISABLED</option>
+              <option value="REQUIRED">REQUIRED</option>
+              <option value="VERIFY_CA">VERIFY_CA</option>
+              <option value="VERIFY_IDENTITY">VERIFY_IDENTITY</option>
+            </select>
+          </label>
+        </div>
+        <div id="ca-cert-row" class="grid hidden" style="margin-top:10px">
+          <label>CA Certificate
+            <div class="input-with-btn">
+              <input id="mysql-ca-cert" placeholder="/path/to/ca-cert.pem" />
+              <button type="button" id="mysql-ca-cert-browse" class="browse-btn">Browse...</button>
+            </div>
+          </label>
         </div>
       </section>
 
       <section class="panel">
-        <h2>SSH Bastion</h2>
-        <div class="grid">
+        <div class="panel-header">
+          <h2>SSH Bastion</h2>
           <label class="checkbox"><input id="ssh-enabled" type="checkbox" /> Enable</label>
+        </div>
+        <div id="ssh-fields" class="grid" style="margin-top:10px">
+          <label>Config Host
+            <select id="ssh-config-host">
+              <option value="">(manual)</option>
+            </select>
+          </label>
           <label>Host <input id="ssh-host" placeholder="bastion.example.com" /></label>
           <label>Port <input id="ssh-port" type="number" value="22" /></label>
           <label>User <input id="ssh-user" placeholder="ec2-user" /></label>
-          <label>IdentityFile <input id="ssh-key" placeholder="~/.ssh/id_ed25519.pub" /></label>
+          <label>IdentityFile
+            <div class="input-with-btn">
+              <input id="ssh-key" placeholder="~/.ssh/id_ed25519.pub" />
+              <button type="button" id="ssh-key-browse" class="browse-btn">Browse...</button>
+            </div>
+          </label>
         </div>
       </section>
       <div class="actions actions-right">

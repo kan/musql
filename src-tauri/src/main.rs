@@ -19,10 +19,19 @@ struct MySqlConfig {
   database: Option<String>,
   username: String,
   password: String,
+  #[serde(default = "default_ssl_mode")]
+  ssl_mode: String, // "DISABLED" | "REQUIRED" | "VERIFY_CA" | "VERIFY_IDENTITY"
   #[serde(default)]
+  tls_ca_cert_path: Option<String>,
+  // Legacy (read-only, never re-saved)
+  #[serde(default, skip_serializing)]
   tls_enabled: bool,
-  #[serde(default)]
+  #[serde(default, skip_serializing)]
   tls_skip_verify: bool,
+}
+
+fn default_ssl_mode() -> String {
+  "DISABLED".to_string()
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -32,6 +41,8 @@ struct SshConfig {
   port: u16,
   username: String,
   private_key_path: Option<String>,
+  #[serde(default)]
+  config_host: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -99,18 +110,22 @@ struct ConnectionCache {
 
 fn connection_fingerprint(request: &ConnectionRequest) -> String {
   let ssh_part = match &request.ssh {
-    Some(ssh) if ssh.enabled => format!(
-      "ssh:{}:{}:{}:{}",
-      ssh.host, ssh.port, ssh.username,
-      ssh.private_key_path.as_deref().unwrap_or("")
-    ),
+    Some(ssh) if ssh.enabled => match &ssh.config_host {
+      Some(alias) if !alias.trim().is_empty() => format!("ssh-config:{alias}"),
+      _ => format!(
+        "ssh:{}:{}:{}:{}",
+        ssh.host, ssh.port, ssh.username,
+        ssh.private_key_path.as_deref().unwrap_or("")
+      ),
+    },
     _ => String::new(),
   };
   format!(
-    "{}:{}:{}:{}:tls{}:skip{}|{}",
+    "{}:{}:{}:{}:ssl={}:ca={}|{}",
     request.mysql.host, request.mysql.port,
     request.mysql.username, request.mysql.password,
-    request.mysql.tls_enabled, request.mysql.tls_skip_verify,
+    request.mysql.ssl_mode,
+    request.mysql.tls_ca_cert_path.as_deref().unwrap_or(""),
     ssh_part
   )
 }
@@ -172,14 +187,33 @@ fn build_opts(mysql: &MySqlConfig, host: &str, port: u16) -> OptsBuilder {
     }
   }
 
-  if mysql.tls_enabled {
-    let mut ssl_opts = SslOpts::default();
-    if mysql.tls_skip_verify {
-      ssl_opts = ssl_opts
-        .with_danger_accept_invalid_certs(true)
-        .with_danger_skip_domain_validation(true);
+  match mysql.ssl_mode.as_str() {
+    "REQUIRED" => {
+      builder = builder.ssl_opts(Some(
+        SslOpts::default()
+          .with_danger_accept_invalid_certs(true)
+          .with_danger_skip_domain_validation(true),
+      ));
     }
-    builder = builder.ssl_opts(Some(ssl_opts));
+    "VERIFY_CA" => {
+      let mut ssl = SslOpts::default().with_danger_skip_domain_validation(true);
+      if let Some(p) = &mysql.tls_ca_cert_path {
+        if !p.trim().is_empty() {
+          ssl = ssl.with_root_cert_path(Some(PathBuf::from(p)));
+        }
+      }
+      builder = builder.ssl_opts(Some(ssl));
+    }
+    "VERIFY_IDENTITY" => {
+      let mut ssl = SslOpts::default();
+      if let Some(p) = &mysql.tls_ca_cert_path {
+        if !p.trim().is_empty() {
+          ssl = ssl.with_root_cert_path(Some(PathBuf::from(p)));
+        }
+      }
+      builder = builder.ssl_opts(Some(ssl));
+    }
+    _ => { /* DISABLED or unknown — no ssl_opts */ }
   }
 
   builder
@@ -215,6 +249,21 @@ fn load_profiles(app: &AppHandle) -> Result<ConnectionProfileStore, String> {
     save_profiles(app, &store)?;
   }
 
+  // Migrate legacy tls_enabled/tls_skip_verify → ssl_mode
+  let mut ssl_migrated = false;
+  for item in store.items.iter_mut() {
+    let m = &mut item.request.mysql;
+    if m.tls_enabled {
+      m.ssl_mode = if m.tls_skip_verify { "REQUIRED" } else { "VERIFY_IDENTITY" }.to_string();
+      m.tls_enabled = false;
+      m.tls_skip_verify = false;
+      ssl_migrated = true;
+    }
+  }
+  if ssl_migrated {
+    save_profiles(app, &store)?;
+  }
+
   Ok(store)
 }
 
@@ -247,6 +296,42 @@ fn find_free_port() -> Result<u16, String> {
 }
 
 
+fn parse_ssh_config_hosts(content: &str) -> Vec<String> {
+  let mut hosts = Vec::new();
+  for line in content.lines() {
+    let trimmed = line.trim();
+    if let Some(rest) = trimmed
+      .strip_prefix("Host ")
+      .or_else(|| trimmed.strip_prefix("Host\t"))
+      .or_else(|| trimmed.strip_prefix("host "))
+      .or_else(|| trimmed.strip_prefix("host\t"))
+    {
+      for pattern in rest.split_whitespace() {
+        if !pattern.contains('*') && !pattern.contains('?') {
+          hosts.push(pattern.to_string());
+        }
+      }
+    }
+  }
+  hosts
+}
+
+#[tauri::command]
+fn list_ssh_config_hosts() -> Vec<String> {
+  let home = std::env::var("USERPROFILE")
+    .or_else(|_| std::env::var("HOME"))
+    .unwrap_or_default();
+  if home.is_empty() {
+    return vec![];
+  }
+  let path = std::path::Path::new(&home).join(".ssh").join("config");
+  let content = match std::fs::read_to_string(&path) {
+    Ok(c) => c,
+    Err(_) => return vec![],
+  };
+  parse_ssh_config_hosts(&content)
+}
+
 fn find_ssh_bin() -> String {
   if cfg!(target_os = "windows") {
     // Prefer Windows built-in OpenSSH over Git-bundled ssh.exe
@@ -265,30 +350,48 @@ fn start_ssh_tunnel(ssh: &SshConfig, mysql_host: &str, mysql_port: u16) -> Resul
   let local_port = find_free_port()?;
   let ssh_bin = find_ssh_bin();
 
-  let mut args: Vec<String> = vec![
-    "-N".to_string(),
-    "-o".to_string(),
-    "ExitOnForwardFailure=yes".to_string(),
-    "-o".to_string(),
-    "ServerAliveInterval=30".to_string(),
-    "-o".to_string(),
-    "ServerAliveCountMax=3".to_string(),
-    "-p".to_string(),
-    ssh.port.to_string(),
-    "-L".to_string(),
-    format!("127.0.0.1:{local_port}:{mysql_host}:{mysql_port}"),
-  ];
+  let use_config_host = matches!(&ssh.config_host, Some(alias) if !alias.trim().is_empty());
 
-  if let Some(key) = &ssh.private_key_path {
-    if !key.trim().is_empty() {
-      args.push("-o".to_string());
-      args.push("IdentitiesOnly=yes".to_string());
-      args.push("-o".to_string());
-      args.push(format!("IdentityFile={key}"));
+  let args: Vec<String> = if use_config_host {
+    vec![
+      "-N".to_string(),
+      "-o".to_string(),
+      "ExitOnForwardFailure=yes".to_string(),
+      "-o".to_string(),
+      "ServerAliveInterval=30".to_string(),
+      "-o".to_string(),
+      "ServerAliveCountMax=3".to_string(),
+      "-L".to_string(),
+      format!("127.0.0.1:{local_port}:{mysql_host}:{mysql_port}"),
+      ssh.config_host.as_ref().unwrap().trim().to_string(),
+    ]
+  } else {
+    let mut a = vec![
+      "-N".to_string(),
+      "-o".to_string(),
+      "ExitOnForwardFailure=yes".to_string(),
+      "-o".to_string(),
+      "ServerAliveInterval=30".to_string(),
+      "-o".to_string(),
+      "ServerAliveCountMax=3".to_string(),
+      "-p".to_string(),
+      ssh.port.to_string(),
+      "-L".to_string(),
+      format!("127.0.0.1:{local_port}:{mysql_host}:{mysql_port}"),
+    ];
+
+    if let Some(key) = &ssh.private_key_path {
+      if !key.trim().is_empty() {
+        a.push("-o".to_string());
+        a.push("IdentitiesOnly=yes".to_string());
+        a.push("-o".to_string());
+        a.push(format!("IdentityFile={key}"));
+      }
     }
-  }
 
-  args.push(format!("{}@{}", ssh.username, ssh.host));
+    a.push(format!("{}@{}", ssh.username, ssh.host));
+    a
+  };
 
   let mut child = Command::new(&ssh_bin)
     .args(&args)
@@ -482,6 +585,27 @@ async fn export_file(
     }
     None => Ok(false),
   }
+}
+
+#[tauri::command]
+async fn pick_file(
+  title: Option<String>,
+  filter_name: Option<String>,
+  extensions: Option<Vec<String>>,
+) -> Result<Option<String>, String> {
+  let mut dialog = rfd::AsyncFileDialog::new();
+  if let Some(t) = &title {
+    dialog = dialog.set_title(t);
+  }
+  if let Some(fname) = &filter_name {
+    let exts = extensions.as_deref().unwrap_or(&[]);
+    let ext_refs: Vec<&str> = exts.iter().map(|s| s.as_str()).collect();
+    if !ext_refs.is_empty() {
+      dialog = dialog.add_filter(fname, &ext_refs);
+    }
+  }
+  let result = dialog.pick_file().await;
+  Ok(result.map(|h| h.path().to_string_lossy().into_owned()))
 }
 
 #[tauri::command]
@@ -730,7 +854,9 @@ fn main() {
       open_query_window,
       hide_window,
       disconnect_pool,
-      export_file
+      export_file,
+      pick_file,
+      list_ssh_config_hosts
     ])
     .run(tauri::generate_context!())
     .unwrap_or_else(|e| {

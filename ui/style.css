@@ -67,15 +67,42 @@ label {
   align-items: center;
 }
 
-input, textarea, button {
+input, textarea, button, select {
   font: inherit;
 }
 
-input, textarea {
+input, textarea, select {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 10px;
   background: #fff;
+}
+
+input:disabled, textarea:disabled, select:disabled {
+  background: #e9ecf0;
+  color: #999;
+  cursor: not-allowed;
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.input-with-btn {
+  display: flex;
+  gap: 6px;
+}
+.input-with-btn input {
+  flex: 1;
+  min-width: 0;
+}
+.browse-btn {
+  padding: 8px 12px;
+  font-size: 13px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 textarea {

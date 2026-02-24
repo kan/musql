@@ -50,11 +50,14 @@
 ## Behavior notes
 - `test_connection` は `SELECT 1` を実行（per-request 接続、プールは使わない）。
 - `run_query` は任意 SQL を実行して列名＋行＋ `affected_rows` を返却。`max_rows` パラメータで行数制限（デフォルト 500、0 で無制限）。
-- 接続プール: `ConnectionCache` で Pool + SshTunnel をキャッシュ。fingerprint（ホスト/ポート/ユーザー/SSH 設定）が同じなら再利用。DB は Pool opts に含めず `USE` で切替。
+- 接続プール: `ConnectionCache` で Pool + SshTunnel をキャッシュ。fingerprint（ホスト/ポート/ユーザー/SSL/SSH 設定）が同じなら再利用。DB は Pool opts に含めず `USE` で切替。
+- SSL モード: `MySqlConfig.ssl_mode` で DISABLED / REQUIRED / VERIFY_CA / VERIFY_IDENTITY を選択。VERIFY_CA/VERIFY_IDENTITY 時は `tls_ca_cert_path` で CA 証明書を指定可能。`native-tls` (SChannel) バックエンドで PEM/DER 対応。旧 `tls_enabled`/`tls_skip_verify` フィールドは `skip_serializing` で読み込み互換のみ残し、`load_profiles()` で自動マイグレーション。
+- `pick_file` コマンド: `rfd` でネイティブファイル選択ダイアログを表示しパスを返す。CA 証明書・SSH IdentityFile の Browse に使用。
 - `export_file` は `rfd` クレートでネイティブ保存ダイアログを表示しファイル書き出し。
 - `ssh.private_key_path` は SSH の `IdentityFile` として `-o IdentityFile=<path> -o IdentitiesOnly=yes` で渡す。`.pub` ファイル指定で 1Password SSH agent と連携可能。
 - SSH バイナリは `C:\Windows\System32\OpenSSH\ssh.exe` を優先（Git 付属の ssh.exe は 1Password SSH agent 非対応のため）。
 - SSH トンネル失敗時は stderr の内容をエラーメッセージに含めて返す。
+- Settings UI: SSH Bastion の Enable チェックはパネルヘッダー横に配置。off 時はフィールド群を disabled 化。Profile name 未入力時は保存ボタン disabled。
 
 ## Limits / defaults
 - 結果行はデフォルト最大 500 件（`max_rows` で変更可能、エクスポート時は無制限）。
@@ -64,8 +67,20 @@
 ## TODO
 (上から優先度順)
 
-- ssh_config の alias を使えるようにしたい
-- TLS 接続時の CA 証明書を指定して検証もできるようにする
+- ~~ssh_config の alias を使えるようにしたい~~ ✓ 実装済み
+- ~~TLS 接続時の CA 証明書を指定して検証もできるようにする~~ ✓ 実装済み（SSL モード 4 種 + CA 証明書パス指定）
+- profile毎の色とtagを指定できるようにする
+- 設定のパスワードを安全に保存
+- SQL実行の多重クリック抑止
+- 見た目の強化
+  - ダークモード対応
+  - i18n対応
+  - アイコンを適宜使用
+  - faviconをちゃんと作る
+- 接続設定のインポートとエクスポート
+- docker上のmysqlへの簡単アクセス
+- ビルド・配布手段の検討
+- Windows以外での動作
 
 ## localStorage keys
 - `musql:collapsed`: グループの開閉状態（`app.js`）。
@@ -73,5 +88,6 @@
 - `musql:history:<profileId>`: 実行済み SQL（`{ sql, ts }[]`、新しい順、最大 100 件）。
 
 ## Strategy
-- ssh_config: まずは `ssh -F <config> <alias>` を許可する UI/実装。必要なら config 解析へ拡張。
-- TLS CA: UI に CA パス入力（ファイルピッカー）。`mysql::SslOpts::with_root_cert_path` で検証対応。
+- ssh_config: ✓ 実装済み。`ssh -F <config> <alias>` で Config Host を選択可能。
+- TLS CA: ✓ 実装済み。SSL Mode ドロップダウン + CA 証明書パス（ファイルピッカー付き）。`mysql::SslOpts::with_root_cert_path` で検証。
+- profile 色/タグ: `ConnectionProfile` に `color: Option<String>` と `tags: Vec<String>` を追加。Settings UI にカラーピッカー（プリセット色 8〜10 色程度）とタグ入力を追加。メイン画面のツリーアイテムに色インジケーター（左端のドットまたはバー）とタグバッジを表示。フィルターでタグ絞り込みも検討。

@@ -8,6 +8,15 @@ const testBtn = document.getElementById("test-btn");
 const saveBtn = document.getElementById("profile-save");
 const cancelBtn = document.getElementById("profile-cancel");
 const deleteBtn = document.getElementById("profile-delete");
+const sshConfigHostSelect = document.getElementById("ssh-config-host");
+const sshEnabledCheck = document.getElementById("ssh-enabled");
+const sshFieldsDiv = document.getElementById("ssh-fields");
+const sshManualFieldIds = ["ssh-host", "ssh-port", "ssh-user", "ssh-key"];
+const sslModeSelect = document.getElementById("mysql-ssl-mode");
+const caCertRow = document.getElementById("ca-cert-row");
+const caCertInput = document.getElementById("mysql-ca-cert");
+const caCertBrowseBtn = document.getElementById("mysql-ca-cert-browse");
+const sshKeyBrowseBtn = document.getElementById("ssh-key-browse");
 
 let selectedProfileId = "";
 let selectedGroupId = null;
@@ -19,6 +28,57 @@ function show(value) {
   resultEl.hidden = !text;
 }
 
+async function loadSshConfigHosts() {
+  try {
+    const hosts = await safeInvoke("list_ssh_config_hosts");
+    sshConfigHostSelect.innerHTML = '<option value="">(manual)</option>';
+    hosts.forEach((h) => {
+      const opt = document.createElement("option");
+      opt.value = h;
+      opt.textContent = h;
+      sshConfigHostSelect.appendChild(opt);
+    });
+  } catch (_) {}
+}
+
+function updateSshFieldVisibility() {
+  const enabled = sshEnabledCheck.checked;
+  // Disable all inputs/selects/buttons inside ssh-fields when SSH is off
+  sshFieldsDiv.querySelectorAll("input, select, button").forEach((el) => {
+    el.disabled = !enabled;
+  });
+  // Hide manual fields when Config Host is selected
+  const useConfig = sshConfigHostSelect.value !== "";
+  sshManualFieldIds.forEach((id) => {
+    document.getElementById(id).closest("label").classList.toggle("hidden", useConfig);
+  });
+}
+
+sshEnabledCheck.addEventListener("change", updateSshFieldVisibility);
+sshConfigHostSelect.addEventListener("change", updateSshFieldVisibility);
+
+function updateCaCertVisibility() {
+  const mode = sslModeSelect.value;
+  const show = mode === "VERIFY_CA" || mode === "VERIFY_IDENTITY";
+  caCertRow.classList.toggle("hidden", !show);
+}
+sslModeSelect.addEventListener("change", updateCaCertVisibility);
+
+async function browseFile(inputEl, title, filterName, extensions) {
+  try {
+    const path = await safeInvoke("pick_file", { title, filterName, extensions });
+    if (path) inputEl.value = path;
+  } catch (_) {}
+}
+
+caCertBrowseBtn.addEventListener("click", () => {
+  browseFile(caCertInput, "Select CA Certificate", "Certificate", ["pem", "crt", "cer"]);
+});
+
+sshKeyBrowseBtn.addEventListener("click", () => {
+  browseFile(document.getElementById("ssh-key"), "Select Identity File", null, null);
+});
+
 function collectRequest() {
   const sshEnabled = document.getElementById("ssh-enabled").checked;
 
@@ -29,8 +89,8 @@ function collectRequest() {
       database: document.getElementById("mysql-db").value.trim() || null,
       username: document.getElementById("mysql-user").value.trim(),
       password: document.getElementById("mysql-pass").value,
-      tls_enabled: document.getElementById("mysql-tls").checked,
-      tls_skip_verify: document.getElementById("mysql-tls-skip").checked,
+      ssl_mode: sslModeSelect.value,
+      tls_ca_cert_path: caCertInput.value.trim() || null,
     },
     ssh: {
       enabled: sshEnabled,
@@ -38,6 +98,7 @@ function collectRequest() {
       port: Number(document.getElementById("ssh-port").value || 22),
       username: document.getElementById("ssh-user").value.trim(),
       private_key_path: document.getElementById("ssh-key").value.trim() || null,
+      config_host: document.getElementById("ssh-config-host").value || null,
     },
   };
 }
@@ -48,8 +109,9 @@ function applyRequest(request) {
   document.getElementById("mysql-db").value = request.mysql.database || "";
   document.getElementById("mysql-user").value = request.mysql.username || "";
   document.getElementById("mysql-pass").value = request.mysql.password || "";
-  document.getElementById("mysql-tls").checked = !!request.mysql.tls_enabled;
-  document.getElementById("mysql-tls-skip").checked = !!request.mysql.tls_skip_verify;
+  sslModeSelect.value = request.mysql.ssl_mode || "DISABLED";
+  caCertInput.value = request.mysql.tls_ca_cert_path || "";
+  updateCaCertVisibility();
 
   const ssh = request.ssh || {
     enabled: false,
@@ -59,10 +121,12 @@ function applyRequest(request) {
     private_key_path: null,
   };
   document.getElementById("ssh-enabled").checked = !!ssh.enabled;
+  document.getElementById("ssh-config-host").value = ssh.config_host || "";
   document.getElementById("ssh-host").value = ssh.host || "";
   document.getElementById("ssh-port").value = ssh.port || 22;
   document.getElementById("ssh-user").value = ssh.username || "";
   document.getElementById("ssh-key").value = ssh.private_key_path || "";
+  updateSshFieldVisibility();
 }
 
 async function safeInvoke(command, payload) {
@@ -79,6 +143,7 @@ async function loadProfile(id) {
     return null;
   }
   profileNameInput.value = profile.name;
+  saveBtn.disabled = !profile.name.trim();
   selectedGroupId = profile.group_id || null;
   selectedOrder = profile.order || 0;
   applyRequest(profile.request);
@@ -94,8 +159,8 @@ function clearForm() {
       database: null,
       username: "root",
       password: "",
-      tls_enabled: false,
-      tls_skip_verify: false,
+      ssl_mode: "DISABLED",
+      tls_ca_cert_path: null,
     },
     ssh: {
       enabled: false,
@@ -103,6 +168,7 @@ function clearForm() {
       port: 22,
       username: "",
       private_key_path: null,
+      config_host: null,
     },
   });
 }
@@ -155,7 +221,12 @@ cancelBtn.addEventListener("click", async () => {
   await safeInvoke("hide_window");
 });
 
+profileNameInput.addEventListener("input", () => {
+  saveBtn.disabled = !profileNameInput.value.trim();
+});
+
 clearForm();
+saveBtn.disabled = true;
 deleteBtn.disabled = true;
 
 if (eventApi && eventApi.listen) {
@@ -164,10 +235,12 @@ if (eventApi && eventApi.listen) {
     selectedProfileId = id;
     deleteBtn.disabled = !selectedProfileId;
     show("");
-    if (selectedProfileId) {
-      loadProfile(selectedProfileId).catch((error) => show(String(error)));
-    } else {
-      clearForm();
-    }
+    loadSshConfigHosts().then(() => {
+      if (selectedProfileId) {
+        loadProfile(selectedProfileId).catch((error) => show(String(error)));
+      } else {
+        clearForm();
+      }
+    });
   });
 }
