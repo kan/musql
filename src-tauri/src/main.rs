@@ -5,11 +5,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::io;
 use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
+use tauri::{AppHandle, Manager};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 struct MySqlConfig {
   host: String,
   port: u16,
@@ -22,7 +24,7 @@ struct MySqlConfig {
   tls_skip_verify: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 struct SshConfig {
   enabled: bool,
   host: String,
@@ -31,10 +33,23 @@ struct SshConfig {
   private_key_path: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 struct ConnectionRequest {
   mysql: MySqlConfig,
   ssh: Option<SshConfig>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct ConnectionProfile {
+  id: String,
+  name: String,
+  request: ConnectionRequest,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+struct ConnectionProfileStore {
+  version: u32,
+  items: Vec<ConnectionProfile>,
 }
 
 #[derive(Debug, Serialize)]
@@ -82,6 +97,48 @@ fn build_opts(mysql: &MySqlConfig, host: &str, port: u16) -> OptsBuilder {
   }
 
   builder
+}
+
+fn profiles_path(app: &AppHandle) -> Result<PathBuf, String> {
+  let resolver = app.path();
+  resolver
+    .resolve("connections.json", tauri::path::BaseDirectory::AppConfig)
+    .map_err(|e| format!("Failed to resolve config path: {e}"))
+}
+
+fn load_profiles(app: &AppHandle) -> Result<ConnectionProfileStore, String> {
+  let path = profiles_path(app)?;
+  if !path.exists() {
+    return Ok(ConnectionProfileStore {
+      version: 1,
+      items: Vec::new(),
+    });
+  }
+  let content = std::fs::read_to_string(&path)
+    .map_err(|e| format!("Failed to read profiles: {e}"))?;
+  let store: ConnectionProfileStore =
+    serde_json::from_str(&content).map_err(|e| format!("Failed to parse profiles: {e}"))?;
+  Ok(store)
+}
+
+fn save_profiles(app: &AppHandle, store: &ConnectionProfileStore) -> Result<(), String> {
+  let path = profiles_path(app)?;
+  if let Some(dir) = path.parent() {
+    std::fs::create_dir_all(dir).map_err(|e| format!("Failed to create config dir: {e}"))?;
+  }
+  let data =
+    serde_json::to_string_pretty(store).map_err(|e| format!("Failed to serialize profiles: {e}"))?;
+  std::fs::write(&path, data).map_err(|e| format!("Failed to write profiles: {e}"))?;
+  Ok(())
+}
+
+fn generate_profile_id() -> String {
+  use std::time::{SystemTime, UNIX_EPOCH};
+  let ts = SystemTime::now()
+    .duration_since(UNIX_EPOCH)
+    .unwrap_or_else(|_| Duration::from_millis(0))
+    .as_millis();
+  format!("p{ts}")
 }
 
 fn find_free_port() -> Result<u16, String> {
@@ -245,9 +302,56 @@ fn run_query(request: ConnectionRequest, query: String) -> Result<QueryResult, S
   })
 }
 
+#[tauri::command]
+fn list_profiles(app: AppHandle) -> Result<Vec<ConnectionProfile>, String> {
+  let store = load_profiles(&app)?;
+  Ok(store.items)
+}
+
+#[tauri::command]
+fn save_profile(app: AppHandle, mut profile: ConnectionProfile) -> Result<Vec<ConnectionProfile>, String> {
+  if profile.name.trim().is_empty() {
+    return Err("Profile name is empty".to_string());
+  }
+  if profile.id.trim().is_empty() {
+    profile.id = generate_profile_id();
+  }
+  let mut store = load_profiles(&app)?;
+  let mut updated = false;
+  for item in store.items.iter_mut() {
+    if item.id == profile.id {
+      *item = profile.clone();
+      updated = true;
+      break;
+    }
+  }
+  if !updated {
+    store.items.push(profile);
+  }
+  if store.version == 0 {
+    store.version = 1;
+  }
+  save_profiles(&app, &store)?;
+  Ok(store.items)
+}
+
+#[tauri::command]
+fn delete_profile(app: AppHandle, id: String) -> Result<Vec<ConnectionProfile>, String> {
+  let mut store = load_profiles(&app)?;
+  store.items.retain(|item| item.id != id);
+  save_profiles(&app, &store)?;
+  Ok(store.items)
+}
+
 fn main() {
   tauri::Builder::default()
-    .invoke_handler(tauri::generate_handler![test_connection, run_query])
+    .invoke_handler(tauri::generate_handler![
+      test_connection,
+      run_query,
+      list_profiles,
+      save_profile,
+      delete_profile
+    ])
     .run(tauri::generate_context!())
     .unwrap_or_else(|e| {
       let _ = writeln_fallback(&format!("error while running tauri application: {e}"));

@@ -11,43 +11,61 @@
       <h1>MuSQL</h1>
       <p class="subtitle">Tauri v2 + Rust / MySQL client with optional SSH bastion</p>
 
-      <section class="panel">
-        <h2>MySQL</h2>
-        <div class="grid">
-          <label>Host <input id="mysql-host" value="127.0.0.1" /></label>
-          <label>Port <input id="mysql-port" type="number" value="3306" /></label>
-          <label>Database <input id="mysql-db" placeholder="optional" /></label>
-          <label>User <input id="mysql-user" value="root" /></label>
-          <label>Password <input id="mysql-pass" type="password" /></label>
-          <label class="checkbox"><input id="mysql-tls" type="checkbox" /> TLS を使用</label>
-          <label class="checkbox"><input id="mysql-tls-skip" type="checkbox" /> TLS証明書検証をスキップ</label>
-        </div>
-      </section>
+      <div class="layout">
+        <aside class="sidebar">
+          <section class="panel">
+            <h2>Connections</h2>
+            <div id="profile-tree" class="tree"></div>
+            <div class="profile-editor">
+              <label>Profile name <input id="profile-name" placeholder="e.g. prod/analytics" /></label>
+              <div class="actions">
+                <button id="profile-new">新規</button>
+                <button id="profile-save">保存</button>
+                <button id="profile-delete" class="danger">削除</button>
+              </div>
+            </div>
+          </section>
+        </aside>
+        <section class="content">
+          <section class="panel">
+            <h2>MySQL</h2>
+            <div class="grid">
+              <label>Host <input id="mysql-host" value="127.0.0.1" /></label>
+              <label>Port <input id="mysql-port" type="number" value="3306" /></label>
+              <label>Database <input id="mysql-db" placeholder="optional" /></label>
+              <label>User <input id="mysql-user" value="root" /></label>
+              <label>Password <input id="mysql-pass" type="password" /></label>
+              <label class="checkbox"><input id="mysql-tls" type="checkbox" /> TLS を使用</label>
+              <label class="checkbox"><input id="mysql-tls-skip" type="checkbox" /> TLS証明書検証をスキップ</label>
+            </div>
+          </section>
 
-      <section class="panel">
-        <h2>SSH Bastion</h2>
-        <div class="grid">
-          <label class="checkbox"><input id="ssh-enabled" type="checkbox" /> Enable</label>
-          <label>Host <input id="ssh-host" placeholder="bastion.example.com" /></label>
-          <label>Port <input id="ssh-port" type="number" value="22" /></label>
-          <label>User <input id="ssh-user" placeholder="ec2-user" /></label>
-          <label>Private key path <input id="ssh-key" placeholder="optional; agent preferred" /></label>
-        </div>
-      </section>
+          <section class="panel">
+            <h2>SSH Bastion</h2>
+            <div class="grid">
+              <label class="checkbox"><input id="ssh-enabled" type="checkbox" /> Enable</label>
+              <label>Host <input id="ssh-host" placeholder="bastion.example.com" /></label>
+              <label>Port <input id="ssh-port" type="number" value="22" /></label>
+              <label>User <input id="ssh-user" placeholder="ec2-user" /></label>
+              <label>Private key path <input id="ssh-key" placeholder="optional; agent preferred" /></label>
+            </div>
+          </section>
 
-      <section class="panel">
-        <h2>Query</h2>
-        <textarea id="query">SELECT VERSION();</textarea>
-        <div class="actions">
-          <button id="test-btn">接続テスト</button>
-          <button id="run-btn">クエリ実行</button>
-        </div>
-      </section>
+          <section class="panel">
+            <h2>Query</h2>
+            <textarea id="query">SELECT VERSION();</textarea>
+            <div class="actions">
+              <button id="test-btn">接続テスト</button>
+              <button id="run-btn">クエリ実行</button>
+            </div>
+          </section>
 
-      <section class="panel">
-        <h2>Result</h2>
-        <pre id="result"></pre>
-      </section>
+          <section class="panel">
+            <h2>Result</h2>
+            <pre id="result"></pre>
+          </section>
+        </section>
+      </div>
     </main>
 
     <script src="./app.js"></script>
