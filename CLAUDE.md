@@ -32,6 +32,8 @@
   - 実行時エラーは `near '...' at line N` をパースしてエディタ上に赤波線でマーク。
   - `run_query` でクエリ実行（接続は Pool キャッシュ、DB 切替は `USE` で実行）。
   - `export_file` でネイティブ保存ダイアログ経由のファイル書き出し（CSV/TSV/SQL）。
+  - エディタ下書き保存: SQL タブの内容を localStorage にプロファイル単位で自動保存（デバウンス 1 秒）。DB 切替・再接続時に復元。
+  - 実行履歴: 成功した SQL を `musql:history:<profileId>` に最大 100 件保存。History ボタンから呼び出し・エディタに挿入。
 - SSH 有効時:
   - Rust 側で SSH トンネルを起動、ローカルポートへ接続できるまで待機 → MySQL 接続 → 終了時に SSH プロセスを kill。
 
@@ -62,11 +64,14 @@
 ## TODO
 (上から優先度順)
 
-- クエリ履歴の記録・呼び出し機能
 - ssh_config の alias を使えるようにしたい
 - TLS 接続時の CA 証明書を指定して検証もできるようにする
 
+## localStorage keys
+- `musql:collapsed`: グループの開閉状態（`app.js`）。
+- `musql:drafts:<profileId>`: SQL タブのエディタ内容（`string[]`、タブ順）。
+- `musql:history:<profileId>`: 実行済み SQL（`{ sql, ts }[]`、新しい順、最大 100 件）。
+
 ## Strategy
-- クエリ履歴: ローカルストレージまたはファイルに保存。UI で呼び出し・再実行。
 - ssh_config: まずは `ssh -F <config> <alias>` を許可する UI/実装。必要なら config 解析へ拡張。
 - TLS CA: UI に CA パス入力（ファイルピッカー）。`mysql::SslOpts::with_root_cert_path` で検証対応。

@@ -21,6 +21,59 @@ let requestCache = null;
 let currentDb = null;
 let sqlTabCounter = 0;
 let currentTables = [];
+let currentProfileId = null;
+
+// ── Draft save/restore ──
+
+let draftSaveTimer = null;
+
+function saveDrafts() {
+  if (!currentProfileId) return;
+  const drafts = [];
+  tabManager.tabs.forEach((tab) => {
+    if (tab.type !== "sql") return;
+    const cmEl = tab.paneEl.querySelector(".CodeMirror");
+    if (cmEl && cmEl.CodeMirror) drafts.push(cmEl.CodeMirror.getValue());
+  });
+  const key = "musql:drafts:" + currentProfileId;
+  if (drafts.length === 0 || drafts.every((d) => d === "")) {
+    localStorage.removeItem(key);
+  } else {
+    localStorage.setItem(key, JSON.stringify(drafts));
+  }
+}
+
+function loadDrafts() {
+  if (!currentProfileId) return [];
+  try { return JSON.parse(localStorage.getItem("musql:drafts:" + currentProfileId)) || []; }
+  catch (_) { return []; }
+}
+
+function scheduleDraftSave() {
+  if (draftSaveTimer) clearTimeout(draftSaveTimer);
+  draftSaveTimer = setTimeout(saveDrafts, 1000);
+}
+
+// ── Execution history ──
+
+const HISTORY_MAX = 100;
+
+function saveHistory(sql) {
+  if (!currentProfileId) return;
+  const key = "musql:history:" + currentProfileId;
+  let history = [];
+  try { history = JSON.parse(localStorage.getItem(key)) || []; } catch (_) {}
+  if (history.length > 0 && history[0].sql === sql) return;
+  history.unshift({ sql, ts: Date.now() });
+  if (history.length > HISTORY_MAX) history = history.slice(0, HISTORY_MAX);
+  localStorage.setItem(key, JSON.stringify(history));
+}
+
+function loadHistory() {
+  if (!currentProfileId) return [];
+  try { return JSON.parse(localStorage.getItem("musql:history:" + currentProfileId)) || []; }
+  catch (_) { return []; }
+}
 
 function buildTableHints() {
   const hints = {};
@@ -339,7 +392,12 @@ async function showExplorer() {
   explorerEl.classList.remove("hidden");
   sidebarDbName.textContent = currentDb;
   await loadTableList();
-  addSqlTab();
+  const drafts = loadDrafts();
+  if (drafts.length > 0) {
+    drafts.forEach((text) => addSqlTab(text));
+  } else {
+    addSqlTab();
+  }
 }
 
 async function loadTableList() {
@@ -560,7 +618,7 @@ function openSchemaTab(tableName) {
 
 // ── SQL tab ──
 
-function addSqlTab() {
+function addSqlTab(initialContent) {
   sqlTabCounter++;
   const tabId = "sql-" + sqlTabCounter;
   const title = "SQL" + (sqlTabCounter > 1 ? " " + sqlTabCounter : "");
@@ -603,8 +661,32 @@ function addSqlTab() {
       }
     });
 
+    if (initialContent) editor.setValue(initialContent);
+    editor.on("change", scheduleDraftSave);
+
     const actions = document.createElement("div");
     actions.className = "actions actions-right";
+
+    const historyBtn = document.createElement("button");
+    historyBtn.className = "ghost sql-history-btn";
+    historyBtn.textContent = "History \u25BE";
+    historyBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const history = loadHistory();
+      if (history.length === 0) {
+        showContextMenu(ev, [{ label: "(no history)", action: () => {} }]);
+        return;
+      }
+      const items = history.map((entry) => {
+        const d = new Date(entry.ts);
+        const time = String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+        const sqlPreview = entry.sql.replace(/\s+/g, " ");
+        const label = time + "  " + (sqlPreview.length > 60 ? sqlPreview.substring(0, 60) + "\u2026" : sqlPreview);
+        return { label, action: () => editor.setValue(entry.sql) };
+      });
+      showContextMenu(ev, items);
+    });
+    actions.appendChild(historyBtn);
 
     const runLineBtn = document.createElement("button");
     runLineBtn.className = "ghost";
@@ -699,6 +781,7 @@ function addSqlTab() {
       try {
         for (const sql of statements) {
           const res = await runQuery(sql);
+          saveHistory(sql);
 
           if (res.columns && res.columns.length > 0) {
             lastColumns = res.columns;
@@ -813,8 +896,10 @@ document.addEventListener("keydown", (e) => {
 // ── Reset ──
 
 function resetExplorer() {
+  saveDrafts();
   tabManager.removeAll();
   currentDb = null;
+  currentProfileId = null;
   requestCache = null;
   explorerEl.classList.add("hidden");
   dbModal.classList.add("hidden");
@@ -826,6 +911,7 @@ function resetExplorer() {
 // ── Event wiring ──
 
 dbSwitchBtn.addEventListener("click", () => {
+  saveDrafts();
   tabManager.removeAll();
   showDbModal();
 });
@@ -843,6 +929,7 @@ if (eventApi && eventApi.listen) {
     }
 
     resetExplorer();
+    currentProfileId = id;
     try {
       await loadProfile(id);
 

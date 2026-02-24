@@ -296,6 +296,8 @@ pre {
   box-shadow: 0 4px 16px rgba(0,0,0,0.12);
   padding: 4px 0;
   min-width: 140px;
+  max-height: 60vh;
+  overflow-y: auto;
 }
 .context-menu-item {
   padding: 8px 16px;
@@ -518,6 +520,9 @@ pre {
 .cm-sql-error {
   background: rgba(210, 74, 74, 0.15);
   border-bottom: 2px wavy #d24a4a;
+}
+.sql-history-btn {
+  margin-right: auto;
 }
 .sql-input-area .actions {
   margin-top: 0;
