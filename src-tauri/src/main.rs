@@ -7,7 +7,8 @@ use std::io;
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, Window};
@@ -112,6 +113,16 @@ struct ConnectionCache {
   pool: Pool,
   _tunnel: Option<SshTunnel>,
 }
+
+struct RunningQuery {
+  connection_id: AtomicU32,
+  pool: Mutex<Option<Pool>>,
+}
+
+static RUNNING_QUERY: std::sync::LazyLock<RunningQuery> = std::sync::LazyLock::new(|| RunningQuery {
+  connection_id: AtomicU32::new(0),
+  pool: Mutex::new(None),
+});
 
 fn connection_fingerprint(request: &ConnectionRequest) -> String {
   let ssh_part = match &request.ssh {
@@ -573,12 +584,12 @@ fn test_connection(mut request: ConnectionRequest, profile_id: Option<String>) -
 }
 
 #[tauri::command]
-fn run_query(
+async fn run_query(
   mut request: ConnectionRequest,
   query: String,
   max_rows: Option<usize>,
   profile_id: Option<String>,
-  state: tauri::State<'_, Mutex<Option<ConnectionCache>>>,
+  state: tauri::State<'_, Arc<Mutex<Option<ConnectionCache>>>>,
 ) -> Result<QueryResult, String> {
   if query.trim().is_empty() {
     return Err("Query is empty".to_string());
@@ -587,47 +598,90 @@ fn run_query(
   resolve_password(&mut request, profile_id.as_deref());
   let limit = max_rows.unwrap_or(500);
 
-  let pool = get_or_create_pool(&state, &request)?;
-  let mut conn = pool.get_conn().map_err(|e| format!("Failed to get connection: {e}"))?;
+  // Clone Arc so we can move it into spawn_blocking
+  let cache = Arc::clone(&state);
 
-  // Switch database if specified
-  if let Some(ref db) = request.mysql.database {
-    if !db.trim().is_empty() {
-      conn.query_drop(format!("USE `{}`", db))
-        .map_err(|e| format!("Failed to switch database: {e}"))?;
+  tauri::async_runtime::spawn_blocking(move || {
+    let pool = get_or_create_pool(&cache, &request)?;
+    let mut conn = pool.get_conn().map_err(|e| format!("Failed to get connection: {e}"))?;
+
+    // Store connection ID + pool for cancel support
+    let cid = conn.connection_id();
+    RUNNING_QUERY.connection_id.store(cid, Ordering::SeqCst);
+    if let Ok(mut p) = RUNNING_QUERY.pool.lock() {
+      *p = Some(pool.clone());
     }
-  }
 
-  let mut result = conn
-    .query_iter(query)
-    .map_err(|e| format!("Query failed: {e}"))?;
+    let result = (|| -> Result<QueryResult, String> {
+      // Switch database if specified
+      if let Some(ref db) = request.mysql.database {
+        if !db.trim().is_empty() {
+          conn.query_drop(format!("USE `{}`", db))
+            .map_err(|e| format!("Failed to switch database: {e}"))?;
+        }
+      }
 
-  let columns = result
-    .columns()
-    .as_ref()
-    .iter()
-    .map(|c| c.name_str().to_string())
-    .collect::<Vec<_>>();
+      let mut qr = conn
+        .query_iter(&query)
+        .map_err(|e| format!("Query failed: {e}"))?;
 
-  let mut rows: Vec<Vec<serde_json::Value>> = Vec::new();
-  while let Some(next_row) = result.next() {
-    let row = next_row.map_err(|e| format!("Row read failed: {e}"))?;
-    rows.push(row_to_json(row));
-    if limit > 0 && rows.len() >= limit {
-      break;
-    }
-  }
+      let columns = qr
+        .columns()
+        .as_ref()
+        .iter()
+        .map(|c| c.name_str().to_string())
+        .collect::<Vec<_>>();
 
-  Ok(QueryResult {
-    columns,
-    rows,
-    affected_rows: result.affected_rows(),
+      let mut rows: Vec<Vec<serde_json::Value>> = Vec::new();
+      while let Some(next_row) = qr.next() {
+        let row = next_row.map_err(|e| format!("Row read failed: {e}"))?;
+        rows.push(row_to_json(row));
+        if limit > 0 && rows.len() >= limit {
+          break;
+        }
+      }
+
+      Ok(QueryResult {
+        columns,
+        rows,
+        affected_rows: qr.affected_rows(),
+      })
+    })();
+
+    RUNNING_QUERY.connection_id.store(0, Ordering::SeqCst);
+    result
   })
+  .await
+  .map_err(|e| format!("Task error: {e}"))?
+}
+
+#[tauri::command]
+async fn cancel_query() -> Result<(), String> {
+  let cid = RUNNING_QUERY.connection_id.load(Ordering::SeqCst);
+  if cid == 0 {
+    return Ok(());
+  }
+
+  let pool_opt = RUNNING_QUERY.pool.lock()
+    .map_err(|e| format!("Lock error: {e}"))?
+    .clone();
+  let Some(pool) = pool_opt else {
+    return Ok(());
+  };
+
+  tauri::async_runtime::spawn_blocking(move || {
+    let mut conn = pool.get_conn()
+      .map_err(|e| format!("Failed to get cancel connection: {e}"))?;
+    conn.query_drop(format!("KILL QUERY {cid}"))
+      .map_err(|e| format!("Failed to cancel query: {e}"))
+  })
+  .await
+  .map_err(|e| format!("Task error: {e}"))?
 }
 
 #[tauri::command]
 fn disconnect_pool(
-  state: tauri::State<'_, Mutex<Option<ConnectionCache>>>,
+  state: tauri::State<'_, Arc<Mutex<Option<ConnectionCache>>>>,
 ) -> Result<(), String> {
   let mut guard = state.lock().map_err(|e| format!("Lock error: {e}"))?;
   *guard = None;
@@ -916,7 +970,7 @@ fn hide_window(window: Window) -> Result<(), String> {
 
 fn main() {
   tauri::Builder::default()
-    .manage(Mutex::new(None::<ConnectionCache>))
+    .manage(Arc::new(Mutex::new(None::<ConnectionCache>)))
     .on_window_event(|window, event| {
       if let tauri::WindowEvent::CloseRequested { api, .. } = event {
         if window.label() != "main" {
@@ -939,6 +993,7 @@ fn main() {
       open_query_window,
       hide_window,
       disconnect_pool,
+      cancel_query,
       export_file,
       pick_file,
       list_ssh_config_hosts,

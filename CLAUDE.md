@@ -56,7 +56,10 @@
   - DB 選択モーダル → サイドバーにテーブル一覧 → タブで Data/Schema/SQL 表示。
   - SQL タブは CodeMirror 5 エディタ（MySQL シンタックスハイライト、キーワード＋テーブル名補完）。
   - 実行時エラーは `near '...' at line N` をパースしてエディタ上に赤波線でマーク。
-  - `run_query` でクエリ実行（接続は Pool キャッシュ、DB 切替は `USE` で実行）。
+  - `run_query` でクエリ実行（async + `spawn_blocking`、接続は Pool キャッシュ、DB 切替は `USE` で実行）。
+  - クエリキャンセル: 実行中に Cancel ボタン表示。`cancel_query`（async）が `KILL QUERY <connection_id>` を別コネクションで送信。キャンセル時は「Query cancelled.」表示。
+  - SQL 整形: Format ボタンで `sql-formatter`（vendor UMD）を使い選択範囲またはエディタ全体を MySQL 方言で整形。
+  - 多重クリック抑止: 実行中は Run ボタンを disabled、Cancel ボタンもクリック後に disabled で二度押し防止。
   - `export_file` でネイティブ保存ダイアログ経由のファイル書き出し（CSV/TSV/SQL）。
   - エディタ下書き保存: SQL タブの内容を localStorage にプロファイル単位で自動保存（デバウンス 1 秒）。DB 切替・再接続時に復元。
   - 実行履歴: 成功した SQL を `musql:history:<profileId>` に最大 100 件保存。History ボタンから呼び出し・エディタに挿入。
@@ -72,12 +75,14 @@
 - `ui/query.html` + `ui/query.js` — DB エクスプローラ画面。
 - `ui/style.css` — 共通スタイル。
 - `ui/lib/codemirror/` — CodeMirror 5 vendored ファイル（コア、SQL モード、補完アドオン）。
+- `ui/lib/sql-formatter/` — sql-formatter vendored UMD ビルド（SQL 整形）。
 
 ## Behavior notes
 - パスワード安全保存: `keyring` クレート（Windows Credential Manager）で profile ID をキーにパスワードを保存。`connections.json` にはパスワードを含めない（`#[serde(skip_serializing)]`）。`load_profiles()` で旧 JSON 内パスワードを keyring へ自動マイグレーション。`test_connection` / `run_query` は `profile_id` パラメータで keyring からパスワードを解決。`has_password` コマンドで保存状態を確認可能。Settings UI はプレースホルダー `"(saved - leave blank to keep)"` で保存済みを表示。
 - `test_connection` は `SELECT 1` を実行（per-request 接続、プールは使わない）。
-- `run_query` は任意 SQL を実行して列名＋行＋ `affected_rows` を返却。`max_rows` パラメータで行数制限（デフォルト 500、0 で無制限）。
-- 接続プール: `ConnectionCache` で Pool + SshTunnel をキャッシュ。fingerprint（ホスト/ポート/ユーザー/SSL/SSH 設定）が同じなら再利用。DB は Pool opts に含めず `USE` で切替。
+- `run_query` は `async fn` + `spawn_blocking` で UI スレッドをブロックせず任意 SQL を実行。列名＋行＋ `affected_rows` を返却。`max_rows` パラメータで行数制限（デフォルト 500、0 で無制限）。
+- クエリキャンセル: `RUNNING_QUERY`（グローバル `LazyLock<RunningQuery>`）に実行中の connection_id と Pool クローンを保持。`cancel_query`（async）が `KILL QUERY` を `spawn_blocking` で別コネクション経由で送信。
+- 接続プール: `ConnectionCache` を `Arc<Mutex<...>>` で管理し `spawn_blocking` に移動可能。Pool + SshTunnel をキャッシュ。fingerprint（ホスト/ポート/ユーザー/SSL/SSH 設定）が同じなら再利用。DB は Pool opts に含めず `USE` で切替。
 - SSL モード: `MySqlConfig.ssl_mode` で DISABLED / REQUIRED / VERIFY_CA / VERIFY_IDENTITY を選択。VERIFY_CA/VERIFY_IDENTITY 時は `tls_ca_cert_path` で CA 証明書を指定可能。`native-tls` (SChannel) バックエンドで PEM/DER 対応。旧 `tls_enabled`/`tls_skip_verify` フィールドは `skip_serializing` で読み込み互換のみ残し、`load_profiles()` で自動マイグレーション。
 - `pick_file` コマンド: `rfd` でネイティブファイル選択ダイアログを表示しパスを返す。CA 証明書・SSH IdentityFile の Browse に使用。
 - `export_file` は `rfd` クレートでネイティブ保存ダイアログを表示しファイル書き出し。
@@ -97,8 +102,6 @@
 ## TODO
 (上から優先度順)
 
-- SQL実行の多重クリック抑止
-- SQL入力のSQL整形
 - Tableタブの機能強化
   - カラム毎のソート対応
   - 1行を見易く表示
@@ -128,8 +131,9 @@
   - 保存: MySQL パスワードと同様に keyring に保存（キー: `musql:ssh-passphrase:<profileId>` 等）。Settings UI にパスフレーズ入力欄を追加。
   - 自動入力: SSH トンネル起動時に `SSH_ASKPASS` + `SSH_ASKPASS_REQUIRE=force` で一時 `.cmd` スクリプト（パスフレーズを echo）を指定。確立後に即削除。
   - 都度入力: パスフレーズ未保存時は Tauri dialog でパスフレーズ入力を求め、同様に SSH_ASKPASS 経由で渡す。
-- SQL 多重クリック抑止: 実行ボタンを実行中 disabled にし、完了/エラー後に復帰。
-- SQL 整形: `sql-formatter` ライブラリ（UMD スタンドアロンビルド）を vendor して `ui/lib/` に配置。エディタ上にフォーマットボタンを追加、選択範囲またはエディタ全体を整形。Node.js 不要。
+- SQL 多重クリック抑止: **実装済み**。実行中は Run ボタン disabled + Cancel ボタン表示。Cancel も一度押したら disabled。`executing` フラグで Ctrl+Enter 含む全エントリポイントをガード。
+- SQL 整形: **実装済み**。`sql-formatter@15.4.10` UMD ビルドを `ui/lib/sql-formatter/` に vendor。Format ボタンで選択範囲またはエディタ全体を MySQL 方言で整形。
+- クエリキャンセル: **実装済み**。`run_query` を `async fn` + `spawn_blocking` で非同期化し UI ブロックを解消。`RUNNING_QUERY` グローバルに connection_id + Pool を保持、`cancel_query`（async）が `KILL QUERY` を別コネクションで送信。JS 側は `cancelled` フラグで結果表示を「Query cancelled.」に差し替え。
 - Table タブ機能強化:
   - カラムソート: `<th>` クリックで ASC/DESC トグル。JS 側でメモリ上の行データを sort して再描画。ソートインジケータ（▲▼）を表示。
   - 1 行詳細表示: 行クリックでモーダルまたはサイドパネルに key-value 形式で表示。長テキスト・JSON を折り返し表示。

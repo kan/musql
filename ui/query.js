@@ -630,6 +630,8 @@ function addSqlTab(initialContent) {
     const editorDiv = document.createElement("div");
     inputArea.appendChild(editorDiv);
 
+    let executing = false;
+
     const editor = CodeMirror(editorDiv, {
       mode: "text/x-mysql",
       lineNumbers: true,
@@ -642,6 +644,7 @@ function addSqlTab(initialContent) {
       },
       extraKeys: {
         "Ctrl-Enter": function () {
+          if (executing) return;
           const stmt = getStatementAtCursor();
           if (stmt) executeStatements([stmt]);
         },
@@ -687,6 +690,41 @@ function addSqlTab(initialContent) {
       showContextMenu(ev, items);
     });
     actions.appendChild(historyBtn);
+
+    // Spacer to push remaining buttons to the right
+    const spacer = document.createElement("div");
+    spacer.style.flex = "1";
+    actions.appendChild(spacer);
+
+    const formatBtn = document.createElement("button");
+    formatBtn.className = "ghost";
+    formatBtn.textContent = "Format";
+    formatBtn.addEventListener("click", () => {
+      const selection = editor.getSelection();
+      if (selection) {
+        const formatted = window.sqlFormatter.format(selection, { language: "mysql" });
+        editor.replaceSelection(formatted);
+      } else {
+        const cursor = editor.getCursor();
+        const formatted = window.sqlFormatter.format(editor.getValue(), { language: "mysql" });
+        editor.setValue(formatted);
+        editor.setCursor(cursor);
+      }
+    });
+    actions.appendChild(formatBtn);
+
+    let cancelled = false;
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.className = "danger";
+    cancelBtn.textContent = "Cancel";
+    cancelBtn.style.display = "none";
+    cancelBtn.addEventListener("click", () => {
+      cancelBtn.disabled = true;
+      cancelled = true;
+      safeInvoke("cancel_query").catch(() => {});
+    });
+    actions.appendChild(cancelBtn);
 
     const runLineBtn = document.createElement("button");
     runLineBtn.className = "ghost";
@@ -764,14 +802,24 @@ function addSqlTab(initialContent) {
       return editor.getValue().split(";").map((s) => s.trim()).filter((s) => s.length > 0);
     }
 
+    function setExecuting(state) {
+      executing = state;
+      runLineBtn.disabled = state;
+      runAllBtn.disabled = state;
+      cancelBtn.style.display = state ? "" : "none";
+      if (state) cancelBtn.disabled = false;
+    }
+
     async function executeStatements(statements) {
       resultArea.innerHTML = "";
       lastColumns = [];
       lastRows = [];
       exportBtn.style.display = "none";
       clearErrorMarks();
+      cancelled = false;
       if (statements.length === 0) return;
 
+      setExecuting(true);
       const multi = statements.length > 1;
       const loadingEl = document.createElement("div");
       loadingEl.className = "result-info";
@@ -781,6 +829,17 @@ function addSqlTab(initialContent) {
       try {
         for (const sql of statements) {
           const res = await runQuery(sql);
+
+          if (cancelled) {
+            loadingEl.remove();
+            const info = document.createElement("div");
+            info.className = "result-info";
+            info.style.color = "#d24a4a";
+            info.textContent = "Query cancelled.";
+            resultArea.appendChild(info);
+            return;
+          }
+
           saveHistory(sql);
 
           if (res.columns && res.columns.length > 0) {
@@ -819,18 +878,22 @@ function addSqlTab(initialContent) {
         const errEl = document.createElement("div");
         errEl.className = "result-info";
         errEl.style.color = "#d24a4a";
-        errEl.textContent = String(error);
+        errEl.textContent = cancelled ? "Query cancelled." : String(error);
         resultArea.appendChild(errEl);
-        markSqlError(String(error));
+        if (!cancelled) markSqlError(String(error));
+      } finally {
+        setExecuting(false);
       }
     }
 
     runLineBtn.addEventListener("click", () => {
+      if (executing) return;
       const stmt = getStatementAtCursor();
       if (stmt) executeStatements([stmt]);
     });
 
     runAllBtn.addEventListener("click", () => {
+      if (executing) return;
       const stmts = getAllStatements();
       if (stmts.length > 0) executeStatements(stmts);
     });
