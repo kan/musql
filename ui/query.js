@@ -222,49 +222,207 @@ async function doExportSql(tableName) {
   await saveFile(content, tableName + ".sql", "SQL", ["sql"]);
 }
 
+// ── Row detail modal ──
+
+function showRowDetailModal(columns, row) {
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+
+  const box = document.createElement("div");
+  box.className = "row-detail-box";
+
+  // Header
+  const header = document.createElement("div");
+  header.className = "row-detail-header";
+  const h3 = document.createElement("h3");
+  h3.textContent = "Row Detail";
+  header.appendChild(h3);
+  const closeBtn = document.createElement("button");
+  closeBtn.className = "row-detail-close";
+  closeBtn.textContent = "\u00D7";
+  header.appendChild(closeBtn);
+  box.appendChild(header);
+
+  // Body
+  const body = document.createElement("div");
+  body.className = "row-detail-body";
+  const grid = document.createElement("div");
+  grid.className = "row-detail-grid";
+
+  columns.forEach((col, i) => {
+    const keyEl = document.createElement("div");
+    keyEl.className = "row-detail-key";
+    keyEl.textContent = col;
+    grid.appendChild(keyEl);
+
+    const valEl = document.createElement("div");
+    valEl.className = "row-detail-val";
+    const val = row[i];
+
+    if (val === null || val === undefined) {
+      valEl.classList.add("null-value");
+      valEl.textContent = "NULL";
+    } else if (val === "") {
+      valEl.classList.add("null-value");
+      valEl.textContent = "EMPTY";
+    } else {
+      const s = String(val);
+      // Try to detect and pretty-print JSON
+      if ((s.startsWith("{") || s.startsWith("[")) && s.length > 2) {
+        try {
+          const parsed = JSON.parse(s);
+          valEl.textContent = JSON.stringify(parsed, null, 2);
+          valEl.classList.add("monospace");
+        } catch (_) {
+          valEl.textContent = s;
+        }
+      } else {
+        valEl.textContent = s;
+      }
+      // Long values get monospace for readability
+      if (s.length > 200 && !valEl.classList.contains("monospace")) {
+        valEl.classList.add("monospace");
+      }
+    }
+    grid.appendChild(valEl);
+  });
+
+  body.appendChild(grid);
+  box.appendChild(body);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+
+  function close() {
+    overlay.remove();
+    document.removeEventListener("keydown", onKey);
+  }
+  function onKey(e) {
+    if (e.key === "Escape") close();
+  }
+  document.addEventListener("keydown", onKey);
+  closeBtn.addEventListener("click", close);
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) close();
+  });
+}
+
 // ── renderTable utility ──
 
-function renderTable(columns, rows, container) {
+function renderTable(columns, rows, container, onRowClick, sortState) {
   container.innerHTML = "";
   const scrollDiv = document.createElement("div");
   scrollDiv.className = "table-scroll";
 
   const table = document.createElement("table");
   table.className = "result-table";
+  if (onRowClick) table.classList.add("clickable-rows");
+
+  // Sort state — use external object if provided, else local
+  const ss = sortState || { colIndex: -1, dir: null };
 
   const thead = document.createElement("thead");
   const headerRow = document.createElement("tr");
-  columns.forEach((col) => {
+  const thEls = [];
+  columns.forEach((col, ci) => {
     const th = document.createElement("th");
-    th.textContent = col;
+    th.classList.add("sortable");
+
+    const label = document.createTextNode(col);
+    th.appendChild(label);
+
+    const indicator = document.createElement("span");
+    indicator.className = "sort-indicator";
+    // Restore indicator from existing state
+    if (ci === ss.colIndex && ss.dir === "asc") { indicator.textContent = " \u25B2"; th.classList.add("sort-active"); }
+    else if (ci === ss.colIndex && ss.dir === "desc") { indicator.textContent = " \u25BC"; th.classList.add("sort-active"); }
+    th.appendChild(indicator);
+
+    th.addEventListener("click", () => {
+      if (ss.colIndex === ci) {
+        if (ss.dir === "asc") ss.dir = "desc";
+        else if (ss.dir === "desc") { ss.dir = null; ss.colIndex = -1; }
+        else ss.dir = "asc";
+      } else {
+        ss.colIndex = ci;
+        ss.dir = "asc";
+      }
+      // Update header indicators
+      thEls.forEach((t, ti) => {
+        const ind = t.querySelector(".sort-indicator");
+        t.classList.toggle("sort-active", ti === ss.colIndex && ss.dir !== null);
+        if (ti === ss.colIndex && ss.dir === "asc") ind.textContent = " \u25B2";
+        else if (ti === ss.colIndex && ss.dir === "desc") ind.textContent = " \u25BC";
+        else ind.textContent = "";
+      });
+      rebuildTbody();
+    });
+
+    thEls.push(th);
     headerRow.appendChild(th);
   });
   thead.appendChild(headerRow);
   table.appendChild(thead);
 
   const tbody = document.createElement("tbody");
-  rows.forEach((row) => {
-    const tr = document.createElement("tr");
-    columns.forEach((_, i) => {
-      const td = document.createElement("td");
-      const val = row[i];
-      if (val === null || val === undefined) {
-        td.classList.add("null-value");
-        td.textContent = "NULL";
-      } else if (val === "") {
-        td.classList.add("null-value");
-        td.textContent = "EMPTY";
-      } else {
-        if (typeof val === "number") {
-          td.style.textAlign = "right";
-        }
-        td.textContent = String(val);
-      }
-      tr.appendChild(td);
-    });
-    tbody.appendChild(tr);
-  });
   table.appendChild(tbody);
+
+  function getSortedRows() {
+    if (ss.colIndex < 0 || ss.dir === null) return rows;
+    const sorted = rows.slice();
+    const ci = ss.colIndex;
+    const dir = ss.dir === "asc" ? 1 : -1;
+    sorted.sort((a, b) => {
+      const va = a[ci];
+      const vb = b[ci];
+      // NULL always last
+      if ((va === null || va === undefined) && (vb === null || vb === undefined)) return 0;
+      if (va === null || va === undefined) return 1;
+      if (vb === null || vb === undefined) return -1;
+      // EMPTY before NULL but after real values — empty goes toward end
+      if (va === "" && vb === "") return 0;
+      if (va === "") return 1;
+      if (vb === "") return -1;
+      // Numeric comparison
+      if (typeof va === "number" && typeof vb === "number") return (va - vb) * dir;
+      const na = Number(va);
+      const nb = Number(vb);
+      if (!isNaN(na) && !isNaN(nb) && va !== "" && vb !== "") return (na - nb) * dir;
+      // String comparison
+      return String(va).localeCompare(String(vb)) * dir;
+    });
+    return sorted;
+  }
+
+  function rebuildTbody() {
+    tbody.innerHTML = "";
+    const sorted = getSortedRows();
+    sorted.forEach((row) => {
+      const tr = document.createElement("tr");
+      columns.forEach((_, i) => {
+        const td = document.createElement("td");
+        const val = row[i];
+        if (val === null || val === undefined) {
+          td.classList.add("null-value");
+          td.textContent = "NULL";
+        } else if (val === "") {
+          td.classList.add("null-value");
+          td.textContent = "EMPTY";
+        } else {
+          if (typeof val === "number") {
+            td.style.textAlign = "right";
+          }
+          td.textContent = String(val);
+        }
+        tr.appendChild(td);
+      });
+      if (onRowClick) {
+        tr.addEventListener("click", () => onRowClick(columns, row));
+      }
+      tbody.appendChild(tr);
+    });
+  }
+
+  rebuildTbody();
 
   scrollDiv.appendChild(table);
   container.appendChild(scrollDiv);
@@ -467,7 +625,7 @@ function openDataTab(tableName) {
     body.appendChild(info);
 
     const tableContainer = document.createElement("div");
-    tableContainer.className = "table-scroll";
+    tableContainer.className = "table-wrap";
     body.appendChild(tableContainer);
 
     const footerBar = document.createElement("div");
@@ -481,14 +639,87 @@ function openDataTab(tableName) {
     let totalRows = 0;
     let lastColumns = [];
     let lastRows = [];
+    const sortState = { colIndex: -1, dir: null };
+
+    // Column metadata from INFORMATION_SCHEMA
+    let allColumns = [];    // [{name, dataType, columnKey}]
+    let blobCols = [];      // column names
+    let textCols = [];      // column names
+    let pkCols = [];        // column names
+    let truncateMode = true;
+    let hasTruncatable = false;
+
+    async function detectColumns() {
+      const sql = "SELECT COLUMN_NAME, DATA_TYPE, COLUMN_KEY " +
+        "FROM INFORMATION_SCHEMA.COLUMNS " +
+        "WHERE TABLE_SCHEMA = '" + currentDb.replace(/'/g, "\\'") + "' " +
+        "AND TABLE_NAME = '" + tableName.replace(/'/g, "\\'") + "' " +
+        "ORDER BY ORDINAL_POSITION";
+      const res = await runQuery(sql);
+      allColumns = res.rows.map((r) => ({ name: r[0], dataType: (r[1] || "").toLowerCase(), columnKey: r[2] || "" }));
+      const blobTypes = ["blob", "tinyblob", "mediumblob", "longblob", "binary", "varbinary"];
+      const textTypes = ["text", "tinytext", "mediumtext", "longtext"];
+      blobCols = allColumns.filter((c) => blobTypes.includes(c.dataType)).map((c) => c.name);
+      textCols = allColumns.filter((c) => textTypes.includes(c.dataType)).map((c) => c.name);
+      pkCols = allColumns.filter((c) => c.columnKey === "PRI").map((c) => c.name);
+      hasTruncatable = blobCols.length > 0 || textCols.length > 0;
+    }
+
+    function buildSelectExpr() {
+      if (!truncateMode || !hasTruncatable) return "*";
+      return allColumns.map((c) => {
+        const q = "`" + c.name + "`";
+        if (blobCols.includes(c.name)) {
+          return "'(BLOB)' AS " + q;
+        }
+        if (textCols.includes(c.name)) {
+          return "CASE WHEN CHAR_LENGTH(" + q + ") > 200 THEN CONCAT(LEFT(" + q + ", 200), '\u2026') ELSE " + q + " END AS " + q;
+        }
+        return q;
+      }).join(", ");
+    }
+
+    function onRowClick(columns, row) {
+      if (pkCols.length > 0) {
+        // Build WHERE clause from PK values in current row
+        const whereParts = pkCols.map((pk) => {
+          const idx = columns.indexOf(pk);
+          if (idx === -1) return null;
+          const val = row[idx];
+          if (val === null || val === undefined) return "`" + pk + "` IS NULL";
+          if (typeof val === "number") return "`" + pk + "` = " + val;
+          return "`" + pk + "` = '" + String(val).replace(/'/g, "\\'") + "'";
+        }).filter(Boolean);
+
+        if (whereParts.length > 0) {
+          // Fetch full row but keep BLOB columns as placeholder (not worth transferring)
+          const detailCols = allColumns.map((c) => {
+            if (blobCols.includes(c.name)) return "'(BLOB)' AS `" + c.name + "`";
+            return "`" + c.name + "`";
+          }).join(", ");
+          runQuery("SELECT " + detailCols + " FROM `" + tableName + "` WHERE " + whereParts.join(" AND ") + " LIMIT 1")
+            .then((res) => {
+              if (res.rows.length > 0) {
+                showRowDetailModal(res.columns, res.rows[0]);
+              } else {
+                showRowDetailModal(columns, row);
+              }
+            })
+            .catch(() => showRowDetailModal(columns, row));
+          return;
+        }
+      }
+      showRowDetailModal(columns, row);
+    }
 
     async function loadPage() {
       info.textContent = "Loading...";
       tableContainer.innerHTML = "";
       try {
         const offset = currentPage * pageSize;
+        const selectExpr = buildSelectExpr();
         const res = await runQuery(
-          "SELECT * FROM `" + tableName + "` LIMIT " + offset + ", " + pageSize
+          "SELECT " + selectExpr + " FROM `" + tableName + "` LIMIT " + offset + ", " + pageSize
         );
         lastColumns = res.columns;
         lastRows = res.rows;
@@ -499,7 +730,7 @@ function openDataTab(tableName) {
           const to = offset + res.rows.length;
           info.textContent = "Rows " + from + "\u2013" + to + " of " + totalRows;
         }
-        renderTable(res.columns, res.rows, tableContainer);
+        renderTable(res.columns, res.rows, tableContainer, onRowClick, sortState);
         renderFooter();
       } catch (error) {
         info.textContent = String(error);
@@ -552,9 +783,22 @@ function openDataTab(tableName) {
       });
       footerBar.appendChild(sizeSelector);
 
-      // Actions: Schema + Export
+      // Actions: Truncate + Schema + Export
       const actions = document.createElement("div");
       actions.className = "footer-actions";
+
+      if (hasTruncatable) {
+        const truncBtn = document.createElement("button");
+        truncBtn.className = "ghost truncate-btn" + (truncateMode ? " active" : "");
+        truncBtn.textContent = "Truncate";
+        truncBtn.title = "BLOB/TEXT カラムの切り詰め表示";
+        truncBtn.addEventListener("click", () => {
+          truncateMode = !truncateMode;
+          truncBtn.classList.toggle("active", truncateMode);
+          loadPage();
+        });
+        actions.appendChild(truncBtn);
+      }
 
       const schemaBtn = document.createElement("button");
       schemaBtn.className = "ghost paging-btn";
@@ -574,9 +818,12 @@ function openDataTab(tableName) {
       footerBar.appendChild(actions);
     }
 
-    runQuery("SELECT COUNT(*) FROM `" + tableName + "`")
-      .then((res) => {
-        totalRows = res.rows[0][0];
+    Promise.all([
+      runQuery("SELECT COUNT(*) FROM `" + tableName + "`"),
+      detectColumns(),
+    ])
+      .then(([countRes]) => {
+        totalRows = countRes.rows[0][0];
         return loadPage();
       })
       .catch((error) => {
@@ -600,7 +847,7 @@ function openSchemaTab(tableName) {
     body.appendChild(info);
 
     const tableContainer = document.createElement("div");
-    tableContainer.className = "table-scroll";
+    tableContainer.className = "table-wrap";
     body.appendChild(tableContainer);
 
     const footerBar = document.createElement("div");
@@ -622,7 +869,7 @@ function openSchemaTab(tableName) {
     runQuery("DESCRIBE `" + tableName + "`")
       .then((res) => {
         info.textContent = res.rows.length + " columns";
-        renderTable(res.columns, res.rows, tableContainer);
+        renderTable(res.columns, res.rows, tableContainer, (cols, row) => showRowDetailModal(cols, row));
       })
       .catch((error) => {
         info.textContent = String(error);
@@ -874,7 +1121,7 @@ function addSqlTab(initialContent) {
 
             const wrapper = document.createElement("div");
             resultArea.appendChild(wrapper);
-            renderTable(res.columns, res.rows, wrapper);
+            renderTable(res.columns, res.rows, wrapper, (cols, row) => showRowDetailModal(cols, row));
           } else {
             const info = document.createElement("div");
             info.className = "result-info";

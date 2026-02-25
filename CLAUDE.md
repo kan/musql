@@ -95,6 +95,9 @@
 - Profile の色とタグ: `ConnectionProfile` に `color: Option<String>` と `tags: Vec<String>`（`#[serde(default)]` で後方互換）。Settings UI に 8 色カラーパレット（red/orange/yellow/green/teal/blue/purple/pink + None）とタグ入力（プリセット + 既存タグ補完、Enter/カンマ確定、Backspace 削除）。メイン画面ツリーに左端カラーバー（4px）とタグバッジを表示。
 - タグフィルター: メイン画面の検索欄下にタグチップバーを表示。クリックでタグ絞り込み（トグル）。テキストフィルターとの AND 条件。タグ未使用時は非表示。
 - `open_settings_window` は `id` と `group_id` をペイロード `{ id, group_id }` として emit。グループ右クリック「設定を追加」で group_id 付きで新規作成可能。
+- カラムソート: `renderTable()` で全テーブル（Data/Schema/SQL 結果）の `<th>` クリックで ASC→DESC→なし の 3 ステートトグル。ソートインジケータ（▲▼）表示。`rows.slice()` で作業コピーをソートし原本不変。NULL は常に最後、空文字は NULL の手前。外部 `sortState` オブジェクトを渡すとページ切替でもソート維持。
+- 行詳細モーダル: テーブル行クリックで `showRowDetailModal(columns, row)` を表示。`.row-detail-box` で grid(160px 1fr) のカラム名・値ペア。JSON 風文字列は自動整形・monospace 表示。×ボタン/overlay クリック/Escape で閉じる。Data タブは PK ベースで `SELECT`（BLOB 除外）し全文データを取得して表示。PK なし時は一覧データをそのまま表示。
+- BLOB/TEXT 切り詰め（Data タブ）: `INFORMATION_SCHEMA.COLUMNS` で BLOB 系・TEXT 系・PK カラムを検出。Truncate モード ON（デフォルト）で BLOB→`'(BLOB)'` プレースホルダー、TEXT→SQL レベルで 200 文字に切り詰め。フッターの Truncate ボタンで ON/OFF トグル。BLOB/TEXT カラムがないテーブルではボタン非表示。
 
 ## Limits / defaults
 - 結果行はデフォルト最大 500 件（`max_rows` で変更可能、エクスポート時は無制限）。
@@ -104,10 +107,6 @@
 ## TODO
 (上から優先度順)
 
-- Tableタブの機能強化
-  - カラム毎のソート対応
-  - 1行を見易く表示
-  - BLOBカラムの取得と表示を回避する機能
 - 見た目の強化
   - ダークモード対応
   - i18n対応
@@ -136,10 +135,7 @@
 - SQL 多重クリック抑止: **実装済み**。実行中は Run ボタン disabled + Cancel ボタン表示。Cancel も一度押したら disabled。`executing` フラグで Ctrl+Enter 含む全エントリポイントをガード。
 - SQL 整形: **実装済み**。`sql-formatter@15.4.10` UMD ビルドを `ui/lib/sql-formatter/` に vendor。Format ボタンで選択範囲またはエディタ全体を MySQL 方言で整形。
 - クエリキャンセル: **実装済み**。`run_query` を `async fn` + `spawn_blocking` で非同期化し UI ブロックを解消。`RUNNING_QUERY` グローバルに connection_id + Pool を保持、`cancel_query`（async）が `KILL QUERY` を別コネクションで送信。JS 側は `cancelled` フラグで結果表示を「Query cancelled.」に差し替え。
-- Table タブ機能強化:
-  - カラムソート: `<th>` クリックで ASC/DESC トグル。JS 側でメモリ上の行データを sort して再描画。ソートインジケータ（▲▼）を表示。
-  - 1 行詳細表示: 行クリックでモーダルまたはサイドパネルに key-value 形式で表示。長テキスト・JSON を折り返し表示。
-  - BLOB 回避: `INFORMATION_SCHEMA.COLUMNS` で BLOB/BINARY 型カラムを検出。Data タブの SELECT 生成時にそのカラムを `'(BLOB)' AS col` に置換。オプションでトグル可能に。
+- Table タブ機能強化: **実装済み**。カラムソート（`<th>` クリックで ASC/DESC/なしトグル、▲▼インジケータ、ページ切替でも維持）。行詳細モーダル（行クリックで key-value 表示、PK ベース全文取得、JSON 自動整形）。BLOB/TEXT 切り詰め（`INFORMATION_SCHEMA.COLUMNS` で検出、BLOB は `'(BLOB)'` プレースホルダー、TEXT は 200 文字切り詰め、Truncate ボタンでトグル）。
 - ダークモード: CSS 変数を light/dark で切り替え。`prefers-color-scheme` メディアクエリ + 手動切替トグル。設定を localStorage に保存。
 - i18n: 簡易 i18n。`ui/i18n/ja.json`, `ui/i18n/en.json` で言語リソース管理。`t('key')` ヘルパーで文字列取得。localStorage で言語選択を保存。HTML 上のテキストは data 属性または JS で差し替え。
 - アイコン: 軽量 SVG アイコンセット（Lucide 等）を vendor。ボタンやメニューにインライン SVG で適用。
