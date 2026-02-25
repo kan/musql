@@ -15,14 +15,16 @@
       </div>
 
       <div class="panel-header">
-        <h2>Connections</h2>
+        <h2 id="connections-heading">Connections</h2>
         <div class="panel-header-buttons">
           <button id="group-new" class="ghost">新規グループ</button>
           <button id="profile-new">新規</button>
         </div>
       </div>
       <section id="list-panel" class="panel">
-        <input id="filter-input" type="text" placeholder="フィルター..." autocomplete="off" />
+        <div id="filter-wrapper" class="filter-input-wrapper">
+          <input id="filter-input" type="text" placeholder="フィルター..." autocomplete="off" />
+        </div>
         <div id="tag-filter-bar" class="tag-filter-bar"></div>
         <div id="profile-tree" class="tree"></div>
       </section>
@@ -31,6 +33,7 @@
 
     </main>
 
-    <script src="./app.js?v=5"></script>
+    <script src="./icons.js"></script>
+    <script src="./app.js?v=6"></script>
   </body>
 </html>

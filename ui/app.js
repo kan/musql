@@ -9,6 +9,22 @@ const contextMenuEl = document.getElementById("context-menu");
 const filterInput = document.getElementById("filter-input");
 const tagFilterBarEl = document.getElementById("tag-filter-bar");
 
+// Apply icons to header buttons and heading
+document.getElementById("connections-heading").innerHTML = icon('database', 20) + ' Connections';
+groupNewBtn.innerHTML = icon('folder-plus');
+groupNewBtn.title = '新規グループ';
+profileNewBtn.innerHTML = icon('plus');
+profileNewBtn.title = '新規';
+
+// Search icon inside filter input
+(function() {
+  var wrapper = document.getElementById("filter-wrapper");
+  var span = document.createElement("span");
+  span.className = "filter-icon";
+  span.innerHTML = icon('search', 15);
+  wrapper.insertBefore(span, wrapper.firstChild);
+})();
+
 let profileData = { groups: [], items: [] };
 let collapsedGroups = JSON.parse(localStorage.getItem("musql:collapsed") || "{}");
 let dragState = null; // { type: "item"|"group", id }
@@ -52,6 +68,12 @@ function buildItemNode(item) {
     el.appendChild(bar);
   }
 
+  // Connection icon
+  const iconEl = document.createElement("span");
+  iconEl.className = "tree-item-icon";
+  iconEl.innerHTML = icon('database', 16);
+  el.appendChild(iconEl);
+
   const meta = document.createElement("div");
   meta.className = "meta";
   const nameEl = document.createElement("div");
@@ -89,11 +111,11 @@ function buildItemNode(item) {
     e.preventDefault();
     e.stopPropagation();
     showContextMenu(e, [
-      { label: "開く", action: () => openQuery(item.id) },
-      { label: "設定", action: () => openSettings(item.id) },
+      { label: "開く", icon: "external-link", action: () => openQuery(item.id) },
+      { label: "設定", icon: "settings", action: () => openSettings(item.id) },
       { separator: true },
-      { label: "複製", action: () => duplicateProfile(item.id) },
-      { label: "削除", danger: true, action: () => deleteProfile(item.id) },
+      { label: "複製", icon: "copy", action: () => duplicateProfile(item.id) },
+      { label: "削除", icon: "trash-2", danger: true, action: () => deleteProfile(item.id) },
     ]);
   });
 
@@ -132,6 +154,11 @@ function buildGroupNode(group, children, forceExpand) {
   toggle.textContent = collapsed ? "\u25B6" : "\u25BC";
   header.appendChild(toggle);
 
+  const folderIcon = document.createElement("span");
+  folderIcon.className = "tree-group-icon";
+  folderIcon.innerHTML = icon(collapsed ? 'folder' : 'folder-open', 16);
+  header.appendChild(folderIcon);
+
   const nameSpan = document.createElement("span");
   nameSpan.textContent = group.name;
   header.appendChild(nameSpan);
@@ -153,10 +180,10 @@ function buildGroupNode(group, children, forceExpand) {
     e.preventDefault();
     e.stopPropagation();
     showContextMenu(e, [
-      { label: "設定を追加", action: () => openSettings("", group.id) },
+      { label: "設定を追加", icon: "plus", action: () => openSettings("", group.id) },
       { separator: true },
-      { label: "リネーム", action: () => renameGroup(group.id, group.name) },
-      { label: "削除", danger: true, action: () => deleteGroup(group.id) },
+      { label: "リネーム", icon: "pencil", action: () => renameGroup(group.id, group.name) },
+      { label: "削除", icon: "trash-2", danger: true, action: () => deleteGroup(group.id) },
     ]);
   });
 
@@ -212,7 +239,7 @@ function renderTagFilterBar() {
   [...tags].sort().forEach((tag) => {
     const chip = document.createElement("span");
     chip.className = "tag-filter-chip" + (activeFilterTag === tag ? " active" : "");
-    chip.textContent = tag;
+    chip.innerHTML = icon('search', 12) + ' ' + tag;
     chip.addEventListener("click", () => {
       activeFilterTag = activeFilterTag === tag ? null : tag;
       renderTagFilterBar();
@@ -336,7 +363,11 @@ function showContextMenu(e, menuItems) {
     }
     const el = document.createElement("div");
     el.className = "context-menu-item";
-    el.textContent = mi.label;
+    if (mi.icon) {
+      el.innerHTML = icon(mi.icon) + '<span>' + mi.label + '</span>';
+    } else {
+      el.textContent = mi.label;
+    }
     if (mi.danger) el.style.color = "#d24a4a";
     el.addEventListener("click", () => {
       hideContextMenu();

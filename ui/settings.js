@@ -19,6 +19,16 @@ const caCertInput = document.getElementById("mysql-ca-cert");
 const caCertBrowseBtn = document.getElementById("mysql-ca-cert-browse");
 const sshKeyBrowseBtn = document.getElementById("ssh-key-browse");
 
+// Apply icons to heading and buttons
+document.getElementById("settings-heading").innerHTML = icon('settings', 24) + ' Settings';
+testBtn.innerHTML = icon('zap') + '接続テスト';
+connectBtn.innerHTML = icon('play') + '接続';
+saveBtn.innerHTML = icon('save') + '保存';
+cancelBtn.innerHTML = icon('x') + 'キャンセル';
+deleteBtn.innerHTML = icon('trash-2') + '削除';
+caCertBrowseBtn.innerHTML = icon('folder-open') + 'Browse...';
+sshKeyBrowseBtn.innerHTML = icon('folder-open') + 'Browse...';
+
 let selectedProfileId = "";
 let selectedGroupId = null;
 let selectedOrder = 0;

@@ -79,6 +79,7 @@
 - `ui/icon.svg` — アプリアイコン（鼠モチーフ SVG）。favicon + main ヘッダーロゴ。
 - `ui/icon.png` — アイコン変換元 PNG。`cargo tauri icon` で `src-tauri/icons/` を生成。
 - `src-tauri/icons/` — Tauri アプリアイコン（各サイズ PNG/ICO/ICNS）。`cargo tauri icon ui/icon.png` で再生成。
+- `ui/icons.js` — Lucide アイコン SVG パスデータ（26 個）+ `icon(name, size)` ヘルパー関数。
 - `ui/lib/codemirror/` — CodeMirror 5 vendored ファイル（コア、SQL モード、補完アドオン）。
 - `ui/lib/sql-formatter/` — sql-formatter vendored UMD ビルド（SQL 整形）。
 
@@ -113,7 +114,6 @@
 - 見た目の強化
   - ダークモード対応
   - i18n対応
-  - アイコンを適宜使用
 - 接続設定のインポートとエクスポート
 - docker上のmysqlへの簡単アクセス
 - ビルド・配布手段の検討
@@ -140,7 +140,7 @@
 - Table タブ機能強化: **実装済み**。カラムソート（`<th>` クリックで ASC/DESC/なしトグル、▲▼インジケータ、ページ切替でも維持）。行詳細モーダル（行クリックで key-value 表示、PK ベース全文取得、JSON 自動整形）。BLOB/TEXT 切り詰め（`INFORMATION_SCHEMA.COLUMNS` で検出、BLOB は `'(BLOB)'` プレースホルダー、TEXT は 200 文字切り詰め、Truncate ボタンでトグル）。
 - ダークモード: CSS 変数を light/dark で切り替え。`prefers-color-scheme` メディアクエリ + 手動切替トグル。設定を localStorage に保存。
 - i18n: 簡易 i18n。`ui/i18n/ja.json`, `ui/i18n/en.json` で言語リソース管理。`t('key')` ヘルパーで文字列取得。localStorage で言語選択を保存。HTML 上のテキストは data 属性または JS で差し替え。
-- アイコン: 軽量 SVG アイコンセット（Lucide 等）を vendor。ボタンやメニューにインライン SVG で適用。
+- アイコン: **実装済み**。Lucide SVG アイコン 26 個を `ui/icons.js` に格納（MIT ライセンス、24x24 viewBox、stroke-based）。`icon(name, size)` ヘルパーで `<svg class="icon">` を返す。`stroke="currentColor"` でボタン文字色を自動継承。全 HTML ページの `<script>` で読み込み、ボタン・コンテキストメニュー・見出し・リスト項目・タブヘッダーにインライン SVG で適用。main ヘッダーボタンはアイコンのみ（title 属性でツールチップ）。フィルター入力欄内に虫めがねアイコン配置。タグフィルターチップ内にもアイコン。
 - favicon / アプリアイコン: **実装済み**。鼠モチーフの SVG アイコン (`ui/icon.svg`)。全 HTML に `<link rel="icon">` 設定。`cargo tauri icon ui/icon.png` で Tauri アプリアイコン（タスクバー・タイトルバー・ICO・ICNS）も生成済み。main ウィンドウヘッダーにロゴ + タイトル横並び表示。
 - 接続設定インポート/エクスポート: JSON 形式でファイル書き出し/読み込み。`pick_file` / `export_file` を再利用。パスワードを含めるかはオプション。
 - Docker MySQL: `docker ps` でコンテナ一覧を取得し、MySQL コンテナを検出。ポートマッピングから接続先を自動入力。

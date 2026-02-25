@@ -22,7 +22,7 @@ main {
   padding: 0 16px 32px;
 }
 
-h1 { margin-bottom: 8px; }
+h1 { margin-bottom: 8px; display: inline-flex; align-items: center; gap: 8px; }
 
 .app-header {
   display: flex;
@@ -43,7 +43,7 @@ h1 { margin-bottom: 8px; }
   justify-content: space-between;
   align-items: center;
 }
-.panel-header h2 { margin: 0; }
+.panel-header h2 { margin: 0; display: inline-flex; align-items: center; gap: 6px; }
 .subtitle { margin-top: 0; color: var(--sub); }
 
 .layout {
@@ -137,6 +137,9 @@ textarea {
 }
 
 button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   border: 0;
   border-radius: 8px;
   padding: 10px 16px;
@@ -231,9 +234,23 @@ pre {
   display: none !important;
 }
 
+.filter-input-wrapper {
+  position: relative;
+  margin-bottom: 4px;
+}
+.filter-input-wrapper .filter-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--sub);
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+}
 #filter-input {
   width: 100%;
-  margin-bottom: 4px;
+  padding-left: 32px;
 }
 
 /* Tree */
@@ -349,6 +366,9 @@ pre {
   overflow-y: auto;
 }
 .context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 8px 16px;
   cursor: pointer;
   font-size: 14px;
@@ -385,6 +405,9 @@ pre {
   box-shadow: 0 8px 32px rgba(0,0,0,0.18);
 }
 .modal-box h2 {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   margin: 0 0 12px;
 }
 .modal-status {
@@ -400,6 +423,9 @@ pre {
   max-height: 50vh;
 }
 .db-list-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 8px 12px;
   border-radius: 8px;
   cursor: pointer;
@@ -451,6 +477,9 @@ pre {
   padding: 6px 0;
 }
 .table-list-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   padding: 6px 12px;
   cursor: default;
   font-size: 13px;
@@ -819,6 +848,9 @@ pre {
   margin-top: 6px;
 }
 .tag-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   font-size: 12px;
   padding: 3px 10px;
   border-radius: 12px;
@@ -834,6 +866,15 @@ pre {
 .tag-filter-chip.active {
   background: var(--accent);
   color: #fff;
+}
+
+/* ── Tree item/group icons (main) ── */
+.tree-item-icon,
+.tree-group-icon {
+  color: var(--sub);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
 }
 
 /* ── Tree item color bar & tags (main) ── */
@@ -950,6 +991,13 @@ pre {
   font-family: "Consolas", "Cascadia Code", monospace;
   font-size: 12px;
   white-space: pre-wrap;
+}
+
+/* ── Icons ── */
+.icon {
+  display: inline-block;
+  vertical-align: middle;
+  flex-shrink: 0;
 }
 
 /* ── Truncate toggle ── */

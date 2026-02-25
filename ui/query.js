@@ -16,6 +16,11 @@ const tabContent = document.getElementById("tab-content");
 const tabAddBtn = document.getElementById("tab-add-btn");
 const contextMenuEl = document.getElementById("context-menu");
 
+// Apply icons to static elements
+dbSwitchBtn.innerHTML = icon('arrow-left-right');
+tabAddBtn.innerHTML = icon('plus');
+document.getElementById("db-modal-heading").innerHTML = icon('database', 20) + ' Select Database';
+
 // ── State ──
 let requestCache = null;
 let currentDb = null;
@@ -192,14 +197,14 @@ async function saveFile(content, defaultName, filterName, extensions) {
 
 function showExportMenu(e, columns, rows, tableName) {
   const items = [
-    { label: "CSV (current)", action: () => doExportCurrent(columns, rows, tableName, ",", "csv") },
-    { label: "TSV (current)", action: () => doExportCurrent(columns, rows, tableName, "\t", "tsv") },
+    { label: "CSV (current)", icon: "download", action: () => doExportCurrent(columns, rows, tableName, ",", "csv") },
+    { label: "TSV (current)", icon: "download", action: () => doExportCurrent(columns, rows, tableName, "\t", "tsv") },
   ];
   if (tableName) {
     items.push({ separator: true });
-    items.push({ label: "CSV (all rows)", action: () => doExportAll(tableName, ",", "csv") });
-    items.push({ label: "TSV (all rows)", action: () => doExportAll(tableName, "\t", "tsv") });
-    items.push({ label: "SQL (all rows)", action: () => doExportSql(tableName) });
+    items.push({ label: "CSV (all rows)", icon: "download", action: () => doExportAll(tableName, ",", "csv") });
+    items.push({ label: "TSV (all rows)", icon: "download", action: () => doExportAll(tableName, "\t", "tsv") });
+    items.push({ label: "SQL (all rows)", icon: "download", action: () => doExportSql(tableName) });
   }
   showContextMenu(e, items);
 }
@@ -239,7 +244,7 @@ function showRowDetailModal(columns, row) {
   header.appendChild(h3);
   const closeBtn = document.createElement("button");
   closeBtn.className = "row-detail-close";
-  closeBtn.textContent = "\u00D7";
+  closeBtn.innerHTML = icon('x');
   header.appendChild(closeBtn);
   box.appendChild(header);
 
@@ -446,13 +451,22 @@ const tabManager = {
     el.className = "tab-item";
     el.dataset.tabId = id;
 
+    // Tab icon by type
+    const tabIcons = { data: 'table', schema: 'columns-3', sql: 'terminal' };
+    if (tabIcons[type]) {
+      const tabIcon = document.createElement("span");
+      tabIcon.innerHTML = icon(tabIcons[type], 14);
+      tabIcon.style.display = "flex";
+      el.appendChild(tabIcon);
+    }
+
     const labelSpan = document.createElement("span");
     labelSpan.textContent = title;
     el.appendChild(labelSpan);
 
     const closeBtn = document.createElement("span");
     closeBtn.className = "tab-close";
-    closeBtn.textContent = "\u00D7";
+    closeBtn.innerHTML = icon('x', 14);
     closeBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       this.closeTab(id);
@@ -542,7 +556,7 @@ async function showDbModal() {
     dbNames.forEach((name) => {
       const el = document.createElement("div");
       el.className = "db-list-item";
-      el.textContent = name;
+      el.innerHTML = icon('database', 14) + ' ' + name;
       el.addEventListener("click", () => selectDatabase(name));
       dbList.appendChild(el);
     });
@@ -587,7 +601,7 @@ async function loadTableList() {
     tables.forEach((name) => {
       const el = document.createElement("div");
       el.className = "table-list-item";
-      el.textContent = name;
+      el.innerHTML = icon('table', 14) + ' ' + name;
 
       el.addEventListener("click", () => openDataTab(name));
 
@@ -595,8 +609,8 @@ async function loadTableList() {
         e.preventDefault();
         e.stopPropagation();
         showContextMenu(e, [
-          { label: "Data", action: () => openDataTab(name) },
-          { label: "Schema", action: () => openSchemaTab(name) },
+          { label: "Data", icon: "table", action: () => openDataTab(name) },
+          { label: "Schema", icon: "columns-3", action: () => openSchemaTab(name) },
         ]);
       });
 
@@ -747,7 +761,7 @@ function openDataTab(tableName) {
 
       const prevBtn = document.createElement("button");
       prevBtn.className = "ghost paging-btn";
-      prevBtn.textContent = "\u2039 Prev";
+      prevBtn.innerHTML = icon('chevron-left') + 'Prev';
       prevBtn.disabled = currentPage === 0;
       prevBtn.addEventListener("click", () => { currentPage--; loadPage(); });
       nav.appendChild(prevBtn);
@@ -759,7 +773,7 @@ function openDataTab(tableName) {
 
       const nextBtn = document.createElement("button");
       nextBtn.className = "ghost paging-btn";
-      nextBtn.textContent = "Next \u203A";
+      nextBtn.innerHTML = 'Next' + icon('chevron-right');
       nextBtn.disabled = currentPage >= totalPages - 1;
       nextBtn.addEventListener("click", () => { currentPage++; loadPage(); });
       nav.appendChild(nextBtn);
@@ -790,7 +804,7 @@ function openDataTab(tableName) {
       if (hasTruncatable) {
         const truncBtn = document.createElement("button");
         truncBtn.className = "ghost truncate-btn" + (truncateMode ? " active" : "");
-        truncBtn.textContent = "Truncate";
+        truncBtn.innerHTML = icon('scissors') + 'Truncate';
         truncBtn.title = "BLOB/TEXT カラムの切り詰め表示";
         truncBtn.addEventListener("click", () => {
           truncateMode = !truncateMode;
@@ -802,13 +816,13 @@ function openDataTab(tableName) {
 
       const schemaBtn = document.createElement("button");
       schemaBtn.className = "ghost paging-btn";
-      schemaBtn.textContent = "Schema";
+      schemaBtn.innerHTML = icon('columns-3') + 'Schema';
       schemaBtn.addEventListener("click", () => openSchemaTab(tableName));
       actions.appendChild(schemaBtn);
 
       const exportBtn = document.createElement("button");
       exportBtn.className = "ghost paging-btn";
-      exportBtn.textContent = "Export \u25BE";
+      exportBtn.innerHTML = icon('download') + 'Export \u25BE';
       exportBtn.addEventListener("click", (ev) => {
         ev.stopPropagation();
         showExportMenu(ev, lastColumns, lastRows, tableName);
@@ -861,7 +875,7 @@ function openSchemaTab(tableName) {
     actions.className = "footer-actions";
     const dataBtn = document.createElement("button");
     dataBtn.className = "ghost paging-btn";
-    dataBtn.textContent = "Data";
+    dataBtn.innerHTML = icon('table') + 'Data';
     dataBtn.addEventListener("click", () => openDataTab(tableName));
     actions.appendChild(dataBtn);
     footerBar.appendChild(actions);
@@ -933,7 +947,7 @@ function addSqlTab(initialContent) {
 
     const historyBtn = document.createElement("button");
     historyBtn.className = "ghost sql-history-btn";
-    historyBtn.textContent = "History \u25BE";
+    historyBtn.innerHTML = icon('clock') + 'History \u25BE';
     historyBtn.addEventListener("click", (ev) => {
       ev.stopPropagation();
       const history = loadHistory();
@@ -959,7 +973,7 @@ function addSqlTab(initialContent) {
 
     const formatBtn = document.createElement("button");
     formatBtn.className = "ghost";
-    formatBtn.textContent = "Format";
+    formatBtn.innerHTML = icon('wand-2') + 'Format';
     formatBtn.addEventListener("click", () => {
       const selection = editor.getSelection();
       if (selection) {
@@ -978,7 +992,7 @@ function addSqlTab(initialContent) {
 
     const cancelBtn = document.createElement("button");
     cancelBtn.className = "danger";
-    cancelBtn.textContent = "Cancel";
+    cancelBtn.innerHTML = icon('x-circle') + 'Cancel';
     cancelBtn.style.display = "none";
     cancelBtn.addEventListener("click", () => {
       cancelBtn.disabled = true;
@@ -988,17 +1002,17 @@ function addSqlTab(initialContent) {
     actions.appendChild(cancelBtn);
 
     const runLineBtn = document.createElement("button");
-    runLineBtn.className = "ghost";
-    runLineBtn.textContent = "Run this line";
+    runLineBtn.className = "info";
+    runLineBtn.innerHTML = icon('play') + 'Run this line';
     actions.appendChild(runLineBtn);
 
     const runAllBtn = document.createElement("button");
-    runAllBtn.textContent = "Run all";
+    runAllBtn.innerHTML = icon('play') + 'Run all';
     actions.appendChild(runAllBtn);
 
     const exportBtn = document.createElement("button");
     exportBtn.className = "ghost";
-    exportBtn.textContent = "Export \u25BE";
+    exportBtn.innerHTML = icon('download') + 'Export \u25BE';
     exportBtn.style.display = "none";
     actions.appendChild(exportBtn);
 
@@ -1163,8 +1177,8 @@ function addSqlTab(initialContent) {
       ev.stopPropagation();
       if (lastColumns.length === 0) return;
       showContextMenu(ev, [
-        { label: "CSV", action: () => doExportCurrent(lastColumns, lastRows, null, ",", "csv") },
-        { label: "TSV", action: () => doExportCurrent(lastColumns, lastRows, null, "\t", "tsv") },
+        { label: "CSV", icon: "download", action: () => doExportCurrent(lastColumns, lastRows, null, ",", "csv") },
+        { label: "TSV", icon: "download", action: () => doExportCurrent(lastColumns, lastRows, null, "\t", "tsv") },
       ]);
     });
   });
@@ -1184,7 +1198,11 @@ function showContextMenu(e, menuItems) {
     }
     const el = document.createElement("div");
     el.className = "context-menu-item";
-    el.textContent = mi.label;
+    if (mi.icon) {
+      el.innerHTML = icon(mi.icon) + '<span>' + mi.label + '</span>';
+    } else {
+      el.textContent = mi.label;
+    }
     if (mi.danger) el.style.color = "#d24a4a";
     el.addEventListener("click", () => {
       hideContextMenu();
