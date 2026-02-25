@@ -1109,7 +1109,7 @@ function addSqlTab(initialContent) {
             loadingEl.remove();
             const info = document.createElement("div");
             info.className = "result-info";
-            info.style.color = "#d24a4a";
+            info.style.color = "var(--danger)";
             info.textContent = "Query cancelled.";
             resultArea.appendChild(info);
             return;
@@ -1152,7 +1152,7 @@ function addSqlTab(initialContent) {
         loadingEl.remove();
         const errEl = document.createElement("div");
         errEl.className = "result-info";
-        errEl.style.color = "#d24a4a";
+        errEl.style.color = "var(--danger)";
         errEl.textContent = cancelled ? "Query cancelled." : String(error);
         resultArea.appendChild(errEl);
         if (!cancelled) markSqlError(String(error));
@@ -1203,7 +1203,7 @@ function showContextMenu(e, menuItems) {
     } else {
       el.textContent = mi.label;
     }
-    if (mi.danger) el.style.color = "#d24a4a";
+    if (mi.danger) el.style.color = "var(--danger)";
     el.addEventListener("click", () => {
       hideContextMenu();
       mi.action();

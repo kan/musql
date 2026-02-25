@@ -368,7 +368,7 @@ function showContextMenu(e, menuItems) {
     } else {
       el.textContent = mi.label;
     }
-    if (mi.danger) el.style.color = "#d24a4a";
+    if (mi.danger) el.style.color = "var(--danger)";
     el.addEventListener("click", () => {
       hideContextMenu();
       mi.action();

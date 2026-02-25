@@ -79,7 +79,8 @@
 - `ui/icon.svg` — アプリアイコン（鼠モチーフ SVG）。favicon + main ヘッダーロゴ。
 - `ui/icon.png` — アイコン変換元 PNG。`cargo tauri icon` で `src-tauri/icons/` を生成。
 - `src-tauri/icons/` — Tauri アプリアイコン（各サイズ PNG/ICO/ICNS）。`cargo tauri icon ui/icon.png` で再生成。
-- `ui/icons.js` — Lucide アイコン SVG パスデータ（26 個）+ `icon(name, size)` ヘルパー関数。
+- `ui/icons.js` — Lucide アイコン SVG パスデータ（28 個）+ `icon(name, size)` ヘルパー関数。
+- `ui/theme.js` — ダークモード管理（テーマ検出・適用・トグルボタン生成・cross-window 同期）。
 - `ui/lib/codemirror/` — CodeMirror 5 vendored ファイル（コア、SQL モード、補完アドオン）。
 - `ui/lib/sql-formatter/` — sql-formatter vendored UMD ビルド（SQL 整形）。
 
@@ -102,6 +103,7 @@
 - カラムソート: `renderTable()` で全テーブル（Data/Schema/SQL 結果）の `<th>` クリックで ASC→DESC→なし の 3 ステートトグル。ソートインジケータ（▲▼）表示。`rows.slice()` で作業コピーをソートし原本不変。NULL は常に最後、空文字は NULL の手前。外部 `sortState` オブジェクトを渡すとページ切替でもソート維持。
 - 行詳細モーダル: テーブル行クリックで `showRowDetailModal(columns, row)` を表示。`.row-detail-box` で grid(160px 1fr) のカラム名・値ペア。JSON 風文字列は自動整形・monospace 表示。×ボタン/overlay クリック/Escape で閉じる。Data タブは PK ベースで `SELECT`（BLOB 除外）し全文データを取得して表示。PK なし時は一覧データをそのまま表示。
 - BLOB/TEXT 切り詰め（Data タブ）: `INFORMATION_SCHEMA.COLUMNS` で BLOB 系・TEXT 系・PK カラムを検出。Truncate モード ON（デフォルト）で BLOB→`'(BLOB)'` プレースホルダー、TEXT→SQL レベルで 200 文字に切り詰め。フッターの Truncate ボタンで ON/OFF トグル。BLOB/TEXT カラムがないテーブルではボタン非表示。
+- ダークモード: `ui/theme.js`（IIFE）が全ページで読み込まれ、`html.dark` クラスでテーマ切替。`:root` に Light、`html.dark` に Dark の CSS 変数パレットを定義。`prefers-color-scheme` フォールバック + 手動トグル（fixed 右下の丸ボタン、sun/moon アイコン）。トグルボタンは main ウィンドウのみ表示（`body[data-theme-toggle]`）。settings/query は `storage` イベントで自動追従。`musql:theme` を localStorage に保存。CodeMirror は CSS セレクタ `html.dark .CodeMirror*` で Material 風ダークシンタックスハイライト上書き（JS 側変更なし）。
 
 ## Limits / defaults
 - 結果行はデフォルト最大 500 件（`max_rows` で変更可能、エクスポート時は無制限）。
@@ -112,7 +114,6 @@
 (上から優先度順)
 
 - 見た目の強化
-  - ダークモード対応
   - i18n対応
 - 接続設定のインポートとエクスポート
 - docker上のmysqlへの簡単アクセス
@@ -127,6 +128,7 @@
 - `musql:collapsed`: グループの開閉状態（`app.js`）。
 - `musql:drafts:<profileId>`: SQL タブのエディタ内容（`string[]`、タブ順）。
 - `musql:history:<profileId>`: 実行済み SQL（`{ sql, ts }[]`、新しい順、最大 100 件）。
+- `musql:theme`: テーマ設定（`"light"` | `"dark"` | 未設定=システム準拠）。
 
 ## Strategy
 - パスワード安全保存: **実装済み**。`keyring` クレート（Windows Credential Manager）で profile ID をキーにパスワードを保存。`connections.json` にはパスワードを含めない。旧データは `load_profiles()` で自動マイグレーション。
@@ -138,9 +140,9 @@
 - SQL 整形: **実装済み**。`sql-formatter@15.4.10` UMD ビルドを `ui/lib/sql-formatter/` に vendor。Format ボタンで選択範囲またはエディタ全体を MySQL 方言で整形。
 - クエリキャンセル: **実装済み**。`run_query` を `async fn` + `spawn_blocking` で非同期化し UI ブロックを解消。`RUNNING_QUERY` グローバルに connection_id + Pool を保持、`cancel_query`（async）が `KILL QUERY` を別コネクションで送信。JS 側は `cancelled` フラグで結果表示を「Query cancelled.」に差し替え。
 - Table タブ機能強化: **実装済み**。カラムソート（`<th>` クリックで ASC/DESC/なしトグル、▲▼インジケータ、ページ切替でも維持）。行詳細モーダル（行クリックで key-value 表示、PK ベース全文取得、JSON 自動整形）。BLOB/TEXT 切り詰め（`INFORMATION_SCHEMA.COLUMNS` で検出、BLOB は `'(BLOB)'` プレースホルダー、TEXT は 200 文字切り詰め、Truncate ボタンでトグル）。
-- ダークモード: CSS 変数を light/dark で切り替え。`prefers-color-scheme` メディアクエリ + 手動切替トグル。設定を localStorage に保存。
+- ダークモード: **実装済み**。`:root` に Light パレット、`html.dark` に Dark パレットを CSS 変数で定義。全ハードコード色を変数化。`ui/theme.js`（IIFE）でテーマ検出（localStorage → `prefers-color-scheme` フォールバック）、即時適用（FOUC 防止）、トグルボタン（fixed 右下、sun/moon アイコン）、cross-window 同期（`storage` イベント）。CodeMirror は `html.dark .CodeMirror*` セレクタで Material 風ダークシンタックスハイライト。
 - i18n: 簡易 i18n。`ui/i18n/ja.json`, `ui/i18n/en.json` で言語リソース管理。`t('key')` ヘルパーで文字列取得。localStorage で言語選択を保存。HTML 上のテキストは data 属性または JS で差し替え。
-- アイコン: **実装済み**。Lucide SVG アイコン 26 個を `ui/icons.js` に格納（MIT ライセンス、24x24 viewBox、stroke-based）。`icon(name, size)` ヘルパーで `<svg class="icon">` を返す。`stroke="currentColor"` でボタン文字色を自動継承。全 HTML ページの `<script>` で読み込み、ボタン・コンテキストメニュー・見出し・リスト項目・タブヘッダーにインライン SVG で適用。main ヘッダーボタンはアイコンのみ（title 属性でツールチップ）。フィルター入力欄内に虫めがねアイコン配置。タグフィルターチップ内にもアイコン。
+- アイコン: **実装済み**。Lucide SVG アイコン 28 個を `ui/icons.js` に格納（MIT ライセンス、24x24 viewBox、stroke-based）。`icon(name, size)` ヘルパーで `<svg class="icon">` を返す。`stroke="currentColor"` でボタン文字色を自動継承。全 HTML ページの `<script>` で読み込み、ボタン・コンテキストメニュー・見出し・リスト項目・タブヘッダーにインライン SVG で適用。main ヘッダーボタンはアイコンのみ（title 属性でツールチップ）。フィルター入力欄内に虫めがねアイコン配置。タグフィルターチップ内にもアイコン。
 - favicon / アプリアイコン: **実装済み**。鼠モチーフの SVG アイコン (`ui/icon.svg`)。全 HTML に `<link rel="icon">` 設定。`cargo tauri icon ui/icon.png` で Tauri アプリアイコン（タスクバー・タイトルバー・ICO・ICNS）も生成済み。main ウィンドウヘッダーにロゴ + タイトル横並び表示。
 - 接続設定インポート/エクスポート: JSON 形式でファイル書き出し/読み込み。`pick_file` / `export_file` を再利用。パスワードを含めるかはオプション。
 - Docker MySQL: `docker ps` でコンテナ一覧を取得し、MySQL コンテナを検出。ポートマッピングから接続先を自動入力。
