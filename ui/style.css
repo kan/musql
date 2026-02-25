@@ -24,6 +24,20 @@ main {
 
 h1 { margin-bottom: 8px; }
 
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.app-header h1 {
+  margin: 0;
+}
+.app-logo {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+}
+
 .panel-header {
   display: flex;
   justify-content: space-between;

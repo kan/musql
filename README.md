@@ -1,42 +1,61 @@
-# MuSQL (Tauri v2 + Rust)
+<p align="center">
+  <img src="ui/icon.svg" width="96" height="96" alt="muSQL" />
+</p>
 
-Windowsで動くMySQLクライアントです。SSH踏み台経由の接続をサポートし、踏み台接続時はOSの`ssh-agent`を使います（`ssh.exe`の標準動作）。
+<h1 align="center">muSQL</h1>
 
-## 前提
+<p align="center">Windows 向け MySQL クライアント — Tauri v2 + Rust</p>
 
-- Rust toolchain
-- Node.jsは不要（静的UIを同梱）
-- WindowsのOpenSSH Client (`ssh.exe`)
-- `ssh-agent`が起動済みで鍵が追加済み
-- MySQLで`require_secure_transport=ON`の場合はTLS有効化が必要
+---
 
-Windows PowerShell例:
+## 特徴
+
+- **SSH 踏み台対応** — SSH bastion 経由の MySQL 接続をサポート
+- **SSL 接続** — DISABLED / REQUIRED / VERIFY_CA / VERIFY_IDENTITY を選択可能
+- **接続プール** — 同一設定の接続を自動再利用
+- **SQL エディタ** — CodeMirror 5 ベース。シンタックスハイライト、キーワード・テーブル名補完、エラー箇所ハイライト
+- **SQL 整形** — sql-formatter による MySQL 方言整形
+- **クエリキャンセル** — 実行中クエリを `KILL QUERY` でキャンセル
+- **データエクスポート** — CSV / TSV / SQL 形式で保存
+- **パスワード安全保存** — Windows Credential Manager で管理
+- **プロファイル管理** — グループ・色・タグで接続先を整理
+- **Node.js 不要** — UI は素朴な HTML/JS/CSS
+
+## セットアップ
+
+### 前提条件
+
+- Rust toolchain (`rustup`)
+- Visual Studio Build Tools (MSVC リンカー・Windows SDK)
+- Windows OpenSSH Client (`C:\Windows\System32\OpenSSH\ssh.exe`)
+
+### インストール
 
 ```powershell
-Get-Service ssh-agent | Set-Service -StartupType Automatic
-Start-Service ssh-agent
-ssh-add $env:USERPROFILE\.ssh\id_ed25519
+# Rust toolchain
+winget install Rustlang.Rustup
+
+# Visual Studio Build Tools
+winget install Microsoft.VisualStudio.2022.BuildTools --override "--wait --passive --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+
+# Tauri CLI
+cargo install tauri-cli
 ```
 
-## 実行
+### 起動
 
-```bash
+```powershell
 cd src-tauri
 cargo tauri dev
 ```
 
 ## 使い方
 
-1. MySQL接続情報を入力
-2. SSH踏み台が必要なら`Enable`をONにしてbastion情報を入力
-3. TLSが必要な場合は`TLS を使用`をON
-4. 証明書検証をスキップする場合は`TLS証明書検証をスキップ`をON
-5. `接続テスト`または`クエリ実行`
+1. MySQL 接続情報を入力
+2. SSH 踏み台が必要なら `Enable` を ON にして bastion 情報を入力
+3. SSL Mode を選択（VERIFY_CA / VERIFY_IDENTITY では CA 証明書を指定可能）
+4. `接続テスト` または `接続` でクエリウィンドウを開く
 
-## 実装メモ
+## ライセンス
 
-- `src-tauri/src/main.rs`
-- SSHは`ssh -N -L 127.0.0.1:<local>:<mysql_host>:<mysql_port> user@bastion`を子プロセスとして起動
-- トンネル確立後にRust側がMySQL接続し、処理完了後にSSHプロセスを終了
-- クエリ結果はJSONとしてUIに返却（最大500行）
-- TLSは`mysql`クレートの`native-tls`を利用。UIの設定に応じて有効化/検証スキップを切り替え
+MIT
