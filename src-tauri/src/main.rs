@@ -18,6 +18,7 @@ struct MySqlConfig {
   port: u16,
   database: Option<String>,
   username: String,
+  #[serde(default, skip_serializing)]
   password: String,
   #[serde(default = "default_ssl_mode")]
   ssl_mode: String, // "DISABLED" | "REQUIRED" | "VERIFY_CA" | "VERIFY_IDENTITY"
@@ -125,9 +126,9 @@ fn connection_fingerprint(request: &ConnectionRequest) -> String {
     _ => String::new(),
   };
   format!(
-    "{}:{}:{}:{}:ssl={}:ca={}|{}",
+    "{}:{}:{}:ssl={}:ca={}|{}",
     request.mysql.host, request.mysql.port,
-    request.mysql.username, request.mysql.password,
+    request.mysql.username,
     request.mysql.ssl_mode,
     request.mysql.tls_ca_cert_path.as_deref().unwrap_or(""),
     ssh_part
@@ -268,6 +269,20 @@ fn load_profiles(app: &AppHandle) -> Result<ConnectionProfileStore, String> {
     save_profiles(app, &store)?;
   }
 
+  // Migrate passwords from JSON to keyring
+  let mut pw_migrated = false;
+  for item in store.items.iter_mut() {
+    let pw = &item.request.mysql.password;
+    if !pw.is_empty() {
+      let _ = set_password(&item.id, pw);
+      item.request.mysql.password = String::new();
+      pw_migrated = true;
+    }
+  }
+  if pw_migrated {
+    save_profiles(app, &store)?;
+  }
+
   Ok(store)
 }
 
@@ -289,6 +304,44 @@ fn generate_profile_id() -> String {
     .unwrap_or_else(|_| Duration::from_millis(0))
     .as_millis();
   format!("p{ts}")
+}
+
+const KEYRING_SERVICE: &str = "musql";
+
+fn get_password(profile_id: &str) -> String {
+  let entry = match keyring::Entry::new(KEYRING_SERVICE, profile_id) {
+    Ok(e) => e,
+    Err(_) => return String::new(),
+  };
+  match entry.get_password() {
+    Ok(pw) => pw,
+    Err(_) => String::new(),
+  }
+}
+
+fn set_password(profile_id: &str, password: &str) -> Result<(), String> {
+  let entry = keyring::Entry::new(KEYRING_SERVICE, profile_id)
+    .map_err(|e| format!("Keyring error: {e}"))?;
+  if password.is_empty() {
+    // Empty means delete
+    let _ = entry.delete_credential();
+  } else {
+    entry
+      .set_password(password)
+      .map_err(|e| format!("Failed to save password: {e}"))?;
+  }
+  Ok(())
+}
+
+fn delete_password(profile_id: &str) {
+  if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, profile_id) {
+    let _ = entry.delete_credential();
+  }
+}
+
+#[tauri::command]
+fn has_password(profile_id: String) -> bool {
+  !get_password(&profile_id).is_empty()
 }
 
 fn find_free_port() -> Result<u16, String> {
@@ -498,8 +551,20 @@ fn row_to_json(row: Row) -> Vec<serde_json::Value> {
   row.unwrap().into_iter().map(mysql_value_to_json).collect()
 }
 
+fn resolve_password(request: &mut ConnectionRequest, profile_id: Option<&str>) {
+  if !request.mysql.password.is_empty() {
+    return;
+  }
+  if let Some(id) = profile_id {
+    if !id.is_empty() {
+      request.mysql.password = get_password(id);
+    }
+  }
+}
+
 #[tauri::command]
-fn test_connection(request: ConnectionRequest) -> Result<String, String> {
+fn test_connection(mut request: ConnectionRequest, profile_id: Option<String>) -> Result<String, String> {
+  resolve_password(&mut request, profile_id.as_deref());
   with_connection(request, |conn| {
     conn.query_drop("SELECT 1")
       .map_err(|e| format!("MySQL ping failed: {e}"))?;
@@ -509,15 +574,17 @@ fn test_connection(request: ConnectionRequest) -> Result<String, String> {
 
 #[tauri::command]
 fn run_query(
-  request: ConnectionRequest,
+  mut request: ConnectionRequest,
   query: String,
   max_rows: Option<usize>,
+  profile_id: Option<String>,
   state: tauri::State<'_, Mutex<Option<ConnectionCache>>>,
 ) -> Result<QueryResult, String> {
   if query.trim().is_empty() {
     return Err("Query is empty".to_string());
   }
 
+  resolve_password(&mut request, profile_id.as_deref());
   let limit = max_rows.unwrap_or(500);
 
   let pool = get_or_create_pool(&state, &request)?;
@@ -639,6 +706,11 @@ fn save_profile(app: AppHandle, mut profile: ConnectionProfile) -> Result<Profil
       .unwrap_or(0);
     profile.order = max_order + 1000;
   }
+  // Extract password: non-empty → save to keyring; empty → keep existing keyring entry
+  let password = std::mem::take(&mut profile.request.mysql.password);
+  if !password.is_empty() {
+    set_password(&profile.id, &password)?;
+  }
   let mut store = load_profiles(&app)?;
   let mut updated = false;
   for item in store.items.iter_mut() {
@@ -662,6 +734,7 @@ fn save_profile(app: AppHandle, mut profile: ConnectionProfile) -> Result<Profil
 fn delete_profile(app: AppHandle, id: String) -> Result<ProfileListResponse, String> {
   let mut store = load_profiles(&app)?;
   store.items.retain(|item| item.id != id);
+  delete_password(&id);
   save_profiles(&app, &store)?;
   Ok(ProfileListResponse {
     groups: store.groups,
@@ -739,8 +812,14 @@ fn duplicate_profile(app: AppHandle, id: String) -> Result<ProfileListResponse, 
     .map(|it| it.order)
     .max()
     .unwrap_or(0);
+  let new_id = generate_profile_id();
+  // Copy password from source to new profile in keyring
+  let source_pw = get_password(&id);
+  if !source_pw.is_empty() {
+    let _ = set_password(&new_id, &source_pw);
+  }
   let new_profile = ConnectionProfile {
-    id: generate_profile_id(),
+    id: new_id,
     name: format!("{} (copy)", source.name),
     group_id: source.group_id,
     order: max_order + 1000,
@@ -862,7 +941,8 @@ fn main() {
       disconnect_pool,
       export_file,
       pick_file,
-      list_ssh_config_hosts
+      list_ssh_config_hosts,
+      has_password
     ])
     .run(tauri::generate_context!())
     .unwrap_or_else(|e| {

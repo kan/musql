@@ -289,6 +289,8 @@ async function safeInvoke(command, payload) {
   return invoke(command, payload);
 }
 
+const mysqlPassInput = document.getElementById("mysql-pass");
+
 async function loadProfile(id) {
   const data = await safeInvoke("list_profiles");
   const profile = data.items.find((item) => item.id === id);
@@ -304,11 +306,19 @@ async function loadProfile(id) {
   renderColorPalette();
   renderTagChips();
   applyRequest(profile.request);
+  // Show placeholder if password is stored in keyring
+  try {
+    const stored = await safeInvoke("has_password", { profileId: id });
+    mysqlPassInput.placeholder = stored ? "(saved - leave blank to keep)" : "";
+  } catch (_) {
+    mysqlPassInput.placeholder = "";
+  }
   return profile;
 }
 
 function clearForm() {
   profileNameInput.value = "";
+  mysqlPassInput.placeholder = "";
   selectedColor = null;
   selectedTags = [];
   renderColorPalette();
@@ -338,7 +348,7 @@ testBtn.addEventListener("click", async () => {
   try {
     show("connecting...");
     const request = collectRequest();
-    const res = await safeInvoke("test_connection", { request });
+    const res = await safeInvoke("test_connection", { request, profileId: selectedProfileId || null });
     show(res);
   } catch (error) {
     show(String(error));

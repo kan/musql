@@ -74,6 +74,7 @@
 - `ui/lib/codemirror/` — CodeMirror 5 vendored ファイル（コア、SQL モード、補完アドオン）。
 
 ## Behavior notes
+- パスワード安全保存: `keyring` クレート（Windows Credential Manager）で profile ID をキーにパスワードを保存。`connections.json` にはパスワードを含めない（`#[serde(skip_serializing)]`）。`load_profiles()` で旧 JSON 内パスワードを keyring へ自動マイグレーション。`test_connection` / `run_query` は `profile_id` パラメータで keyring からパスワードを解決。`has_password` コマンドで保存状態を確認可能。Settings UI はプレースホルダー `"(saved - leave blank to keep)"` で保存済みを表示。
 - `test_connection` は `SELECT 1` を実行（per-request 接続、プールは使わない）。
 - `run_query` は任意 SQL を実行して列名＋行＋ `affected_rows` を返却。`max_rows` パラメータで行数制限（デフォルト 500、0 で無制限）。
 - 接続プール: `ConnectionCache` で Pool + SshTunnel をキャッシュ。fingerprint（ホスト/ポート/ユーザー/SSL/SSH 設定）が同じなら再利用。DB は Pool opts に含めず `USE` で切替。
@@ -96,7 +97,6 @@
 ## TODO
 (上から優先度順)
 
-- 設定のパスワードを安全に保存
 - SQL実行の多重クリック抑止
 - SQL入力のSQL整形
 - Tableタブの機能強化
@@ -112,6 +112,10 @@
 - docker上のmysqlへの簡単アクセス
 - ビルド・配布手段の検討
 - Windows以外での動作
+- SSH秘密鍵パスフレーズ対応
+  - 設定画面でパスフレーズを保存（keyring）
+  - 接続時に SSH_ASKPASS 経由で自動入力（一時 .cmd スクリプト生成→削除）
+  - パスフレーズ未保存時は都度入力ダイアログ（Tauri dialog）
 
 ## localStorage keys
 - `musql:collapsed`: グループの開閉状態（`app.js`）。
@@ -119,7 +123,11 @@
 - `musql:history:<profileId>`: 実行済み SQL（`{ sql, ts }[]`、新しい順、最大 100 件）。
 
 ## Strategy
-- パスワード安全保存: OS のキーチェーン（Windows Credential Manager）を利用。Tauri プラグインまたは `keyring` クレートで profile ID をキーにしてパスワードを保存。`connections.json` にはパスワードを含めない。
+- パスワード安全保存: **実装済み**。`keyring` クレート（Windows Credential Manager）で profile ID をキーにパスワードを保存。`connections.json` にはパスワードを含めない。旧データは `load_profiles()` で自動マイグレーション。
+- SSH パスフレーズ対応:
+  - 保存: MySQL パスワードと同様に keyring に保存（キー: `musql:ssh-passphrase:<profileId>` 等）。Settings UI にパスフレーズ入力欄を追加。
+  - 自動入力: SSH トンネル起動時に `SSH_ASKPASS` + `SSH_ASKPASS_REQUIRE=force` で一時 `.cmd` スクリプト（パスフレーズを echo）を指定。確立後に即削除。
+  - 都度入力: パスフレーズ未保存時は Tauri dialog でパスフレーズ入力を求め、同様に SSH_ASKPASS 経由で渡す。
 - SQL 多重クリック抑止: 実行ボタンを実行中 disabled にし、完了/エラー後に復帰。
 - SQL 整形: `sql-formatter` ライブラリ（UMD スタンドアロンビルド）を vendor して `ui/lib/` に配置。エディタ上にフォーマットボタンを追加、選択範囲またはエディタ全体を整形。Node.js 不要。
 - Table タブ機能強化:

@@ -98,7 +98,7 @@ async function loadProfile(id) {
 }
 
 function runQuery(sql, maxRows) {
-  const payload = { request: requestCache, query: sql };
+  const payload = { request: requestCache, query: sql, profileId: currentProfileId || null };
   if (maxRows != null) payload.maxRows = maxRows;
   return safeInvoke("run_query", payload);
 }
