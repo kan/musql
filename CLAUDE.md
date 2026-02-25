@@ -45,7 +45,9 @@
 - **query** (`ui/query.html`, `ui/query.js`): DB エクスプローラ（テーブル一覧・データ/スキーマ表示・SQL 実行）。
 - ウィンドウは `tauri.conf.json` で `visible: false` として事前定義。
 - Rust 側の `open_*_window` で `show()` + `set_focus()`、閉じるときは `hide_window` で非表示にする（`close()` で破棄しない）。
-- `on_window_event` で非 main ウィンドウの X ボタンも hide に変換。
+- `on_window_event` で非 main ウィンドウの X ボタンも hide に変換。query ウィンドウ close 時に main を再表示。
+- `open_query_window` で main ウィンドウを自動 hide、query ウィンドウ閉じで main を再表示 + focus。
+- query ウィンドウのタイトルは `プロファイル名 / DB名 — muSQL` 形式で動的更新（Tauri `setTitle` API、`core:window:allow-set-title` パーミッション）。
 
 ## Main flow
 - `ui/app.js` → Tauri `invoke`:

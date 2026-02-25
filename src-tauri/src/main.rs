@@ -958,6 +958,10 @@ fn open_query_window(app: AppHandle, id: String) -> Result<(), String> {
   window
     .set_focus()
     .map_err(|e| format!("Failed to focus query window: {e}"))?;
+  // Hide main (connections) window
+  if let Some(main_win) = app.get_webview_window("main") {
+    let _ = main_win.hide();
+  }
   Ok(())
 }
 
@@ -976,6 +980,13 @@ fn main() {
         if window.label() != "main" {
           api.prevent_close();
           let _ = window.hide();
+          // When query window is closed, show main (connections) window
+          if window.label() == "query" {
+            if let Some(main_win) = window.app_handle().get_webview_window("main") {
+              let _ = main_win.show();
+              let _ = main_win.set_focus();
+            }
+          }
         }
       }
     })

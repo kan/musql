@@ -22,6 +22,7 @@ let currentDb = null;
 let sqlTabCounter = 0;
 let currentTables = [];
 let currentProfileId = null;
+let currentProfileName = null;
 
 // ── Draft save/restore ──
 
@@ -95,6 +96,7 @@ async function loadProfile(id) {
   const profile = data.items.find((item) => item.id === id);
   if (!profile) throw new Error("profile not found");
   requestCache = profile.request;
+  currentProfileName = profile.name;
 }
 
 function runQuery(sql, maxRows) {
@@ -107,6 +109,18 @@ function setDatabase(dbName) {
   currentDb = dbName;
   if (requestCache && requestCache.mysql) {
     requestCache.mysql.database = dbName;
+  }
+  updateWindowTitle();
+}
+
+function updateWindowTitle() {
+  const parts = [];
+  if (currentProfileName) parts.push(currentProfileName);
+  if (currentDb) parts.push(currentDb);
+  const title = parts.length > 0 ? parts.join(" / ") + " — muSQL" : "muSQL Query";
+  const win = window.__TAURI__ && window.__TAURI__.webviewWindow;
+  if (win) {
+    win.getCurrentWebviewWindow().setTitle(title).catch(() => {});
   }
 }
 
@@ -963,11 +977,13 @@ function resetExplorer() {
   tabManager.removeAll();
   currentDb = null;
   currentProfileId = null;
+  currentProfileName = null;
   requestCache = null;
   explorerEl.classList.add("hidden");
   dbModal.classList.add("hidden");
   tableListEl.innerHTML = "";
   sidebarDbName.textContent = "";
+  updateWindowTitle();
   safeInvoke("disconnect_pool").catch(() => {});
 }
 
