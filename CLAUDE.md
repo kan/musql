@@ -6,12 +6,38 @@
 - UI は `ui/` の素朴な HTML/JS/CSS。Node.js 不要。
 
 ## How to run (dev)
-- 前提: Rust toolchain, Windows OpenSSH Client (`C:\Windows\System32\OpenSSH\ssh.exe`)。
+- 前提: Rust toolchain, Visual Studio Build Tools (C++), Windows OpenSSH Client (`C:\Windows\System32\OpenSSH\ssh.exe`)。
 - 起動:
   - `cd src-tauri`
   - `cargo tauri dev`
-- cargo は PATH に入っていないため、シェルから実行する際は `export PATH="$PATH:/c/Users/kanfu/.cargo/bin"` を先に実行すること。
 - `cargo check` でコンパイル確認。
+
+## 新規環境セットアップ (PowerShell)
+1. **Rust toolchain のインストール**:
+   ```powershell
+   winget install Rustlang.Rustup
+   ```
+2. **Visual Studio Build Tools のインストール** (MSVC リンカー・Windows SDK):
+   ```powershell
+   winget install Microsoft.VisualStudio.2022.BuildTools --override "--wait --passive --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+   ```
+   ※ ディスク空き容量 8GB 以上を推奨。
+3. **PATH の設定** (rustup が自動で PATH に追加されない場合):
+   ```powershell
+   [Environment]::SetEnvironmentVariable("Path", [Environment]::GetEnvironmentVariable("Path", "User") + ";C:\Users\kanfu\.cargo\bin", "User")
+   ```
+   設定後、ターミナルを再起動して `rustc --version` で確認。
+4. **Tauri CLI のインストール**:
+   ```powershell
+   cargo install tauri-cli
+   ```
+   ※ 初回は 10 分程度かかる。
+5. **ビルド & 起動**:
+   ```powershell
+   cd src-tauri
+   cargo tauri dev
+   ```
+   ※ 初回ビルドはクレートのダウンロード・コンパイルに時間がかかる。
 
 ## Architecture — マルチウィンドウ構成
 - **main** (`ui/index.html`, `ui/app.js`): 接続プロファイル一覧。

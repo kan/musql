@@ -362,6 +362,9 @@ saveBtn.addEventListener("click", async () => {
       request: collectRequest(),
     };
     await safeInvoke("save_profile", { profile });
+    if (eventApi && eventApi.emit) {
+      await eventApi.emit("profiles:changed");
+    }
     await safeInvoke("hide_window");
   } catch (error) {
     show(String(error));
@@ -374,6 +377,9 @@ deleteBtn.addEventListener("click", async () => {
   }
   try {
     await safeInvoke("delete_profile", { id: selectedProfileId });
+    if (eventApi && eventApi.emit) {
+      await eventApi.emit("profiles:changed");
+    }
     await safeInvoke("hide_window");
   } catch (error) {
     show(String(error));

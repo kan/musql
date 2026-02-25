@@ -626,3 +626,9 @@ filterInput.addEventListener("input", () => renderTree());
 
 refreshProfiles().catch((error) => alert(String(error)));
 window.addEventListener("focus", () => refreshProfiles());
+
+// Listen for profile changes from settings window
+const eventApi = window.__TAURI__ && window.__TAURI__.event ? window.__TAURI__.event : null;
+if (eventApi && eventApi.listen) {
+  eventApi.listen("profiles:changed", () => refreshProfiles());
+}
