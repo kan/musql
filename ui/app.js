@@ -10,9 +10,11 @@ const exportBtn = document.getElementById("export-btn");
 const contextMenuEl = document.getElementById("context-menu");
 const filterInput = document.getElementById("filter-input");
 const tagFilterBarEl = document.getElementById("tag-filter-bar");
+const menuBtn = document.getElementById("menu-btn");
 
 // Apply icons to header buttons
 function applyAppLabels() {
+  menuBtn.innerHTML = icon('menu');
   importBtn.innerHTML = icon('download');
   importBtn.title = t('import_profiles_title');
   exportBtn.innerHTML = icon('upload');
@@ -23,6 +25,8 @@ function applyAppLabels() {
   profileNewBtn.title = t('new_profile');
 }
 applyAppLabels();
+
+menuBtn.addEventListener("click", () => safeInvoke("show_popup_menu", { lang: getLang(), theme: getTheme() }));
 
 // Search icon inside filter input
 (function() {
@@ -717,6 +721,18 @@ window.addEventListener("focus", () => refreshProfiles());
 const eventApi = window.__TAURI__ && window.__TAURI__.event ? window.__TAURI__.event : null;
 if (eventApi && eventApi.listen) {
   eventApi.listen("profiles:changed", () => refreshProfiles());
+  eventApi.listen("menu:action", (event) => {
+    switch (event.payload) {
+      case "new-profile": openSettings(""); break;
+      case "new-group": createGroup(); break;
+      case "import": importProfiles(); break;
+      case "export": exportProfiles(); break;
+      case "theme-light": setTheme("light"); break;
+      case "theme-dark": setTheme("dark"); break;
+      case "lang-en": setLang("en"); break;
+      case "lang-ja": setLang("ja"); break;
+    }
+  });
 }
 
 // Re-render on language change

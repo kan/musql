@@ -16,9 +16,14 @@ const tabContent = document.getElementById("tab-content");
 const tabAddBtn = document.getElementById("tab-add-btn");
 const contextMenuEl = document.getElementById("context-menu");
 
+const menuBtn = document.getElementById("menu-btn");
+
 // Apply icons to static elements
+menuBtn.innerHTML = icon('menu');
 dbSwitchBtn.innerHTML = icon('arrow-left-right');
 tabAddBtn.innerHTML = icon('plus');
+
+menuBtn.addEventListener("click", () => safeInvoke("show_popup_menu", { lang: getLang(), theme: getTheme() }));
 document.getElementById("db-modal-heading").innerHTML = icon('database', 20) + ' ' + t('select_database');
 
 // ── State ──
@@ -28,6 +33,7 @@ let sqlTabCounter = 0;
 let currentTables = [];
 let currentProfileId = null;
 let currentProfileName = null;
+const sqlTabActions = {}; // tabId → { runLine, runAll, format, history, cancel }
 
 // ── Draft save/restore ──
 
@@ -516,6 +522,7 @@ const tabManager = {
     tab.el.remove();
     tab.paneEl.remove();
     this.tabs.splice(idx, 1);
+    delete sqlTabActions[id];
 
     if (this.activeId === id && this.tabs.length > 0) {
       const nextIdx = Math.min(idx, this.tabs.length - 1);
@@ -529,6 +536,7 @@ const tabManager = {
     this.tabs.forEach((t) => {
       t.el.remove();
       t.paneEl.remove();
+      delete sqlTabActions[t.id];
     });
     this.tabs = [];
     this.activeId = null;
@@ -1181,6 +1189,15 @@ function addSqlTab(initialContent) {
         { label: "TSV", icon: "download", action: () => doExportCurrent(lastColumns, lastRows, null, "\t", "tsv") },
       ]);
     });
+
+    // Register actions for menu event routing
+    sqlTabActions[tabId] = {
+      runLine: () => runLineBtn.click(),
+      runAll: () => runAllBtn.click(),
+      format: () => formatBtn.click(),
+      history: () => historyBtn.click(),
+      cancel: () => cancelBtn.click(),
+    };
   });
 }
 
@@ -1287,6 +1304,23 @@ if (eventApi && eventApi.listen) {
     } catch (error) {
       dbModal.classList.remove("hidden");
       dbModalStatus.textContent = String(error);
+    }
+  });
+
+  eventApi.listen("menu:action", (event) => {
+    const activeId = tabManager.activeId;
+    const actions = sqlTabActions[activeId];
+    switch (event.payload) {
+      case "new-sql-tab": addSqlTab(); break;
+      case "switch-db": dbSwitchBtn.click(); break;
+      case "run": if (actions) actions.runLine(); break;
+      case "run-all": if (actions) actions.runAll(); break;
+      case "cancel": if (actions) actions.cancel(); break;
+      case "format": if (actions) actions.format(); break;
+      case "theme-light": setTheme("light"); break;
+      case "theme-dark": setTheme("dark"); break;
+      case "lang-en": setLang("en"); break;
+      case "lang-ja": setLang("ja"); break;
     }
   });
 }

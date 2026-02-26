@@ -11,12 +11,26 @@
     document.documentElement.classList.toggle("dark", theme === "dark");
   }
 
+  function setTheme(theme) {
+    if (theme !== "dark" && theme !== "light") return;
+    localStorage.setItem(STORAGE_KEY, theme);
+    apply(theme);
+    window.dispatchEvent(new CustomEvent("musql:themechange"));
+  }
+
+  // Expose globals
+  window.getTheme = getPreferred;
+  window.setTheme = setTheme;
+
   // Apply immediately to prevent FOUC
   apply(getPreferred());
 
   // Sync across windows via storage event
   window.addEventListener("storage", function(e) {
-    if (e.key === STORAGE_KEY) apply(getPreferred());
+    if (e.key === STORAGE_KEY) {
+      apply(getPreferred());
+      window.dispatchEvent(new CustomEvent("musql:themechange"));
+    }
   });
 
   // Also listen for system theme changes (when no manual override)
@@ -38,10 +52,8 @@
     }
 
     btn.addEventListener("click", function() {
-      var current = getPreferred();
-      var next = current === "dark" ? "light" : "dark";
-      localStorage.setItem(STORAGE_KEY, next);
-      apply(next);
+      var next = getPreferred() === "dark" ? "light" : "dark";
+      setTheme(next);
       updateIcon();
     });
 

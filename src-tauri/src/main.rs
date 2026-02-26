@@ -8,7 +8,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, Manager, Window};
+use tauri::menu::{CheckMenuItemBuilder, Menu, MenuItem, PredefinedMenuItem, Submenu};
+use tauri::{AppHandle, Emitter, EventTarget, Manager, Window, Wry};
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 struct MySqlConfig {
@@ -1490,8 +1491,213 @@ fn hide_window(window: Window) -> Result<(), String> {
     .map_err(|e| format!("Failed to hide window: {e}"))
 }
 
+// ── Menu builders ──
+
+#[tauri::command]
+fn show_popup_menu(window: Window, lang: String, theme: String) -> Result<(), String> {
+  let handle = window.app_handle();
+  let menu = match window.label() {
+    "main" => build_main_menu(handle, &lang, &theme),
+    "query" => build_query_menu(handle, &lang, &theme),
+    "settings" => build_settings_menu(handle, &lang, &theme),
+    _ => return Ok(()),
+  }.map_err(|e| format!("{e}"))?;
+  window.popup_menu(&menu).map_err(|e| format!("{e}"))?;
+  Ok(())
+}
+
+fn ml<'a>(lang: &str, key: &'a str) -> &'a str {
+  match (lang, key) {
+    ("ja", "file") => "ファイル",
+    ("ja", "edit") => "編集",
+    ("ja", "help") => "ヘルプ",
+    ("ja", "query") => "クエリ",
+    ("ja", "view") => "表示",
+    ("ja", "new_profile") => "新規プロファイル",
+    ("ja", "new_group") => "新規グループ",
+    ("ja", "import") => "インポート...",
+    ("ja", "export") => "エクスポート...",
+    ("ja", "exit") => "終了",
+    ("ja", "github") => "GitHub リポジトリ",
+    ("ja", "settings") => "設定",
+    ("ja", "new_sql_tab") => "新規 SQL タブ",
+    ("ja", "close_window") => "ウィンドウを閉じる",
+    ("ja", "run") => "実行",
+    ("ja", "run_all") => "すべて実行",
+    ("ja", "cancel") => "キャンセル",
+    ("ja", "format") => "整形",
+    ("ja", "switch_db") => "データベース切替",
+    ("ja", "theme") => "テーマ",
+    ("ja", "theme_light") => "ライト",
+    ("ja", "theme_dark") => "ダーク",
+    ("ja", "language") => "言語",
+    ("ja", "test_connection") => "接続テスト",
+    ("ja", "connect") => "接続",
+    ("ja", "save") => "保存",
+    ("ja", "delete") => "削除",
+    (_, "file") => "File",
+    (_, "edit") => "Edit",
+    (_, "help") => "Help",
+    (_, "query") => "Query",
+    (_, "view") => "View",
+    (_, "settings") => "Settings",
+    (_, "new_profile") => "New Profile",
+    (_, "new_group") => "New Group",
+    (_, "import") => "Import Profiles...",
+    (_, "export") => "Export Profiles...",
+    (_, "exit") => "Exit",
+    (_, "github") => "GitHub Repository",
+    (_, "new_sql_tab") => "New SQL Tab",
+    (_, "close_window") => "Close Window",
+    (_, "run") => "Run",
+    (_, "run_all") => "Run All",
+    (_, "cancel") => "Cancel",
+    (_, "format") => "Format",
+    (_, "switch_db") => "Switch Database",
+    (_, "theme") => "Theme",
+    (_, "theme_light") => "Light",
+    (_, "theme_dark") => "Dark",
+    (_, "language") => "Language",
+    (_, "test_connection") => "Test Connection",
+    (_, "connect") => "Connect",
+    (_, "save") => "Save",
+    (_, "delete") => "Delete",
+    _ => key,
+  }
+}
+
+fn build_edit_submenu(handle: &AppHandle<Wry>, lang: &str) -> tauri::Result<Submenu<Wry>> {
+  Submenu::with_items(handle, ml(lang, "edit"), true, &[
+    &PredefinedMenuItem::undo(handle, None)?,
+    &PredefinedMenuItem::redo(handle, None)?,
+    &PredefinedMenuItem::separator(handle)?,
+    &PredefinedMenuItem::cut(handle, None)?,
+    &PredefinedMenuItem::copy(handle, None)?,
+    &PredefinedMenuItem::paste(handle, None)?,
+    &PredefinedMenuItem::separator(handle)?,
+    &PredefinedMenuItem::select_all(handle, None)?,
+  ])
+}
+
+fn build_view_items(handle: &AppHandle<Wry>, lang: &str, theme: &str, prefix: &str) -> tauri::Result<[Box<dyn tauri::menu::IsMenuItem<Wry>>; 6]> {
+  let is_light = theme != "dark";
+  let is_ja = lang == "ja";
+  Ok([
+    Box::new(CheckMenuItemBuilder::with_id(format!("{prefix}:theme-light"), ml(lang, "theme_light")).checked(is_light).build(handle)?),
+    Box::new(CheckMenuItemBuilder::with_id(format!("{prefix}:theme-dark"), ml(lang, "theme_dark")).checked(!is_light).build(handle)?),
+    Box::new(PredefinedMenuItem::separator(handle)?),
+    Box::new(CheckMenuItemBuilder::with_id(format!("{prefix}:lang-en"), "English").checked(!is_ja).build(handle)?),
+    Box::new(CheckMenuItemBuilder::with_id(format!("{prefix}:lang-ja"), "日本語").checked(is_ja).build(handle)?),
+    Box::new(PredefinedMenuItem::separator(handle)?),
+  ])
+}
+
+fn build_view_submenu(handle: &AppHandle<Wry>, lang: &str, theme: &str, prefix: &str) -> tauri::Result<Submenu<Wry>> {
+  let items = build_view_items(handle, lang, theme, prefix)?;
+  let refs: Vec<&dyn tauri::menu::IsMenuItem<Wry>> = items.iter().map(|b| b.as_ref()).collect();
+  Submenu::with_items(handle, ml(lang, "view"), true, &refs)
+}
+
+fn build_main_menu(handle: &AppHandle<Wry>, lang: &str, theme: &str) -> tauri::Result<Menu<Wry>> {
+  let file_menu = Submenu::with_items(handle, ml(lang, "file"), true, &[
+    &MenuItem::with_id(handle, "main:new-profile", ml(lang, "new_profile"), true, Some("CmdOrCtrl+N"))?,
+    &MenuItem::with_id(handle, "main:new-group", ml(lang, "new_group"), true, Some("CmdOrCtrl+Shift+N"))?,
+    &PredefinedMenuItem::separator(handle)?,
+    &MenuItem::with_id(handle, "main:import", ml(lang, "import"), true, None::<&str>)?,
+    &MenuItem::with_id(handle, "main:export", ml(lang, "export"), true, None::<&str>)?,
+    &PredefinedMenuItem::separator(handle)?,
+    &MenuItem::with_id(handle, "main:exit", ml(lang, "exit"), true, None::<&str>)?,
+  ])?;
+  let edit_menu = build_edit_submenu(handle, lang)?;
+  let view_menu = build_view_submenu(handle, lang, theme, "main")?;
+  let help_menu = Submenu::with_items(handle, ml(lang, "help"), true, &[
+    &MenuItem::with_id(handle, "main:github", ml(lang, "github"), true, None::<&str>)?,
+  ])?;
+  Menu::with_items(handle, &[&file_menu, &edit_menu, &view_menu, &help_menu])
+}
+
+fn build_query_menu(handle: &AppHandle<Wry>, lang: &str, theme: &str) -> tauri::Result<Menu<Wry>> {
+  let file_menu = Submenu::with_items(handle, ml(lang, "file"), true, &[
+    &MenuItem::with_id(handle, "query:new-sql-tab", ml(lang, "new_sql_tab"), true, Some("CmdOrCtrl+T"))?,
+    &PredefinedMenuItem::separator(handle)?,
+    &MenuItem::with_id(handle, "query:close", ml(lang, "close_window"), true, Some("CmdOrCtrl+W"))?,
+  ])?;
+  let edit_menu = build_edit_submenu(handle, lang)?;
+  // Query view menu: Switch DB + shared theme/lang items
+  let view_items = build_view_items(handle, lang, theme, "query")?;
+  let switch_db = MenuItem::with_id(handle, "query:switch-db", ml(lang, "switch_db"), true, None::<&str>)?;
+  let mut view_refs: Vec<&dyn tauri::menu::IsMenuItem<Wry>> = vec![&switch_db];
+  for item in &view_items {
+    view_refs.push(item.as_ref());
+  }
+  let view_menu = Submenu::with_items(handle, ml(lang, "view"), true, &view_refs)?;
+  let query_menu = Submenu::with_items(handle, ml(lang, "query"), true, &[
+    &MenuItem::with_id(handle, "query:run", ml(lang, "run"), true, Some("CmdOrCtrl+Enter"))?,
+    &MenuItem::with_id(handle, "query:run-all", ml(lang, "run_all"), true, Some("CmdOrCtrl+Shift+Enter"))?,
+    &MenuItem::with_id(handle, "query:cancel", ml(lang, "cancel"), true, None::<&str>)?,
+    &PredefinedMenuItem::separator(handle)?,
+    &MenuItem::with_id(handle, "query:format", ml(lang, "format"), true, Some("CmdOrCtrl+Shift+F"))?,
+  ])?;
+  Menu::with_items(handle, &[&file_menu, &edit_menu, &view_menu, &query_menu])
+}
+
+fn build_settings_menu(handle: &AppHandle<Wry>, lang: &str, theme: &str) -> tauri::Result<Menu<Wry>> {
+  let edit_menu = build_edit_submenu(handle, lang)?;
+  let view_menu = build_view_submenu(handle, lang, theme, "settings")?;
+  let settings_menu = Submenu::with_items(handle, ml(lang, "settings"), true, &[
+    &MenuItem::with_id(handle, "settings:test-connection", ml(lang, "test_connection"), true, None::<&str>)?,
+    &MenuItem::with_id(handle, "settings:connect", ml(lang, "connect"), true, None::<&str>)?,
+    &PredefinedMenuItem::separator(handle)?,
+    &MenuItem::with_id(handle, "settings:save", ml(lang, "save"), true, None::<&str>)?,
+    &MenuItem::with_id(handle, "settings:delete", ml(lang, "delete"), true, None::<&str>)?,
+  ])?;
+  Menu::with_items(handle, &[&edit_menu, &view_menu, &settings_menu])
+}
+
+/// Set menus once at startup to register accelerators, then hide menu bars.
+fn setup_menus(handle: &AppHandle<Wry>) -> tauri::Result<()> {
+  let main_menu = build_main_menu(handle, "en", "light")?;
+  let query_menu = build_query_menu(handle, "en", "light")?;
+  let settings_menu = build_settings_menu(handle, "en", "light")?;
+  if let Some(w) = handle.get_webview_window("main") { let _ = w.set_menu(main_menu); let _ = w.hide_menu(); }
+  if let Some(w) = handle.get_webview_window("query") { let _ = w.set_menu(query_menu); let _ = w.hide_menu(); }
+  if let Some(w) = handle.get_webview_window("settings") { let _ = w.set_menu(settings_menu); let _ = w.hide_menu(); }
+  Ok(())
+}
+
 fn main() {
   tauri::Builder::default()
+    .setup(|app| {
+      setup_menus(app.handle())?;
+      Ok(())
+    })
+    .on_menu_event(|app, event| {
+      let id = event.id().0.as_str();
+      match id {
+        "main:exit" => std::process::exit(0),
+        "main:github" => {
+          let _ = std::process::Command::new("cmd")
+            .args(["/c", "start", "", "https://github.com/kan/musql"])
+            .spawn();
+        }
+        "query:close" => {
+          if let Some(w) = app.get_webview_window("query") { let _ = w.hide(); }
+          if let Some(w) = app.get_webview_window("main") {
+            let _ = w.show();
+            let _ = w.set_focus();
+          }
+        }
+        _ => {
+          if let Some((window_label, action)) = id.split_once(':') {
+            let _ = app.emit_to(
+              EventTarget::webview_window(window_label),
+              "menu:action",
+              action,
+            );
+          }
+        }
+      }
+    })
     .manage(Arc::new(Mutex::new(None::<ConnectionCache>)))
     .on_window_event(|window, event| {
       if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -1529,7 +1735,8 @@ fn main() {
       has_password,
       has_ssh_passphrase,
       export_profiles,
-      import_profiles
+      import_profiles,
+      show_popup_menu
     ])
     .run(tauri::generate_context!())
     .unwrap_or_else(|e| {

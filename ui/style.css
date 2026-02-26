@@ -1081,6 +1081,13 @@ pre {
   color: #fff;
 }
 
+/* ── Menu (hamburger) button ── */
+.menu-btn {
+  padding: 4px 6px;
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
 /* ── Theme toggle button ── */
 .theme-toggle {
   position: fixed;

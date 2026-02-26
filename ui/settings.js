@@ -19,6 +19,9 @@ const caCertInput = document.getElementById("mysql-ca-cert");
 const caCertBrowseBtn = document.getElementById("mysql-ca-cert-browse");
 const sshKeyBrowseBtn = document.getElementById("ssh-key-browse");
 
+const menuBtn = document.getElementById("menu-btn");
+menuBtn.innerHTML = icon('menu');
+
 // Apply icons to heading and buttons
 function applySettingsLabels() {
   document.getElementById("settings-heading").innerHTML = icon('settings', 24) + ' ' + t('settings_heading');
@@ -304,6 +307,8 @@ async function safeInvoke(command, payload) {
   return invoke(command, payload);
 }
 
+menuBtn.addEventListener("click", () => safeInvoke("show_popup_menu", { lang: getLang(), theme: getTheme() }));
+
 const mysqlPassInput = document.getElementById("mysql-pass");
 
 async function loadProfile(id) {
@@ -444,6 +449,18 @@ deleteBtn.disabled = true;
 connectBtn.disabled = true;
 
 if (eventApi && eventApi.listen) {
+  eventApi.listen("menu:action", (event) => {
+    switch (event.payload) {
+      case "test-connection": testBtn.click(); break;
+      case "connect": connectBtn.click(); break;
+      case "save": saveBtn.click(); break;
+      case "delete": deleteBtn.click(); break;
+      case "theme-light": setTheme("light"); break;
+      case "theme-dark": setTheme("dark"); break;
+      case "lang-en": setLang("en"); break;
+      case "lang-ja": setLang("ja"); break;
+    }
+  });
   eventApi.listen("settings:open", (event) => {
     const payload = event.payload || {};
     const id = (typeof payload === "string") ? payload : (payload.id || "");
