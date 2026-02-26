@@ -101,6 +101,8 @@
       update_available: "Update v{version} available",
       update_install: "Update & Restart",
       update_installing: "Installing...",
+      check_update: "Check for Updates...",
+      no_update_available: "You are using the latest version.",
 
       // ── Common ──
       toggle_dark_mode: "Toggle dark mode",
@@ -205,6 +207,8 @@
       update_available: "v{version} へのアップデートがあります",
       update_install: "更新して再起動",
       update_installing: "インストール中...",
+      check_update: "アップデートを確認...",
+      no_update_available: "最新バージョンです。",
 
       // ── 共通 ──
       toggle_dark_mode: "ダークモード切替",

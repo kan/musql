@@ -768,6 +768,14 @@ if (eventApi && eventApi.listen) {
       case "theme-dark": setTheme("dark"); break;
       case "lang-en": setLang("en"); break;
       case "lang-ja": setLang("ja"); break;
+      case "check-update":
+        safeInvoke("check_update").then(function(hasUpdate) {
+          if (!hasUpdate) alert(t("no_update_available"));
+        }).catch(function(e) { alert(String(e)); });
+        break;
+      case "no-update":
+        alert(t("no_update_available"));
+        break;
     }
   });
 }

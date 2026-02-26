@@ -1519,6 +1519,7 @@ fn ml<'a>(lang: &str, key: &'a str) -> &'a str {
     ("ja", "export") => "エクスポート...",
     ("ja", "exit") => "終了",
     ("ja", "github") => "GitHub リポジトリ",
+    ("ja", "check_update") => "アップデートを確認...",
     ("ja", "settings") => "設定",
     ("ja", "new_sql_tab") => "新規 SQL タブ",
     ("ja", "close_window") => "ウィンドウを閉じる",
@@ -1547,6 +1548,7 @@ fn ml<'a>(lang: &str, key: &'a str) -> &'a str {
     (_, "export") => "Export Profiles...",
     (_, "exit") => "Exit",
     (_, "github") => "GitHub Repository",
+    (_, "check_update") => "Check for Updates...",
     (_, "new_sql_tab") => "New SQL Tab",
     (_, "close_window") => "Close Window",
     (_, "run") => "Run",
@@ -1611,6 +1613,8 @@ fn build_main_menu(handle: &AppHandle<Wry>, lang: &str, theme: &str) -> tauri::R
   let edit_menu = build_edit_submenu(handle, lang)?;
   let view_menu = build_view_submenu(handle, lang, theme, "main")?;
   let help_menu = Submenu::with_items(handle, ml(lang, "help"), true, &[
+    &MenuItem::with_id(handle, "main:check-update", ml(lang, "check_update"), true, None::<&str>)?,
+    &PredefinedMenuItem::separator(handle)?,
     &MenuItem::with_id(handle, "main:github", ml(lang, "github"), true, None::<&str>)?,
   ])?;
   Menu::with_items(handle, &[&file_menu, &edit_menu, &view_menu, &help_menu])
@@ -1666,6 +1670,21 @@ fn setup_menus(handle: &AppHandle<Wry>) -> tauri::Result<()> {
 }
 
 #[tauri::command]
+async fn check_update(app: AppHandle) -> Result<bool, String> {
+  use tauri_plugin_updater::UpdaterExt;
+  let update = app.updater().map_err(|e| e.to_string())?
+    .check().await.map_err(|e| e.to_string())?;
+  if let Some(update) = update {
+    let _ = app.emit("update-available", serde_json::json!({
+      "version": update.version
+    }));
+    Ok(true)
+  } else {
+    Ok(false)
+  }
+}
+
+#[tauri::command]
 async fn install_update(app: AppHandle) -> Result<(), String> {
   use tauri_plugin_updater::UpdaterExt;
   let update = app.updater().map_err(|e| e.to_string())?
@@ -1682,21 +1701,6 @@ fn main() {
     .plugin(tauri_plugin_updater::Builder::new().build())
     .setup(|app| {
       setup_menus(app.handle())?;
-
-      // Check for updates after a short delay
-      let handle = app.handle().clone();
-      tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(Duration::from_secs(3)).await;
-        use tauri_plugin_updater::UpdaterExt;
-        if let Ok(updater) = handle.updater() {
-          if let Ok(Some(update)) = updater.check().await {
-            let _ = handle.emit("update-available", serde_json::json!({
-              "version": update.version
-            }));
-          }
-        }
-      });
-
       Ok(())
     })
     .on_menu_event(|app, event| {
@@ -1707,6 +1711,42 @@ fn main() {
           let _ = std::process::Command::new("cmd")
             .args(["/c", "start", "", "https://github.com/kan/musql"])
             .spawn();
+        }
+        "main:check-update" => {
+          let handle = app.clone();
+          tauri::async_runtime::spawn(async move {
+            use tauri_plugin_updater::UpdaterExt;
+            match handle.updater() {
+              Ok(updater) => match updater.check().await {
+                Ok(Some(update)) => {
+                  let _ = handle.emit("update-available", serde_json::json!({
+                    "version": update.version
+                  }));
+                }
+                Ok(None) => {
+                  let _ = handle.emit_to(
+                    EventTarget::webview_window("main"),
+                    "menu:action",
+                    "no-update",
+                  );
+                }
+                Err(_) => {
+                  let _ = handle.emit_to(
+                    EventTarget::webview_window("main"),
+                    "menu:action",
+                    "no-update",
+                  );
+                }
+              }
+              Err(_) => {
+                let _ = handle.emit_to(
+                  EventTarget::webview_window("main"),
+                  "menu:action",
+                  "no-update",
+                );
+              }
+            }
+          });
         }
         "query:close" => {
           if let Some(w) = app.get_webview_window("query") { let _ = w.hide(); }
@@ -1765,6 +1805,7 @@ fn main() {
       export_profiles,
       import_profiles,
       show_popup_menu,
+      check_update,
       install_update
     ])
     .run(tauri::generate_context!())
