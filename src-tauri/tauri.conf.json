@@ -52,7 +52,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQ5MUYyMzVDQkZBOTYzQkQKUldTOVk2bS9YQ01mMmJ1UXFocW53UEMxRXpxd0ZNWHpGUG5aRjJQV3lrQ0VnNGtISjhScE9xRDgK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE3MENGNEU1NDJCQkJFQTEKUldTaHZydEM1ZlFNcDhDUTY0MFZkZmMzNXVSOHg4YVc5Wmo0Z092MnlTYjM5WnlQcCtsYU04LzMK",
       "endpoints": [
         "https://github.com/kan/musql/releases/latest/download/latest.json"
       ]
