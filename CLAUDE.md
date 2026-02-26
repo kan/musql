@@ -115,15 +115,16 @@
 ## TODO
 (上から優先度順)
 
-- 見た目の強化
 - 接続設定のインポートとエクスポート
+- SSH接続方法の再検討(libssh)
 - docker上のmysqlへの簡単アクセス
 - ビルド・配布手段の検討
-- Windows以外での動作
+- アップデートチェック・セルフアップデート
 - SSH秘密鍵パスフレーズ対応
   - 設定画面でパスフレーズを保存（keyring）
   - 接続時に SSH_ASKPASS 経由で自動入力（一時 .cmd スクリプト生成→削除）
   - パスフレーズ未保存時は都度入力ダイアログ（Tauri dialog）
+- Windows以外での動作
 
 ## localStorage keys
 - `musql:collapsed`: グループの開閉状態（`app.js`）。
@@ -133,20 +134,25 @@
 - `musql:lang`: 言語設定（`"ja"` | `"en"` | 未設定=`navigator.language` フォールバック→デフォルト `ja`）。
 
 ## Strategy
-- パスワード安全保存: **実装済み**。`keyring` クレート（Windows Credential Manager）で profile ID をキーにパスワードを保存。`connections.json` にはパスワードを含めない。旧データは `load_profiles()` で自動マイグレーション。
-- SSH パスフレーズ対応:
-  - 保存: MySQL パスワードと同様に keyring に保存（キー: `musql:ssh-passphrase:<profileId>` 等）。Settings UI にパスフレーズ入力欄を追加。
-  - 自動入力: SSH トンネル起動時に `SSH_ASKPASS` + `SSH_ASKPASS_REQUIRE=force` で一時 `.cmd` スクリプト（パスフレーズを echo）を指定。確立後に即削除。
-  - 都度入力: パスフレーズ未保存時は Tauri dialog でパスフレーズ入力を求め、同様に SSH_ASKPASS 経由で渡す。
-- SQL 多重クリック抑止: **実装済み**。実行中は Run ボタン disabled + Cancel ボタン表示。Cancel も一度押したら disabled。`executing` フラグで Ctrl+Enter 含む全エントリポイントをガード。
-- SQL 整形: **実装済み**。`sql-formatter@15.4.10` UMD ビルドを `ui/lib/sql-formatter/` に vendor。Format ボタンで選択範囲またはエディタ全体を MySQL 方言で整形。
-- クエリキャンセル: **実装済み**。`run_query` を `async fn` + `spawn_blocking` で非同期化し UI ブロックを解消。`RUNNING_QUERY` グローバルに connection_id + Pool を保持、`cancel_query`（async）が `KILL QUERY` を別コネクションで送信。JS 側は `cancelled` フラグで結果表示を「Query cancelled.」に差し替え。
-- Table タブ機能強化: **実装済み**。カラムソート（`<th>` クリックで ASC/DESC/なしトグル、▲▼インジケータ、ページ切替でも維持）。行詳細モーダル（行クリックで key-value 表示、PK ベース全文取得、JSON 自動整形）。BLOB/TEXT 切り詰め（`INFORMATION_SCHEMA.COLUMNS` で検出、BLOB は `'(BLOB)'` プレースホルダー、TEXT は 200 文字切り詰め、Truncate ボタンでトグル）。
-- ダークモード: **実装済み**。`:root` に Light パレット、`html.dark` に Dark パレットを CSS 変数で定義。全ハードコード色を変数化。`ui/theme.js`（IIFE）でテーマ検出（localStorage → `prefers-color-scheme` フォールバック）、即時適用（FOUC 防止）、トグルボタン（fixed 右下、sun/moon アイコン）、cross-window 同期（`storage` イベント）。CodeMirror は `html.dark .CodeMirror*` セレクタで Material 風ダークシンタックスハイライト。
-- i18n: **実装済み**。`ui/i18n.js`（IIFE）に日英翻訳データをインライン埋め込み。`t(key, params)` ヘルパーで文字列取得（テンプレート変数 `{name}` 対応）。`musql:lang` を localStorage に保存。HTML 静的テキストは `data-i18n`/`data-i18n-placeholder`/`data-i18n-title` 属性で一括適用。JS 動的文字列は `t()` で直接置換。main ウィンドウにテーマボタン左隣に EN/JA 言語トグルボタン。cross-window 同期は `storage` イベント + `musql:langchange` カスタムイベント。
-- アイコン: **実装済み**。Lucide SVG アイコン 28 個を `ui/icons.js` に格納（MIT ライセンス、24x24 viewBox、stroke-based）。`icon(name, size)` ヘルパーで `<svg class="icon">` を返す。`stroke="currentColor"` でボタン文字色を自動継承。全 HTML ページの `<script>` で読み込み、ボタン・コンテキストメニュー・見出し・リスト項目・タブヘッダーにインライン SVG で適用。main ヘッダーボタンはアイコンのみ（title 属性でツールチップ）。フィルター入力欄内に虫めがねアイコン配置。タグフィルターチップ内にもアイコン。
-- favicon / アプリアイコン: **実装済み**。鼠モチーフの SVG アイコン (`ui/icon.svg`)。全 HTML に `<link rel="icon">` 設定。`cargo tauri icon ui/icon.png` で Tauri アプリアイコン（タスクバー・タイトルバー・ICO・ICNS）も生成済み。main ウィンドウヘッダーにロゴ + タイトル横並び表示。
 - 接続設定インポート/エクスポート: JSON 形式でファイル書き出し/読み込み。`pick_file` / `export_file` を再利用。パスワードを含めるかはオプション。
+- SSH 接続方法の再検討 (libssh):
+  - 現状: `C:\Windows\System32\OpenSSH\ssh.exe` をプロセス起動してトンネル。1Password SSH agent 対応のため Windows OpenSSH を優先。
+  - 推奨候補: **`russh`** クレート（純 Rust、Tokio ネイティブ async）。`channel_open_direct_tcpip` + `tokio::io::copy_bidirectional` でトンネル実装。`ssh.exe` プロセス管理が不要になり、クロスプラットフォーム対応も容易。
+  - 代替候補: `ssh2` クレート（libssh2 C バインディング）。API 安定だがブロッキング（`spawn_blocking` 必須）、OpenSSL ビルド依存。
+  - russh 注意点: API 不安定（v0.57、破壊的変更あり）、ホスト鍵検証の実装が必須、暗号バックエンドは `ring` feature 推奨（`aws-lc-rs` は Windows で NASM 必要）。`RUST_MIN_STACK=16777216` が必要な場合あり。
+  - Windows SSH agent: russh は `\\.\pipe\openssh-ssh-agent`（Windows OpenSSH / 1Password が使用）に対応。Pageant 互換は一部不安定。
+  - SSH config: `russh-config` で `~/.ssh/config` パース可能。ただし `ProxyJump`/`ProxyCommand` は手動実装が必要。
+  - パスフレーズ: `russh-keys` の `decode_secret_key(pem, Some(passphrase))` で対応。
+  - 移行方針: まず `russh` でトンネル機能のみ差し替え。既存の ssh.exe 方式はフォールバックとして残すか、feature flag で切り替え可能にする。
 - Docker MySQL: `docker ps` でコンテナ一覧を取得し、MySQL コンテナを検出。ポートマッピングから接続先を自動入力。
-- ビルド・配布: `cargo tauri build` で MSI/NSIS インストーラー生成。GitHub Actions で CI 自動ビルド。GitHub Releases で配布。
+- ビルド・配布: `cargo tauri build` で MSI/NSIS インストーラー生成。GitHub Actions で CI 自動ビルド。GitHub Releases で配布。`tauri-apps/tauri-action@v0` で `includeUpdaterJson: true` 指定。`v*` タグ push で自動リリース。
+- アップデートチェック・セルフアップデート:
+  - `tauri-plugin-updater` を使用。`cargo add tauri-plugin-updater` で導入。
+  - Tauri 独自の Ed25519 署名鍵ペアで更新ファイルを検証（Windows Authenticode とは別）。`cargo tauri signer generate` で生成、秘密鍵は GitHub Secrets に保存。
+  - `tauri.conf.json` に `"createUpdaterArtifacts": true` + `"plugins": { "updater": { "pubkey": "...", "endpoints": ["https://github.com/<user>/musql/releases/latest/download/latest.json"] } }` を設定。
+  - GitHub Actions の `tauri-action` が `latest.json`（バージョン・署名・ダウンロード URL）を自動生成しリリースにアップロード。
+  - 更新チェック: Rust 側で起動時に非同期で `handle.updater().check()` を実行、更新があれば `update-available` イベントを emit。UI 側で「更新あり — 再起動してインストール」バナーを表示。
+  - Windows 動作: NSIS passive モードで自動インストール → アプリ再起動。SmartScreen 警告は初回ブラウザダウンロード時のみ（自動更新では表示されない）。
+  - Windows Authenticode 署名: 初期段階ではスキップ可。SmartScreen 警告を消すには OV/EV 証明書（$100-400/年）が必要。
+  - 秘密鍵紛失は復旧不可（既存インストールへの更新配信不能）。バックアップ必須。
 - クロスプラットフォーム: macOS/Linux 動作確認。SSH バイナリパス分岐は `cfg!(target_os)` で既に対応済み。CI でマルチプラットフォームビルドを追加。
