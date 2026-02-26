@@ -89,6 +89,32 @@ struct ProfileListResponse {
   items: Vec<ConnectionProfile>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct ExportData {
+  version: u32,
+  groups: Vec<ProfileGroup>,
+  items: Vec<ConnectionProfile>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  passwords: Option<std::collections::HashMap<String, String>>,
+}
+
+#[derive(Debug, Serialize)]
+struct ImportConflicts {
+  groups: Vec<String>,    // duplicate group names
+  profiles: Vec<String>,  // duplicate profile names
+}
+
+#[derive(Debug, Serialize)]
+struct ImportResult {
+  groups: Vec<ProfileGroup>,
+  items: Vec<ConnectionProfile>,
+  imported_count: usize,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  conflicts: Option<ImportConflicts>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  file_path: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 struct QueryResult {
   columns: Vec<String>,
@@ -734,6 +760,222 @@ async fn pick_file(
 }
 
 #[tauri::command]
+async fn export_profiles(app: AppHandle, include_passwords: bool) -> Result<bool, String> {
+  let store = load_profiles(&app)?;
+  let passwords = if include_passwords {
+    let mut map = std::collections::HashMap::new();
+    for item in &store.items {
+      let pw = get_password(&item.id);
+      if !pw.is_empty() {
+        map.insert(item.id.clone(), pw);
+      }
+    }
+    if map.is_empty() { None } else { Some(map) }
+  } else {
+    None
+  };
+
+  let export = ExportData {
+    version: store.version,
+    groups: store.groups,
+    items: store.items,
+    passwords,
+  };
+
+  let json = serde_json::to_string_pretty(&export)
+    .map_err(|e| format!("Failed to serialize export data: {e}"))?;
+
+  let dialog = rfd::AsyncFileDialog::new()
+    .set_file_name("musql-profiles.json")
+    .add_filter("JSON files", &["json"])
+    .save_file()
+    .await;
+
+  match dialog {
+    Some(handle) => {
+      std::fs::write(handle.path(), json.as_bytes())
+        .map_err(|e| format!("Failed to write file: {e}"))?;
+      Ok(true)
+    }
+    None => Ok(false),
+  }
+}
+
+#[tauri::command]
+async fn import_profiles(
+  app: AppHandle,
+  mode: Option<String>,
+  file_path: Option<String>,
+) -> Result<Option<ImportResult>, String> {
+  // 1. Read file
+  let (import_path, import_data) = if let Some(ref path) = file_path {
+    // Second call: read from the specified path
+    let content = std::fs::read_to_string(path)
+      .map_err(|e| format!("Failed to read file: {e}"))?;
+    let data: ExportData = serde_json::from_str(&content)
+      .map_err(|e| format!("Failed to parse import file: {e}"))?;
+    (path.clone(), data)
+  } else {
+    // First call: open file picker
+    let dialog = rfd::AsyncFileDialog::new()
+      .add_filter("JSON files", &["json"])
+      .pick_file()
+      .await;
+    let handle = match dialog {
+      Some(h) => h,
+      None => return Ok(None),
+    };
+    let path_str = handle.path().to_string_lossy().into_owned();
+    let content = std::fs::read_to_string(handle.path())
+      .map_err(|e| format!("Failed to read file: {e}"))?;
+    let data: ExportData = serde_json::from_str(&content)
+      .map_err(|e| format!("Failed to parse import file: {e}"))?;
+    (path_str, data)
+  };
+
+  let store = load_profiles(&app)?;
+
+  // 2. Conflict detection (first call only, mode == None)
+  if mode.is_none() {
+    let dup_groups: Vec<String> = import_data
+      .groups
+      .iter()
+      .filter(|ig| store.groups.iter().any(|sg| sg.name == ig.name))
+      .map(|ig| ig.name.clone())
+      .collect();
+
+    let dup_profiles: Vec<String> = import_data
+      .items
+      .iter()
+      .filter(|ii| {
+        // Match: same name AND same group (by group name mapping)
+        let import_group_name = ii
+          .group_id
+          .as_ref()
+          .and_then(|gid| import_data.groups.iter().find(|g| g.id == *gid))
+          .map(|g| g.name.as_str());
+        store.items.iter().any(|si| {
+          if si.name != ii.name {
+            return false;
+          }
+          let store_group_name = si
+            .group_id
+            .as_ref()
+            .and_then(|gid| store.groups.iter().find(|g| g.id == *gid))
+            .map(|g| g.name.as_str());
+          import_group_name == store_group_name
+        })
+      })
+      .map(|ii| ii.name.clone())
+      .collect();
+
+    if !dup_groups.is_empty() || !dup_profiles.is_empty() {
+      // Return conflicts without importing
+      return Ok(Some(ImportResult {
+        groups: store.groups,
+        items: store.items,
+        imported_count: 0,
+        conflicts: Some(ImportConflicts {
+          groups: dup_groups,
+          profiles: dup_profiles,
+        }),
+        file_path: Some(import_path),
+      }));
+    }
+    // No conflicts — fall through to "add" mode
+  }
+
+  let effective_mode = mode.as_deref().unwrap_or("add");
+
+  // 3. Execute import
+  let mut store = store; // make mutable
+  let mut group_id_map = std::collections::HashMap::new();
+  let max_group_order = store.groups.iter().map(|g| g.order).max().unwrap_or(0);
+  let max_item_order = store.items.iter().map(|it| it.order).max().unwrap_or(0);
+  let mut next_order = max_group_order.max(max_item_order) + 1000;
+
+  for group in &import_data.groups {
+    if effective_mode == "overwrite" {
+      // Reuse existing group with same name
+      if let Some(existing) = store.groups.iter().find(|sg| sg.name == group.name) {
+        group_id_map.insert(group.id.clone(), existing.id.clone());
+        continue;
+      }
+    }
+    // "add" or no match in overwrite → create new
+    let new_id = generate_profile_id();
+    group_id_map.insert(group.id.clone(), new_id.clone());
+    store.groups.push(ProfileGroup {
+      id: new_id,
+      name: group.name.clone(),
+      order: next_order,
+    });
+    next_order += 1000;
+    std::thread::sleep(Duration::from_millis(2));
+  }
+
+  let mut profile_id_map = std::collections::HashMap::new();
+  let mut imported_count = 0usize;
+
+  for item in &import_data.items {
+    let mapped_group_id = item
+      .group_id
+      .as_ref()
+      .and_then(|gid| group_id_map.get(gid).cloned());
+
+    if effective_mode == "overwrite" {
+      // Find existing profile with same name in the same (mapped) group
+      if let Some(existing) = store.items.iter_mut().find(|si| {
+        si.name == item.name && si.group_id == mapped_group_id
+      }) {
+        // Overwrite: update fields, keep existing ID
+        profile_id_map.insert(item.id.clone(), existing.id.clone());
+        existing.request = item.request.clone();
+        existing.color = item.color.clone();
+        existing.tags = item.tags.clone();
+        imported_count += 1;
+        continue;
+      }
+    }
+
+    // "add" or no match in overwrite → create new
+    let new_id = generate_profile_id();
+    profile_id_map.insert(item.id.clone(), new_id.clone());
+    store.items.push(ConnectionProfile {
+      id: new_id,
+      name: item.name.clone(),
+      group_id: mapped_group_id,
+      order: next_order,
+      color: item.color.clone(),
+      tags: item.tags.clone(),
+      request: item.request.clone(),
+    });
+    next_order += 1000;
+    imported_count += 1;
+    std::thread::sleep(Duration::from_millis(2));
+  }
+
+  save_profiles(&app, &store)?;
+
+  // Import passwords
+  if let Some(passwords) = &import_data.passwords {
+    for (old_id, pw) in passwords {
+      if let Some(new_id) = profile_id_map.get(old_id) {
+        let _ = set_password(new_id, pw);
+      }
+    }
+  }
+
+  Ok(Some(ImportResult {
+    groups: store.groups,
+    items: store.items,
+    imported_count,
+    conflicts: None,
+    file_path: None,
+  }))
+}
+
+#[tauri::command]
 fn list_profiles(app: AppHandle) -> Result<ProfileListResponse, String> {
   let store = load_profiles(&app)?;
   Ok(ProfileListResponse {
@@ -1008,7 +1250,9 @@ fn main() {
       export_file,
       pick_file,
       list_ssh_config_hosts,
-      has_password
+      has_password,
+      export_profiles,
+      import_profiles
     ])
     .run(tauri::generate_context!())
     .unwrap_or_else(|e| {

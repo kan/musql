@@ -79,7 +79,7 @@
 - `ui/icon.svg` — アプリアイコン（鼠モチーフ SVG）。favicon + main ヘッダーロゴ。
 - `ui/icon.png` — アイコン変換元 PNG。`cargo tauri icon` で `src-tauri/icons/` を生成。
 - `src-tauri/icons/` — Tauri アプリアイコン（各サイズ PNG/ICO/ICNS）。`cargo tauri icon ui/icon.png` で再生成。
-- `ui/icons.js` — Lucide アイコン SVG パスデータ（28 個）+ `icon(name, size)` ヘルパー関数。
+- `ui/icons.js` — Lucide アイコン SVG パスデータ（29 個）+ `icon(name, size)` ヘルパー関数。
 - `ui/theme.js` — ダークモード管理（テーマ検出・適用・トグルボタン生成・cross-window 同期）。
 - `ui/i18n.js` — i18n 管理（日英翻訳データインライン埋め込み、`t(key, params)` ヘルパー、言語トグルボタン生成・cross-window 同期）。
 - `ui/lib/codemirror/` — CodeMirror 5 vendored ファイル（コア、SQL モード、補完アドオン）。
@@ -94,6 +94,7 @@
 - SSL モード: `MySqlConfig.ssl_mode` で DISABLED / REQUIRED / VERIFY_CA / VERIFY_IDENTITY を選択。VERIFY_CA/VERIFY_IDENTITY 時は `tls_ca_cert_path` で CA 証明書を指定可能。`native-tls` (SChannel) バックエンドで PEM/DER 対応。旧 `tls_enabled`/`tls_skip_verify` フィールドは `skip_serializing` で読み込み互換のみ残し、`load_profiles()` で自動マイグレーション。
 - `pick_file` コマンド: `rfd` でネイティブファイル選択ダイアログを表示しパスを返す。CA 証明書・SSH IdentityFile の Browse に使用。
 - `export_file` は `rfd` クレートでネイティブ保存ダイアログを表示しファイル書き出し。
+- インポート/エクスポート: `export_profiles` で全プロファイル＋グループを JSON ファイルにエクスポート。パスワード含めるかは `include_passwords` フラグで選択（keyring から取得して `passwords` マップに格納）。`import_profiles` で JSON ファイルを読み込みインポート。重複検出付き 2 段階コール方式: 初回（`mode=None`）でファイル読み込み＋重複チェック。重複なしならそのままインポート。重複あり（同名グループ or 同名＋同グループのプロファイル）なら `conflicts` + `file_path` を返し、UI が `confirm()` で上書き/新規追加を選択して 2 回目（`mode="overwrite"|"add"`）を呼ぶ。overwrite 時は同名グループの ID を再利用し、同名＋同グループのプロファイルは既存を上書き（request/color/tags 更新、ID 維持）。add 時は常に新 ID 生成。パスワードは新/既存 ID に対応付けて keyring に保存。メイン画面ヘッダーに upload/download アイコンボタンを配置。
 - `ssh.private_key_path` は SSH の `IdentityFile` として `-o IdentityFile=<path> -o IdentitiesOnly=yes` で渡す。`.pub` ファイル指定で 1Password SSH agent と連携可能。
 - SSH バイナリは `C:\Windows\System32\OpenSSH\ssh.exe` を優先（Git 付属の ssh.exe は 1Password SSH agent 非対応のため）。
 - SSH トンネル失敗時は stderr の内容をエラーメッセージに含めて返す。
@@ -115,7 +116,6 @@
 ## TODO
 (上から優先度順)
 
-- 接続設定のインポートとエクスポート
 - SSH接続方法の再検討(libssh)
 - docker上のmysqlへの簡単アクセス
 - ビルド・配布手段の検討
@@ -134,7 +134,7 @@
 - `musql:lang`: 言語設定（`"ja"` | `"en"` | 未設定=`navigator.language` フォールバック→デフォルト `ja`）。
 
 ## Strategy
-- 接続設定インポート/エクスポート: JSON 形式でファイル書き出し/読み込み。`pick_file` / `export_file` を再利用。パスワードを含めるかはオプション。
+- 接続設定インポート/エクスポート: 実装済み。`export_profiles` / `import_profiles` コマンド。JSON 形式（`ExportData` 構造体）。パスワードはオプションで `passwords` マップに profile ID → パスワードで格納。インポート時は全 ID を再生成して重複回避。
 - SSH 接続方法の再検討 (libssh):
   - 現状: `C:\Windows\System32\OpenSSH\ssh.exe` をプロセス起動してトンネル。1Password SSH agent 対応のため Windows OpenSSH を優先。
   - 推奨候補: **`russh`** クレート（純 Rust、Tokio ネイティブ async）。`channel_open_direct_tcpip` + `tokio::io::copy_bidirectional` でトンネル実装。`ssh.exe` プロセス管理が不要になり、クロスプラットフォーム対応も容易。

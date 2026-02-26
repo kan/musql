@@ -88,6 +88,13 @@
       tsv_all: "TSV (all rows)",
       sql_all: "SQL (all rows)",
 
+      // ── Import/Export ──
+      export_profiles_title: "Export profiles",
+      import_profiles_title: "Import profiles",
+      confirm_include_passwords: "Include passwords in the export file?",
+      import_success: "{n} profile(s) imported.",
+      import_conflicts: "Found {groups} duplicate group(s) and {profiles} duplicate profile(s).\nOverwrite existing? (Cancel = add as new)",
+
       // ── Common ──
       toggle_dark_mode: "Toggle dark mode",
       toggle_language: "Switch language",
@@ -177,6 +184,13 @@
       csv_all: "CSV（全行）",
       tsv_all: "TSV（全行）",
       sql_all: "SQL（全行）",
+
+      // ── インポート/エクスポート ──
+      export_profiles_title: "プロファイルをエクスポート",
+      import_profiles_title: "プロファイルをインポート",
+      confirm_include_passwords: "エクスポートファイルにパスワードを含めますか？",
+      import_success: "{n} 件のプロファイルをインポートしました。",
+      import_conflicts: "重複するグループが {groups} 件、プロファイルが {profiles} 件あります。\n既存の設定を上書きしますか？（キャンセル = 新規として追加）",
 
       // ── 共通 ──
       toggle_dark_mode: "ダークモード切替",

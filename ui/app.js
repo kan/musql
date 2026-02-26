@@ -5,12 +5,18 @@ const invoke = (window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.co
 const treeEl = document.getElementById("profile-tree");
 const profileNewBtn = document.getElementById("profile-new");
 const groupNewBtn = document.getElementById("group-new");
+const importBtn = document.getElementById("import-btn");
+const exportBtn = document.getElementById("export-btn");
 const contextMenuEl = document.getElementById("context-menu");
 const filterInput = document.getElementById("filter-input");
 const tagFilterBarEl = document.getElementById("tag-filter-bar");
 
 // Apply icons to header buttons
 function applyAppLabels() {
+  importBtn.innerHTML = icon('download');
+  importBtn.title = t('import_profiles_title');
+  exportBtn.innerHTML = icon('upload');
+  exportBtn.title = t('export_profiles_title');
   groupNewBtn.innerHTML = icon('folder-plus');
   groupNewBtn.title = t('new_group');
   profileNewBtn.innerHTML = icon('plus');
@@ -651,8 +657,55 @@ async function commitReorder() {
   }
 }
 
+// ── Import / Export ──
+
+async function exportProfiles() {
+  const includePasswords = confirm(t('confirm_include_passwords'));
+  try {
+    await safeInvoke("export_profiles", { includePasswords });
+  } catch (error) {
+    alert(String(error));
+  }
+}
+
+async function importProfiles() {
+  try {
+    const result = await safeInvoke("import_profiles", {
+      mode: null, filePath: null
+    });
+    if (!result) return; // cancelled
+
+    if (result.conflicts) {
+      // Duplicates found — ask user
+      const msg = t('import_conflicts', {
+        groups: result.conflicts.groups.length,
+        profiles: result.conflicts.profiles.length,
+      });
+      const overwrite = confirm(msg);
+      const mode = overwrite ? "overwrite" : "add";
+      const result2 = await safeInvoke("import_profiles", {
+        mode, filePath: result.file_path,
+      });
+      if (result2) {
+        profileData = result2;
+        renderTree();
+        alert(t('import_success', { n: result2.imported_count }));
+      }
+    } else {
+      // No duplicates — already imported
+      profileData = result;
+      renderTree();
+      alert(t('import_success', { n: result.imported_count }));
+    }
+  } catch (error) {
+    alert(String(error));
+  }
+}
+
 // ── Event handlers ──
 
+exportBtn.addEventListener("click", () => exportProfiles());
+importBtn.addEventListener("click", () => importProfiles());
 profileNewBtn.addEventListener("click", () => openSettings(""));
 groupNewBtn.addEventListener("click", () => createGroup());
 filterInput.addEventListener("input", () => renderTree());
