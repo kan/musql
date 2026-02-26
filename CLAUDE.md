@@ -6,7 +6,7 @@
 - UI は `ui/` の素朴な HTML/JS/CSS。Node.js 不要。
 
 ## How to run (dev)
-- 前提: Rust toolchain, Visual Studio Build Tools (C++), Windows OpenSSH Client (`C:\Windows\System32\OpenSSH\ssh.exe`)。
+- 前提: Rust toolchain, Visual Studio Build Tools (C++)。
 - 起動:
   - `cd src-tauri`
   - `cargo tauri dev`
@@ -66,7 +66,7 @@
   - エディタ下書き保存: SQL タブの内容を localStorage にプロファイル単位で自動保存（デバウンス 1 秒）。DB 切替・再接続時に復元。
   - 実行履歴: 成功した SQL を `musql:history:<profileId>` に最大 100 件保存。History ボタンから呼び出し・エディタに挿入。
 - SSH 有効時:
-  - Rust 側で SSH トンネルを起動、ローカルポートへ接続できるまで待機 → MySQL 接続 → 終了時に SSH プロセスを kill。
+  - `russh` クレート（純 Rust SSH）でトンネルを確立。`tokio::net::TcpListener` でローカルポートをバインドし、`channel_open_direct_tcpip` + `tokio::io::copy_bidirectional` で中継。MySQL は `127.0.0.1:<local_port>` に接続。
 
 ## Key files
 - `src-tauri/src/main.rs` — MySQL 接続/クエリ、SSH トンネル管理、接続プール、ウィンドウ管理、プロファイル CRUD、ファイルエクスポート。
@@ -95,9 +95,12 @@
 - `pick_file` コマンド: `rfd` でネイティブファイル選択ダイアログを表示しパスを返す。CA 証明書・SSH IdentityFile の Browse に使用。
 - `export_file` は `rfd` クレートでネイティブ保存ダイアログを表示しファイル書き出し。
 - インポート/エクスポート: `export_profiles` で全プロファイル＋グループを JSON ファイルにエクスポート。パスワード含めるかは `include_passwords` フラグで選択（keyring から取得して `passwords` マップに格納）。`import_profiles` で JSON ファイルを読み込みインポート。重複検出付き 2 段階コール方式: 初回（`mode=None`）でファイル読み込み＋重複チェック。重複なしならそのままインポート。重複あり（同名グループ or 同名＋同グループのプロファイル）なら `conflicts` + `file_path` を返し、UI が `confirm()` で上書き/新規追加を選択して 2 回目（`mode="overwrite"|"add"`）を呼ぶ。overwrite 時は同名グループの ID を再利用し、同名＋同グループのプロファイルは既存を上書き（request/color/tags 更新、ID 維持）。add 時は常に新 ID 生成。パスワードは新/既存 ID に対応付けて keyring に保存。メイン画面ヘッダーに upload/download アイコンボタンを配置。
-- `ssh.private_key_path` は SSH の `IdentityFile` として `-o IdentityFile=<path> -o IdentitiesOnly=yes` で渡す。`.pub` ファイル指定で 1Password SSH agent と連携可能。
-- SSH バイナリは `C:\Windows\System32\OpenSSH\ssh.exe` を優先（Git 付属の ssh.exe は 1Password SSH agent 非対応のため）。
-- SSH トンネル失敗時は stderr の内容をエラーメッセージに含めて返す。
+- SSH トンネル: `russh` クレート（v0.48、純 Rust、Tokio async）で実装。外部 ssh.exe バイナリ不要。`SshTunnel` は `tokio::task::JoinHandle` を保持し、Drop で abort。
+- SSH 認証優先順位: (1) `private_key_path` 指定あり → `russh_keys::load_secret_key(path, passphrase)` でファイルから鍵を読み込み `authenticate_publickey`。(2) SSH agent に問い合わせ（Windows: `\\.\pipe\openssh-ssh-agent`、1Password 対応。Unix: `SSH_AUTH_SOCK`）→ `authenticate_publickey_with` で各 identity を試行。(3) デフォルト鍵ファイル（`~/.ssh/id_ed25519`, `id_rsa`, `id_ecdsa`）を順に試行。
+- SSH 秘密鍵パスフレーズ: MySQL パスワードと同パターンで keyring（`{profile_id}:ssh_passphrase` キー）に保存。`SshConfig.passphrase` フィールド（`skip_serializing`）で受け渡し。`resolve_ssh_passphrase` で keyring から解決。Settings UI に Passphrase 入力欄（IdentityFile の下）、保存済み時はプレースホルダー表示。プロファイル複製・エクスポート/インポート（`ssh_passphrases` マップ）にも対応。デフォルト鍵ファイル（~/.ssh/id_*）はパスフレーズなし（`None`）で試行。
+- SSH config: `config_host` 指定時、`resolve_ssh_config_host` で `~/.ssh/config` をパースし `HostName`/`Port`/`User`/`IdentityFile` を解決。
+- SSH ホスト鍵検証: 初期実装では全受け入れ（`check_server_key` で常に `Ok(true)`）。
+- SSH 接続タイムアウト: `tokio::time::timeout` で 8 秒。
 - Settings UI: SSH Bastion の Enable チェックはパネルヘッダー横に配置。off 時はフィールド群を disabled 化。Profile name 未入力時は保存ボタン disabled。「接続」ボタン（success）で既存プロファイルのクエリウィンドウを直接開ける（新規作成時は disabled）。「接続テスト」ボタンは info スタイル。
 - Profile の色とタグ: `ConnectionProfile` に `color: Option<String>` と `tags: Vec<String>`（`#[serde(default)]` で後方互換）。Settings UI に 8 色カラーパレット（red/orange/yellow/green/teal/blue/purple/pink + None）とタグ入力（プリセット + 既存タグ補完、Enter/カンマ確定、Backspace 削除）。メイン画面ツリーに左端カラーバー（4px）とタグバッジを表示。
 - タグフィルター: メイン画面の検索欄下にタグチップバーを表示。クリックでタグ絞り込み（トグル）。テキストフィルターとの AND 条件。タグ未使用時は非表示。
@@ -116,14 +119,10 @@
 ## TODO
 (上から優先度順)
 
-- SSH接続方法の再検討(libssh)
+- SSH ホスト鍵検証（known_hosts / TOFU）
 - docker上のmysqlへの簡単アクセス
 - ビルド・配布手段の検討
 - アップデートチェック・セルフアップデート
-- SSH秘密鍵パスフレーズ対応
-  - 設定画面でパスフレーズを保存（keyring）
-  - 接続時に SSH_ASKPASS 経由で自動入力（一時 .cmd スクリプト生成→削除）
-  - パスフレーズ未保存時は都度入力ダイアログ（Tauri dialog）
 - Windows以外での動作
 
 ## localStorage keys
@@ -135,15 +134,7 @@
 
 ## Strategy
 - 接続設定インポート/エクスポート: 実装済み。`export_profiles` / `import_profiles` コマンド。JSON 形式（`ExportData` 構造体）。パスワードはオプションで `passwords` マップに profile ID → パスワードで格納。インポート時は全 ID を再生成して重複回避。
-- SSH 接続方法の再検討 (libssh):
-  - 現状: `C:\Windows\System32\OpenSSH\ssh.exe` をプロセス起動してトンネル。1Password SSH agent 対応のため Windows OpenSSH を優先。
-  - 推奨候補: **`russh`** クレート（純 Rust、Tokio ネイティブ async）。`channel_open_direct_tcpip` + `tokio::io::copy_bidirectional` でトンネル実装。`ssh.exe` プロセス管理が不要になり、クロスプラットフォーム対応も容易。
-  - 代替候補: `ssh2` クレート（libssh2 C バインディング）。API 安定だがブロッキング（`spawn_blocking` 必須）、OpenSSL ビルド依存。
-  - russh 注意点: API 不安定（v0.57、破壊的変更あり）、ホスト鍵検証の実装が必須、暗号バックエンドは `ring` feature 推奨（`aws-lc-rs` は Windows で NASM 必要）。`RUST_MIN_STACK=16777216` が必要な場合あり。
-  - Windows SSH agent: russh は `\\.\pipe\openssh-ssh-agent`（Windows OpenSSH / 1Password が使用）に対応。Pageant 互換は一部不安定。
-  - SSH config: `russh-config` で `~/.ssh/config` パース可能。ただし `ProxyJump`/`ProxyCommand` は手動実装が必要。
-  - パスフレーズ: `russh-keys` の `decode_secret_key(pem, Some(passphrase))` で対応。
-  - 移行方針: まず `russh` でトンネル機能のみ差し替え。既存の ssh.exe 方式はフォールバックとして残すか、feature flag で切り替え可能にする。
+- SSH 接続方法: 実装済み（russh）。`russh` v0.48（純 Rust、Tokio async）で SSH トンネルを実装。ssh.exe 外部バイナリ依存を排除。`channel_open_direct_tcpip` + `tokio::io::copy_bidirectional` でローカル TCP リスナー方式のトンネル。SSH agent（Windows named pipe / Unix socket）対応。`~/.ssh/config` パース対応。ホスト鍵検証は全受け入れ（将来 known_hosts / TOFU 対応予定）。
 - Docker MySQL: `docker ps` でコンテナ一覧を取得し、MySQL コンテナを検出。ポートマッピングから接続先を自動入力。
 - ビルド・配布: `cargo tauri build` で MSI/NSIS インストーラー生成。GitHub Actions で CI 自動ビルド。GitHub Releases で配布。`tauri-apps/tauri-action@v0` で `includeUpdaterJson: true` 指定。`v*` タグ push で自動リリース。
 - アップデートチェック・セルフアップデート:
@@ -155,4 +146,4 @@
   - Windows 動作: NSIS passive モードで自動インストール → アプリ再起動。SmartScreen 警告は初回ブラウザダウンロード時のみ（自動更新では表示されない）。
   - Windows Authenticode 署名: 初期段階ではスキップ可。SmartScreen 警告を消すには OV/EV 証明書（$100-400/年）が必要。
   - 秘密鍵紛失は復旧不可（既存インストールへの更新配信不能）。バックアップ必須。
-- クロスプラットフォーム: macOS/Linux 動作確認。SSH バイナリパス分岐は `cfg!(target_os)` で既に対応済み。CI でマルチプラットフォームビルドを追加。
+- クロスプラットフォーム: macOS/Linux 動作確認。russh は純 Rust のため OS 固有の SSH バイナリ依存なし。CI でマルチプラットフォームビルドを追加。

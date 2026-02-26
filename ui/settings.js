@@ -265,6 +265,7 @@ function collectRequest() {
       username: document.getElementById("ssh-user").value.trim(),
       private_key_path: document.getElementById("ssh-key").value.trim() || null,
       config_host: document.getElementById("ssh-config-host").value || null,
+      passphrase: document.getElementById("ssh-passphrase").value,
     },
   };
 }
@@ -292,6 +293,7 @@ function applyRequest(request) {
   document.getElementById("ssh-port").value = ssh.port || 22;
   document.getElementById("ssh-user").value = ssh.username || "";
   document.getElementById("ssh-key").value = ssh.private_key_path || "";
+  document.getElementById("ssh-passphrase").value = ssh.passphrase || "";
   updateSshFieldVisibility();
 }
 
@@ -326,12 +328,20 @@ async function loadProfile(id) {
   } catch (_) {
     mysqlPassInput.placeholder = "";
   }
+  // Show placeholder if SSH passphrase is stored in keyring
+  try {
+    const sshPpStored = await safeInvoke("has_ssh_passphrase", { profileId: id });
+    document.getElementById("ssh-passphrase").placeholder = sshPpStored ? t('ssh_passphrase_saved_placeholder') : "";
+  } catch (_) {
+    document.getElementById("ssh-passphrase").placeholder = "";
+  }
   return profile;
 }
 
 function clearForm() {
   profileNameInput.value = "";
   mysqlPassInput.placeholder = "";
+  document.getElementById("ssh-passphrase").placeholder = "";
   selectedColor = null;
   selectedTags = [];
   renderColorPalette();
@@ -353,6 +363,7 @@ function clearForm() {
       username: "",
       private_key_path: null,
       config_host: null,
+      passphrase: "",
     },
   });
 }

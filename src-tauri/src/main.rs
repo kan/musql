@@ -4,13 +4,10 @@ use mysql::{prelude::Queryable, OptsBuilder, Pool, Row, SslOpts, Value};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::io;
-use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, Window};
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -45,6 +42,8 @@ struct SshConfig {
   private_key_path: Option<String>,
   #[serde(default)]
   config_host: Option<String>,
+  #[serde(default, skip_serializing)]
+  passphrase: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -96,6 +95,8 @@ struct ExportData {
   items: Vec<ConnectionProfile>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   passwords: Option<std::collections::HashMap<String, String>>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  ssh_passphrases: Option<std::collections::HashMap<String, String>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -123,14 +124,27 @@ struct QueryResult {
 }
 
 struct SshTunnel {
-  child: Child,
   local_port: u16,
+  _listener_task: tokio::task::JoinHandle<()>,
 }
 
 impl Drop for SshTunnel {
   fn drop(&mut self) {
-    let _ = self.child.kill();
-    let _ = self.child.wait();
+    self._listener_task.abort();
+  }
+}
+
+struct SshHandler;
+
+#[async_trait::async_trait]
+impl russh::client::Handler for SshHandler {
+  type Error = russh::Error;
+
+  async fn check_server_key(
+    &mut self,
+    _server_public_key: &russh_keys::PublicKey,
+  ) -> Result<bool, Self::Error> {
+    Ok(true) // Accept all host keys (initial implementation)
   }
 }
 
@@ -172,44 +186,59 @@ fn connection_fingerprint(request: &ConnectionRequest) -> String {
   )
 }
 
-fn get_or_create_pool(
-  cache: &Mutex<Option<ConnectionCache>>,
+async fn get_or_create_pool_async(
+  cache: &Arc<Mutex<Option<ConnectionCache>>>,
   request: &ConnectionRequest,
 ) -> Result<Pool, String> {
   let fp = connection_fingerprint(request);
-  let mut guard = cache.lock().map_err(|e| format!("Lock error: {e}"))?;
 
-  if let Some(ref cached) = *guard {
-    if cached.fingerprint == fp {
-      return Ok(cached.pool.clone());
+  // Check cache (short lock, no await)
+  {
+    let guard = cache.lock().map_err(|e| format!("Lock error: {e}"))?;
+    if let Some(ref cached) = *guard {
+      if cached.fingerprint == fp {
+        return Ok(cached.pool.clone());
+      }
     }
   }
 
   // Drop old cache first (frees SSH tunnel port)
-  *guard = None;
+  {
+    let mut guard = cache.lock().map_err(|e| format!("Lock error: {e}"))?;
+    *guard = None;
+  }
 
+  // Set up SSH tunnel if needed (async)
   let (target_host, target_port, tunnel) = match &request.ssh {
     Some(ssh) if ssh.enabled => {
-      let tunnel = start_ssh_tunnel(ssh, &request.mysql.host, request.mysql.port)?;
+      let pp = if ssh.passphrase.is_empty() { None } else { Some(ssh.passphrase.as_str()) };
+      let tunnel = start_ssh_tunnel(ssh, &request.mysql.host, request.mysql.port, pp).await?;
       ("127.0.0.1".to_string(), tunnel.local_port, Some(tunnel))
     }
     _ => (request.mysql.host.clone(), request.mysql.port, None),
   };
 
-  // Build opts WITHOUT database — we USE db per-query
+  // Build MySQL pool (blocking)
   let mut mysql_no_db = request.mysql.clone();
   mysql_no_db.database = None;
-  let opts = build_opts(&mysql_no_db, &target_host, target_port);
-  let pool = Pool::new(opts).map_err(|e| format!("Failed to build pool: {e}"))?;
+  let pool = tauri::async_runtime::spawn_blocking(move || {
+    let opts = build_opts(&mysql_no_db, &target_host, target_port);
+    let pool = Pool::new(opts).map_err(|e| format!("Failed to build pool: {e}"))?;
+    let _conn = pool.get_conn().map_err(|e| format!("Failed to connect MySQL: {e}"))?;
+    Ok::<Pool, String>(pool)
+  })
+  .await
+  .map_err(|e| format!("Task error: {e}"))??;
 
-  // Verify the connection works
-  let _conn = pool.get_conn().map_err(|e| format!("Failed to connect MySQL: {e}"))?;
-
-  *guard = Some(ConnectionCache {
-    fingerprint: fp,
-    pool: pool.clone(),
-    _tunnel: tunnel,
-  });
+  // Update cache
+  {
+    let mut guard = cache.lock().map_err(|e| format!("Lock error: {e}"))?;
+    *guard = Some(ConnectionCache {
+      fingerprint: fp,
+      pool: pool.clone(),
+      _tunnel: tunnel,
+    });
+  }
 
   Ok(pool)
 }
@@ -381,14 +410,43 @@ fn has_password(profile_id: String) -> bool {
   !get_password(&profile_id).is_empty()
 }
 
-fn find_free_port() -> Result<u16, String> {
-  let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| format!("Failed to bind local port: {e}"))?;
-  let addr = listener
-    .local_addr()
-    .map_err(|e| format!("Failed to read local addr: {e}"))?;
-  Ok(addr.port())
+fn get_ssh_passphrase(profile_id: &str) -> String {
+  let key = format!("{profile_id}:ssh_passphrase");
+  let entry = match keyring::Entry::new(KEYRING_SERVICE, &key) {
+    Ok(e) => e,
+    Err(_) => return String::new(),
+  };
+  match entry.get_password() {
+    Ok(pw) => pw,
+    Err(_) => String::new(),
+  }
 }
 
+fn set_ssh_passphrase(profile_id: &str, passphrase: &str) -> Result<(), String> {
+  let key = format!("{profile_id}:ssh_passphrase");
+  let entry = keyring::Entry::new(KEYRING_SERVICE, &key)
+    .map_err(|e| format!("Keyring error: {e}"))?;
+  if passphrase.is_empty() {
+    let _ = entry.delete_credential();
+  } else {
+    entry
+      .set_password(passphrase)
+      .map_err(|e| format!("Failed to save SSH passphrase: {e}"))?;
+  }
+  Ok(())
+}
+
+fn delete_ssh_passphrase(profile_id: &str) {
+  let key = format!("{profile_id}:ssh_passphrase");
+  if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, &key) {
+    let _ = entry.delete_credential();
+  }
+}
+
+#[tauri::command]
+fn has_ssh_passphrase(profile_id: String) -> bool {
+  !get_ssh_passphrase(&profile_id).is_empty()
+}
 
 fn parse_ssh_config_hosts(content: &str) -> Vec<String> {
   let mut hosts = Vec::new();
@@ -426,141 +484,282 @@ fn list_ssh_config_hosts() -> Vec<String> {
   parse_ssh_config_hosts(&content)
 }
 
-fn find_ssh_bin() -> String {
-  if cfg!(target_os = "windows") {
-    // Prefer Windows built-in OpenSSH over Git-bundled ssh.exe
-    // because 1Password SSH agent only works with the Windows version.
-    let system_ssh = PathBuf::from(r"C:\Windows\System32\OpenSSH\ssh.exe");
-    if system_ssh.exists() {
-      return system_ssh.to_string_lossy().into_owned();
-    }
-    "ssh.exe".to_string()
-  } else {
-    "ssh".to_string()
+fn resolve_ssh_config_host(alias: &str) -> (String, u16, Option<String>, Option<String>) {
+  let home = std::env::var("USERPROFILE")
+    .or_else(|_| std::env::var("HOME"))
+    .unwrap_or_default();
+  if home.is_empty() {
+    return (alias.to_string(), 22, None, None);
   }
+  let path = std::path::Path::new(&home).join(".ssh").join("config");
+  let content = match std::fs::read_to_string(&path) {
+    Ok(c) => c,
+    Err(_) => return (alias.to_string(), 22, None, None),
+  };
+
+  let mut hostname: Option<String> = None;
+  let mut port: Option<u16> = None;
+  let mut user: Option<String> = None;
+  let mut identity_file: Option<String> = None;
+  let mut in_matching_block = false;
+
+  for line in content.lines() {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with('#') {
+      continue;
+    }
+
+    if let Some(rest) = trimmed
+      .strip_prefix("Host ")
+      .or_else(|| trimmed.strip_prefix("Host\t"))
+      .or_else(|| trimmed.strip_prefix("host "))
+      .or_else(|| trimmed.strip_prefix("host\t"))
+    {
+      in_matching_block = rest.split_whitespace().any(|p| p == alias);
+      continue;
+    }
+
+    if !in_matching_block {
+      continue;
+    }
+
+    let lower = trimmed.to_lowercase();
+    let value = trimmed
+      .splitn(2, char::is_whitespace)
+      .nth(1)
+      .unwrap_or("")
+      .trim();
+
+    if lower.starts_with("hostname") && hostname.is_none() {
+      hostname = Some(value.to_string());
+    } else if lower.starts_with("port") && port.is_none() {
+      port = value.parse().ok();
+    } else if lower.starts_with("user") && !lower.starts_with("userknownhostsfile") && user.is_none()
+    {
+      user = Some(value.to_string());
+    } else if lower.starts_with("identityfile") && identity_file.is_none() {
+      let expanded = if value.starts_with("~/") || value == "~" {
+        value.replacen("~", &home, 1)
+      } else {
+        value.to_string()
+      };
+      identity_file = Some(expanded);
+    }
+  }
+
+  (
+    hostname.unwrap_or_else(|| alias.to_string()),
+    port.unwrap_or(22),
+    user,
+    identity_file,
+  )
 }
 
-fn start_ssh_tunnel(ssh: &SshConfig, mysql_host: &str, mysql_port: u16) -> Result<SshTunnel, String> {
-  let local_port = find_free_port()?;
-  let ssh_bin = find_ssh_bin();
+async fn authenticate_ssh(
+  session: &mut russh::client::Handle<SshHandler>,
+  username: &str,
+  identity_file: Option<&str>,
+  passphrase: Option<&str>,
+) -> Result<bool, String> {
+  let key_path = identity_file.map(|s| s.trim()).filter(|s| !s.is_empty());
 
-  let use_config_host = matches!(&ssh.config_host, Some(alias) if !alias.trim().is_empty());
+  // 1. Try explicit private key file (skip .pub files)
+  if let Some(path) = key_path {
+    if !path.ends_with(".pub") {
+      if let Ok(key) = russh_keys::load_secret_key(path, passphrase) {
+        match session
+          .authenticate_publickey(username, Arc::new(key))
+          .await
+        {
+          Ok(true) => return Ok(true),
+          _ => {} // auth rejected → fall through to agent
+        }
+      }
+      // load failed (wrong passphrase / no passphrase given?) → fall through to agent
+    }
+  }
 
-  let args: Vec<String> = if use_config_host {
-    vec![
-      "-N".to_string(),
-      "-o".to_string(),
-      "ExitOnForwardFailure=yes".to_string(),
-      "-o".to_string(),
-      "ServerAliveInterval=30".to_string(),
-      "-o".to_string(),
-      "ServerAliveCountMax=3".to_string(),
-      "-L".to_string(),
-      format!("127.0.0.1:{local_port}:{mysql_host}:{mysql_port}"),
-      ssh.config_host.as_ref().unwrap().trim().to_string(),
-    ]
-  } else {
-    let mut a = vec![
-      "-N".to_string(),
-      "-o".to_string(),
-      "ExitOnForwardFailure=yes".to_string(),
-      "-o".to_string(),
-      "ServerAliveInterval=30".to_string(),
-      "-o".to_string(),
-      "ServerAliveCountMax=3".to_string(),
-      "-p".to_string(),
-      ssh.port.to_string(),
-      "-L".to_string(),
-      format!("127.0.0.1:{local_port}:{mysql_host}:{mysql_port}"),
-    ];
+  // 2. Try SSH agent (with .pub hint for 1Password key selection)
+  let pub_key_hint = key_path.and_then(|path| {
+    let pub_path = if path.ends_with(".pub") {
+      path.to_string()
+    } else {
+      format!("{path}.pub")
+    };
+    let content = std::fs::read_to_string(&pub_path).ok()?;
+    russh_keys::PublicKey::from_openssh(content.trim()).ok()
+  });
 
-    if let Some(key) = &ssh.private_key_path {
-      if !key.trim().is_empty() {
-        a.push("-o".to_string());
-        a.push("IdentitiesOnly=yes".to_string());
-        a.push("-o".to_string());
-        a.push(format!("IdentityFile={key}"));
+  #[cfg(windows)]
+  {
+    if let Ok(pipe) = tokio::net::windows::named_pipe::ClientOptions::new()
+      .open(r"\\.\pipe\openssh-ssh-agent")
+    {
+      let mut agent = russh_keys::agent::client::AgentClient::connect(pipe);
+      if let Ok(identities) = agent.request_identities().await {
+        // If hint provided, try matching identity first
+        if let Some(ref hint) = pub_key_hint {
+          for id in &identities {
+            if id.key_data() == hint.key_data() {
+              if let Ok(true) = session
+                .authenticate_publickey_with(username, id.clone(), &mut agent)
+                .await
+              {
+                return Ok(true);
+              }
+            }
+          }
+        }
+        // Try all identities
+        for id in &identities {
+          if let Ok(true) = session
+            .authenticate_publickey_with(username, id.clone(), &mut agent)
+            .await
+          {
+            return Ok(true);
+          }
+        }
       }
     }
+  }
 
-    a.push(format!("{}@{}", ssh.username, ssh.host));
-    a
-  };
-
-  let mut child = Command::new(&ssh_bin)
-    .args(&args)
-    .stdin(Stdio::null())
-    .stdout(Stdio::null())
-    .stderr(Stdio::piped())
-    .spawn()
-    .map_err(|e| {
-      format!(
-        "Failed to start {ssh_bin}. On Windows, install OpenSSH Client and run ssh-agent: {e}"
-      )
-    })?;
-
-  let deadline = Instant::now() + Duration::from_secs(8);
-  let addr: SocketAddr = format!("127.0.0.1:{local_port}")
-    .parse()
-    .map_err(|e| format!("Invalid local address: {e}"))?;
-
-  while Instant::now() < deadline {
-    if let Ok(Some(status)) = child.try_wait() {
-      let stderr_msg = read_child_stderr(&mut child);
-      return Err(format!(
-        "SSH process exited with {status}. cmd: {ssh_bin} {}\nstderr: {stderr_msg}",
-        args.join(" ")
-      ));
-    }
-    match TcpStream::connect_timeout(&addr, Duration::from_millis(200)) {
-      Ok(_) => return Ok(SshTunnel { child, local_port }),
-      Err(_) => thread::sleep(Duration::from_millis(120)),
+  #[cfg(not(windows))]
+  {
+    if let Ok(sock) = std::env::var("SSH_AUTH_SOCK") {
+      if let Ok(stream) = tokio::net::UnixStream::connect(&sock).await {
+        let mut agent = russh_keys::agent::client::AgentClient::connect(stream);
+        if let Ok(identities) = agent.request_identities().await {
+          if let Some(ref hint) = pub_key_hint {
+            for id in &identities {
+              if id.key_data() == hint.key_data() {
+                if let Ok(true) = session
+                  .authenticate_publickey_with(username, id.clone(), &mut agent)
+                  .await
+                {
+                  return Ok(true);
+                }
+              }
+            }
+          }
+          for id in &identities {
+            if let Ok(true) = session
+              .authenticate_publickey_with(username, id.clone(), &mut agent)
+              .await
+            {
+              return Ok(true);
+            }
+          }
+        }
+      }
     }
   }
 
-  let stderr_msg = read_child_stderr(&mut child);
-  let _ = child.kill();
-  let _ = child.wait();
-  Err(format!(
-    "SSH tunnel timed out. cmd: {ssh_bin} {}\nstderr: {stderr_msg}",
-    args.join(" ")
-  ))
-}
+  // 3. Try default key files (only when no specific key was given)
+  if key_path.is_none() {
+    let home = std::env::var("USERPROFILE")
+      .or_else(|_| std::env::var("HOME"))
+      .unwrap_or_default();
 
-fn read_child_stderr(child: &mut Child) -> String {
-  use std::io::Read;
-  child
-    .stderr
-    .take()
-    .and_then(|mut s| {
-      let mut buf = String::new();
-      s.read_to_string(&mut buf).ok().map(|_| buf)
-    })
-    .unwrap_or_default()
-}
-
-fn with_connection<R, F>(request: ConnectionRequest, f: F) -> Result<R, String>
-where
-  F: FnOnce(&mut mysql::PooledConn) -> Result<R, String>,
-{
-  let (target_host, target_port, _tunnel): (String, u16, Option<SshTunnel>) = match request.ssh {
-    Some(ssh) if ssh.enabled => {
-      let tunnel = start_ssh_tunnel(&ssh, &request.mysql.host, request.mysql.port)?;
-      ("127.0.0.1".to_string(), tunnel.local_port, Some(tunnel))
+    if !home.is_empty() {
+      let ssh_dir = std::path::Path::new(&home).join(".ssh");
+      for name in &["id_ed25519", "id_rsa", "id_ecdsa"] {
+        let kp = ssh_dir.join(name);
+        if kp.exists() {
+          if let Ok(key) = russh_keys::load_secret_key(&kp, None) {
+            if let Ok(true) = session
+              .authenticate_publickey(username, Arc::new(key))
+              .await
+            {
+              return Ok(true);
+            }
+          }
+        }
+      }
     }
-    _ => (request.mysql.host.clone(), request.mysql.port, None),
+  }
+
+  Err(
+    "SSH authentication failed: no valid key found. Specify a private key path in SSH settings."
+      .to_string(),
+  )
+}
+
+async fn start_ssh_tunnel(
+  ssh: &SshConfig,
+  mysql_host: &str,
+  mysql_port: u16,
+  passphrase: Option<&str>,
+) -> Result<SshTunnel, String> {
+  // Resolve SSH config host if specified
+  let (host, port, config_user, config_identity) = match &ssh.config_host {
+    Some(alias) if !alias.trim().is_empty() => resolve_ssh_config_host(alias),
+    _ => (
+      ssh.host.clone(),
+      ssh.port,
+      Some(ssh.username.clone()),
+      ssh.private_key_path.clone(),
+    ),
   };
+  let username = config_user.unwrap_or_else(|| ssh.username.clone());
+  let identity_file = config_identity.or_else(|| ssh.private_key_path.clone());
 
-  let opts = build_opts(&request.mysql, &target_host, target_port);
-  let pool = Pool::new(opts).map_err(|e| format!("Failed to build pool: {e}"))?;
-  let mut conn = pool
-    .get_conn()
-    .map_err(|e| format!("Failed to connect MySQL: {e}"))?;
+  // Connect via russh (with timeout)
+  let config = Arc::new(russh::client::Config::default());
+  let mut session = tokio::time::timeout(
+    Duration::from_secs(8),
+    russh::client::connect(config, (host.as_str(), port), SshHandler),
+  )
+  .await
+  .map_err(|_| format!("SSH tunnel timed out (connect to {host}:{port})"))?
+  .map_err(|e| format!("SSH connection failed ({host}:{port}): {e}"))?;
 
-  let result = f(&mut conn)?;
-  drop(conn);
-  drop(pool);
-  Ok(result)
+  // Authenticate
+  let authenticated =
+    authenticate_ssh(&mut session, &username, identity_file.as_deref(), passphrase).await?;
+  if !authenticated {
+    return Err("SSH authentication failed".to_string());
+  }
+
+  // Create local TCP listener on a free port
+  let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+    .await
+    .map_err(|e| format!("Failed to bind local port: {e}"))?;
+  let local_port = listener
+    .local_addr()
+    .map_err(|e| format!("Failed to read local addr: {e}"))?
+    .port();
+
+  // Spawn forwarding task
+  let mysql_host = mysql_host.to_string();
+  let task = tokio::spawn(async move {
+    loop {
+      let (mut tcp_stream, _) = match listener.accept().await {
+        Ok(c) => c,
+        Err(_) => break,
+      };
+      let channel = match session
+        .channel_open_direct_tcpip(
+          mysql_host.clone(),
+          mysql_port as u32,
+          "127.0.0.1",
+          0u32,
+        )
+        .await
+      {
+        Ok(ch) => ch,
+        Err(_) => continue,
+      };
+      let mut ssh_stream = channel.into_stream();
+      tokio::spawn(async move {
+        let _ = tokio::io::copy_bidirectional(&mut tcp_stream, &mut ssh_stream).await;
+      });
+    }
+  });
+
+  Ok(SshTunnel {
+    local_port,
+    _listener_task: task,
+  })
 }
 
 fn mysql_value_to_json(value: Value) -> serde_json::Value {
@@ -599,14 +798,53 @@ fn resolve_password(request: &mut ConnectionRequest, profile_id: Option<&str>) {
   }
 }
 
+fn resolve_ssh_passphrase(request: &mut ConnectionRequest, profile_id: Option<&str>) {
+  if let Some(ref mut ssh) = request.ssh {
+    if !ssh.passphrase.is_empty() {
+      return;
+    }
+    if let Some(id) = profile_id {
+      if !id.is_empty() {
+        ssh.passphrase = get_ssh_passphrase(id);
+      }
+    }
+  }
+}
+
 #[tauri::command]
-fn test_connection(mut request: ConnectionRequest, profile_id: Option<String>) -> Result<String, String> {
+async fn test_connection(
+  mut request: ConnectionRequest,
+  profile_id: Option<String>,
+) -> Result<String, String> {
   resolve_password(&mut request, profile_id.as_deref());
-  with_connection(request, |conn| {
-    conn.query_drop("SELECT 1")
+  resolve_ssh_passphrase(&mut request, profile_id.as_deref());
+
+  // Set up SSH tunnel if needed (async)
+  let (target_host, target_port, _tunnel) = match &request.ssh {
+    Some(ssh) if ssh.enabled => {
+      let pp = if ssh.passphrase.is_empty() { None } else { Some(ssh.passphrase.as_str()) };
+      let tunnel =
+        start_ssh_tunnel(ssh, &request.mysql.host, request.mysql.port, pp).await?;
+      ("127.0.0.1".to_string(), tunnel.local_port, Some(tunnel))
+    }
+    _ => (request.mysql.host.clone(), request.mysql.port, None),
+  };
+
+  // MySQL connection test (blocking)
+  let mysql = request.mysql.clone();
+  tauri::async_runtime::spawn_blocking(move || {
+    let opts = build_opts(&mysql, &target_host, target_port);
+    let pool = Pool::new(opts).map_err(|e| format!("Failed to build pool: {e}"))?;
+    let mut conn = pool
+      .get_conn()
+      .map_err(|e| format!("Failed to connect MySQL: {e}"))?;
+    conn
+      .query_drop("SELECT 1")
       .map_err(|e| format!("MySQL ping failed: {e}"))?;
     Ok("Connection succeeded.".to_string())
   })
+  .await
+  .map_err(|e| format!("Task error: {e}"))?
 }
 
 #[tauri::command]
@@ -622,13 +860,15 @@ async fn run_query(
   }
 
   resolve_password(&mut request, profile_id.as_deref());
+  resolve_ssh_passphrase(&mut request, profile_id.as_deref());
   let limit = max_rows.unwrap_or(500);
 
-  // Clone Arc so we can move it into spawn_blocking
+  // Get or create pool (async — SSH tunnel creation is async)
   let cache = Arc::clone(&state);
+  let pool = get_or_create_pool_async(&cache, &request).await?;
 
+  let db = request.mysql.database.clone();
   tauri::async_runtime::spawn_blocking(move || {
-    let pool = get_or_create_pool(&cache, &request)?;
     let mut conn = pool.get_conn().map_err(|e| format!("Failed to get connection: {e}"))?;
 
     // Store connection ID + pool for cancel support
@@ -640,7 +880,7 @@ async fn run_query(
 
     let result = (|| -> Result<QueryResult, String> {
       // Switch database if specified
-      if let Some(ref db) = request.mysql.database {
+      if let Some(ref db) = db {
         if !db.trim().is_empty() {
           conn.query_drop(format!("USE `{}`", db))
             .map_err(|e| format!("Failed to switch database: {e}"))?;
@@ -775,11 +1015,25 @@ async fn export_profiles(app: AppHandle, include_passwords: bool) -> Result<bool
     None
   };
 
+  let ssh_passphrases = if include_passwords {
+    let mut map = std::collections::HashMap::new();
+    for item in &store.items {
+      let pp = get_ssh_passphrase(&item.id);
+      if !pp.is_empty() {
+        map.insert(item.id.clone(), pp);
+      }
+    }
+    if map.is_empty() { None } else { Some(map) }
+  } else {
+    None
+  };
+
   let export = ExportData {
     version: store.version,
     groups: store.groups,
     items: store.items,
     passwords,
+    ssh_passphrases,
   };
 
   let json = serde_json::to_string_pretty(&export)
@@ -966,6 +1220,15 @@ async fn import_profiles(
     }
   }
 
+  // Import SSH passphrases
+  if let Some(ssh_passphrases) = &import_data.ssh_passphrases {
+    for (old_id, pp) in ssh_passphrases {
+      if let Some(new_id) = profile_id_map.get(old_id) {
+        let _ = set_ssh_passphrase(new_id, pp);
+      }
+    }
+  }
+
   Ok(Some(ImportResult {
     groups: store.groups,
     items: store.items,
@@ -1007,6 +1270,13 @@ fn save_profile(app: AppHandle, mut profile: ConnectionProfile) -> Result<Profil
   if !password.is_empty() {
     set_password(&profile.id, &password)?;
   }
+  // Extract SSH passphrase: same pattern as MySQL password
+  if let Some(ref mut ssh) = profile.request.ssh {
+    let passphrase = std::mem::take(&mut ssh.passphrase);
+    if !passphrase.is_empty() {
+      set_ssh_passphrase(&profile.id, &passphrase)?;
+    }
+  }
   let mut store = load_profiles(&app)?;
   let mut updated = false;
   for item in store.items.iter_mut() {
@@ -1031,6 +1301,7 @@ fn delete_profile(app: AppHandle, id: String) -> Result<ProfileListResponse, Str
   let mut store = load_profiles(&app)?;
   store.items.retain(|item| item.id != id);
   delete_password(&id);
+  delete_ssh_passphrase(&id);
   save_profiles(&app, &store)?;
   Ok(ProfileListResponse {
     groups: store.groups,
@@ -1113,6 +1384,11 @@ fn duplicate_profile(app: AppHandle, id: String) -> Result<ProfileListResponse, 
   let source_pw = get_password(&id);
   if !source_pw.is_empty() {
     let _ = set_password(&new_id, &source_pw);
+  }
+  // Copy SSH passphrase
+  let source_pp = get_ssh_passphrase(&id);
+  if !source_pp.is_empty() {
+    let _ = set_ssh_passphrase(&new_id, &source_pp);
   }
   let new_profile = ConnectionProfile {
     id: new_id,
@@ -1251,6 +1527,7 @@ fn main() {
       pick_file,
       list_ssh_config_hosts,
       has_password,
+      has_ssh_passphrase,
       export_profiles,
       import_profiles
     ])
