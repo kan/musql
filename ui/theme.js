@@ -30,7 +30,7 @@
 
     var btn = document.createElement("button");
     btn.className = "theme-toggle";
-    btn.title = "Toggle dark mode";
+    btn.title = typeof t === "function" ? t("toggle_dark_mode") : "Toggle dark mode";
 
     function updateIcon() {
       var isDark = document.documentElement.classList.contains("dark");
@@ -47,5 +47,10 @@
 
     updateIcon();
     document.body.appendChild(btn);
+
+    // Update title when language changes
+    window.addEventListener("musql:langchange", function() {
+      btn.title = typeof t === "function" ? t("toggle_dark_mode") : "Toggle dark mode";
+    });
   });
 })();

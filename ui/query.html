@@ -25,7 +25,7 @@
       <div class="sidebar">
         <div class="sidebar-header">
           <span id="sidebar-db-name" class="sidebar-db-name"></span>
-          <button id="db-switch-btn" class="ghost sidebar-btn" title="DB 切替"></button>
+          <button id="db-switch-btn" class="ghost sidebar-btn" data-i18n-title="db_switch_title" title="DB 切替"></button>
         </div>
         <div id="table-list" class="table-list"></div>
       </div>
@@ -34,7 +34,7 @@
       <div class="main-pane">
         <div class="tab-bar">
           <div id="tab-bar-tabs" class="tab-bar-tabs"></div>
-          <button id="tab-add-btn" class="tab-add-btn" title="SQL タブ追加"></button>
+          <button id="tab-add-btn" class="tab-add-btn" data-i18n-title="add_sql_tab_title" title="SQL タブ追加"></button>
         </div>
         <div id="tab-content" class="tab-content"></div>
       </div>
@@ -49,7 +49,8 @@
     <script src="./lib/codemirror/sql-hint.min.js"></script>
     <script src="./lib/sql-formatter/sql-formatter.min.js"></script>
     <script src="./icons.js"></script>
+    <script src="./i18n.js"></script>
     <script src="./theme.js"></script>
-    <script src="./query.js?v=8"></script>
+    <script src="./query.js?v=9"></script>
   </body>
 </html>

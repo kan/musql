@@ -20,14 +20,17 @@ const caCertBrowseBtn = document.getElementById("mysql-ca-cert-browse");
 const sshKeyBrowseBtn = document.getElementById("ssh-key-browse");
 
 // Apply icons to heading and buttons
-document.getElementById("settings-heading").innerHTML = icon('settings', 24) + ' Settings';
-testBtn.innerHTML = icon('zap') + '接続テスト';
-connectBtn.innerHTML = icon('play') + '接続';
-saveBtn.innerHTML = icon('save') + '保存';
-cancelBtn.innerHTML = icon('x') + 'キャンセル';
-deleteBtn.innerHTML = icon('trash-2') + '削除';
-caCertBrowseBtn.innerHTML = icon('folder-open') + 'Browse...';
-sshKeyBrowseBtn.innerHTML = icon('folder-open') + 'Browse...';
+function applySettingsLabels() {
+  document.getElementById("settings-heading").innerHTML = icon('settings', 24) + ' ' + t('settings_heading');
+  testBtn.innerHTML = icon('zap') + t('test_connection');
+  connectBtn.innerHTML = icon('play') + t('connect');
+  saveBtn.innerHTML = icon('save') + t('save');
+  cancelBtn.innerHTML = icon('x') + t('cancel');
+  deleteBtn.innerHTML = icon('trash-2') + t('delete');
+  caCertBrowseBtn.innerHTML = icon('folder-open') + t('browse');
+  sshKeyBrowseBtn.innerHTML = icon('folder-open') + t('browse');
+}
+applySettingsLabels();
 
 let selectedProfileId = "";
 let selectedGroupId = null;
@@ -60,7 +63,7 @@ function renderColorPalette() {
   const none = document.createElement("span");
   none.className = "color-dot-none" + (selectedColor == null ? " active" : "");
   none.textContent = "\u00D7";
-  none.title = "None";
+  none.title = t('color_none');
   none.addEventListener("click", () => { selectedColor = null; renderColorPalette(); });
   colorPaletteEl.appendChild(none);
   // Color dots
@@ -194,7 +197,7 @@ function show(value) {
 async function loadSshConfigHosts() {
   try {
     const hosts = await safeInvoke("list_ssh_config_hosts");
-    sshConfigHostSelect.innerHTML = '<option value="">(manual)</option>';
+    sshConfigHostSelect.innerHTML = '<option value="">' + t('config_host_manual') + '</option>';
     hosts.forEach((h) => {
       const opt = document.createElement("option");
       opt.value = h;
@@ -235,11 +238,11 @@ async function browseFile(inputEl, title, filterName, extensions) {
 }
 
 caCertBrowseBtn.addEventListener("click", () => {
-  browseFile(caCertInput, "Select CA Certificate", "Certificate", ["pem", "crt", "cer"]);
+  browseFile(caCertInput, t('select_ca_cert'), "Certificate", ["pem", "crt", "cer"]);
 });
 
 sshKeyBrowseBtn.addEventListener("click", () => {
-  browseFile(document.getElementById("ssh-key"), "Select Identity File", null, null);
+  browseFile(document.getElementById("ssh-key"), t('select_identity_file'), null, null);
 });
 
 function collectRequest() {
@@ -319,7 +322,7 @@ async function loadProfile(id) {
   // Show placeholder if password is stored in keyring
   try {
     const stored = await safeInvoke("has_password", { profileId: id });
-    mysqlPassInput.placeholder = stored ? "(saved - leave blank to keep)" : "";
+    mysqlPassInput.placeholder = stored ? t('password_saved_placeholder') : "";
   } catch (_) {
     mysqlPassInput.placeholder = "";
   }
@@ -356,7 +359,7 @@ function clearForm() {
 
 testBtn.addEventListener("click", async () => {
   try {
-    show("connecting...");
+    show(t('connecting'));
     const request = collectRequest();
     const res = await safeInvoke("test_connection", { request, profileId: selectedProfileId || null });
     show(res);
@@ -369,7 +372,7 @@ saveBtn.addEventListener("click", async () => {
   try {
     const name = profileNameInput.value.trim();
     if (!name) {
-      show("profile name is required");
+      show(t('profile_name_required'));
       return;
     }
     const profile = {
@@ -448,3 +451,9 @@ if (eventApi && eventApi.listen) {
     });
   });
 }
+
+// Re-render on language change
+window.addEventListener("musql:langchange", () => {
+  applySettingsLabels();
+  applyI18n();
+});

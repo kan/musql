@@ -15,15 +15,14 @@
       </div>
 
       <div class="panel-header">
-        <h2 id="connections-heading">Connections</h2>
         <div class="panel-header-buttons">
-          <button id="group-new" class="ghost">新規グループ</button>
-          <button id="profile-new">新規</button>
+          <button id="group-new" class="ghost"></button>
+          <button id="profile-new"></button>
         </div>
       </div>
       <section id="list-panel" class="panel">
         <div id="filter-wrapper" class="filter-input-wrapper">
-          <input id="filter-input" type="text" placeholder="フィルター..." autocomplete="off" />
+          <input id="filter-input" type="text" data-i18n-placeholder="filter_placeholder" placeholder="接続先を検索..." autocomplete="off" />
         </div>
         <div id="tag-filter-bar" class="tag-filter-bar"></div>
         <div id="profile-tree" class="tree"></div>
@@ -34,7 +33,8 @@
     </main>
 
     <script src="./icons.js"></script>
+    <script src="./i18n.js"></script>
     <script src="./theme.js"></script>
-    <script src="./app.js?v=6"></script>
+    <script src="./app.js?v=7"></script>
   </body>
 </html>

@@ -19,7 +19,7 @@ const contextMenuEl = document.getElementById("context-menu");
 // Apply icons to static elements
 dbSwitchBtn.innerHTML = icon('arrow-left-right');
 tabAddBtn.innerHTML = icon('plus');
-document.getElementById("db-modal-heading").innerHTML = icon('database', 20) + ' Select Database';
+document.getElementById("db-modal-heading").innerHTML = icon('database', 20) + ' ' + t('select_database');
 
 // ── State ──
 let requestCache = null;
@@ -197,14 +197,14 @@ async function saveFile(content, defaultName, filterName, extensions) {
 
 function showExportMenu(e, columns, rows, tableName) {
   const items = [
-    { label: "CSV (current)", icon: "download", action: () => doExportCurrent(columns, rows, tableName, ",", "csv") },
-    { label: "TSV (current)", icon: "download", action: () => doExportCurrent(columns, rows, tableName, "\t", "tsv") },
+    { label: t('csv_current'), icon: "download", action: () => doExportCurrent(columns, rows, tableName, ",", "csv") },
+    { label: t('tsv_current'), icon: "download", action: () => doExportCurrent(columns, rows, tableName, "\t", "tsv") },
   ];
   if (tableName) {
     items.push({ separator: true });
-    items.push({ label: "CSV (all rows)", icon: "download", action: () => doExportAll(tableName, ",", "csv") });
-    items.push({ label: "TSV (all rows)", icon: "download", action: () => doExportAll(tableName, "\t", "tsv") });
-    items.push({ label: "SQL (all rows)", icon: "download", action: () => doExportSql(tableName) });
+    items.push({ label: t('csv_all'), icon: "download", action: () => doExportAll(tableName, ",", "csv") });
+    items.push({ label: t('tsv_all'), icon: "download", action: () => doExportAll(tableName, "\t", "tsv") });
+    items.push({ label: t('sql_all'), icon: "download", action: () => doExportSql(tableName) });
   }
   showContextMenu(e, items);
 }
@@ -240,7 +240,7 @@ function showRowDetailModal(columns, row) {
   const header = document.createElement("div");
   header.className = "row-detail-header";
   const h3 = document.createElement("h3");
-  h3.textContent = "Row Detail";
+  h3.textContent = t('row_detail');
   header.appendChild(h3);
   const closeBtn = document.createElement("button");
   closeBtn.className = "row-detail-close";
@@ -546,7 +546,7 @@ async function showDbModal() {
   explorerEl.classList.add("hidden");
   dbModal.classList.remove("hidden");
   dbList.innerHTML = "";
-  dbModalStatus.textContent = "Loading...";
+  dbModalStatus.textContent = t('loading');
 
   try {
     const res = await runQuery("SHOW DATABASES");
@@ -590,7 +590,7 @@ async function loadTableList() {
   tableListEl.innerHTML = "";
   const loadingEl = document.createElement("div");
   loadingEl.className = "result-info";
-  loadingEl.textContent = "Loading...";
+  loadingEl.textContent = t('loading');
   tableListEl.appendChild(loadingEl);
   try {
     const res = await runQuery("SHOW TABLES");
@@ -609,8 +609,8 @@ async function loadTableList() {
         e.preventDefault();
         e.stopPropagation();
         showContextMenu(e, [
-          { label: "Data", icon: "table", action: () => openDataTab(name) },
-          { label: "Schema", icon: "columns-3", action: () => openSchemaTab(name) },
+          { label: t('data'), icon: "table", action: () => openDataTab(name) },
+          { label: t('schema'), icon: "columns-3", action: () => openSchemaTab(name) },
         ]);
       });
 
@@ -635,7 +635,7 @@ function openDataTab(tableName) {
 
     const info = document.createElement("div");
     info.className = "result-info";
-    info.textContent = "Loading...";
+    info.textContent = t('loading');
     body.appendChild(info);
 
     const tableContainer = document.createElement("div");
@@ -727,7 +727,7 @@ function openDataTab(tableName) {
     }
 
     async function loadPage() {
-      info.textContent = "Loading...";
+      info.textContent = t('loading');
       tableContainer.innerHTML = "";
       try {
         const offset = currentPage * pageSize;
@@ -738,11 +738,11 @@ function openDataTab(tableName) {
         lastColumns = res.columns;
         lastRows = res.rows;
         if (totalRows === 0 && res.rows.length === 0) {
-          info.textContent = "0 rows";
+          info.textContent = t('zero_rows');
         } else {
           const from = offset + 1;
           const to = offset + res.rows.length;
-          info.textContent = "Rows " + from + "\u2013" + to + " of " + totalRows;
+          info.textContent = t('rows_range', { from: from, to: to, total: totalRows });
         }
         renderTable(res.columns, res.rows, tableContainer, onRowClick, sortState);
         renderFooter();
@@ -761,7 +761,7 @@ function openDataTab(tableName) {
 
       const prevBtn = document.createElement("button");
       prevBtn.className = "ghost paging-btn";
-      prevBtn.innerHTML = icon('chevron-left') + 'Prev';
+      prevBtn.innerHTML = icon('chevron-left') + t('prev');
       prevBtn.disabled = currentPage === 0;
       prevBtn.addEventListener("click", () => { currentPage--; loadPage(); });
       nav.appendChild(prevBtn);
@@ -773,7 +773,7 @@ function openDataTab(tableName) {
 
       const nextBtn = document.createElement("button");
       nextBtn.className = "ghost paging-btn";
-      nextBtn.innerHTML = 'Next' + icon('chevron-right');
+      nextBtn.innerHTML = t('next') + icon('chevron-right');
       nextBtn.disabled = currentPage >= totalPages - 1;
       nextBtn.addEventListener("click", () => { currentPage++; loadPage(); });
       nav.appendChild(nextBtn);
@@ -804,8 +804,8 @@ function openDataTab(tableName) {
       if (hasTruncatable) {
         const truncBtn = document.createElement("button");
         truncBtn.className = "ghost truncate-btn" + (truncateMode ? " active" : "");
-        truncBtn.innerHTML = icon('scissors') + 'Truncate';
-        truncBtn.title = "BLOB/TEXT カラムの切り詰め表示";
+        truncBtn.innerHTML = icon('scissors') + t('truncate');
+        truncBtn.title = t('truncate_title');
         truncBtn.addEventListener("click", () => {
           truncateMode = !truncateMode;
           truncBtn.classList.toggle("active", truncateMode);
@@ -816,13 +816,13 @@ function openDataTab(tableName) {
 
       const schemaBtn = document.createElement("button");
       schemaBtn.className = "ghost paging-btn";
-      schemaBtn.innerHTML = icon('columns-3') + 'Schema';
+      schemaBtn.innerHTML = icon('columns-3') + t('schema');
       schemaBtn.addEventListener("click", () => openSchemaTab(tableName));
       actions.appendChild(schemaBtn);
 
       const exportBtn = document.createElement("button");
       exportBtn.className = "ghost paging-btn";
-      exportBtn.innerHTML = icon('download') + 'Export \u25BE';
+      exportBtn.innerHTML = icon('download') + t('export') + ' \u25BE';
       exportBtn.addEventListener("click", (ev) => {
         ev.stopPropagation();
         showExportMenu(ev, lastColumns, lastRows, tableName);
@@ -851,13 +851,13 @@ function openDataTab(tableName) {
 function openSchemaTab(tableName) {
   const tabId = "schema-" + tableName;
 
-  tabManager.addTab(tabId, "schema", tableName + " (schema)", (pane) => {
+  tabManager.addTab(tabId, "schema", tableName + " " + t('schema_suffix'), (pane) => {
     const body = document.createElement("div");
     body.className = "data-tab-body";
 
     const info = document.createElement("div");
     info.className = "result-info";
-    info.textContent = "Loading...";
+    info.textContent = t('loading');
     body.appendChild(info);
 
     const tableContainer = document.createElement("div");
@@ -875,14 +875,14 @@ function openSchemaTab(tableName) {
     actions.className = "footer-actions";
     const dataBtn = document.createElement("button");
     dataBtn.className = "ghost paging-btn";
-    dataBtn.innerHTML = icon('table') + 'Data';
+    dataBtn.innerHTML = icon('table') + t('data');
     dataBtn.addEventListener("click", () => openDataTab(tableName));
     actions.appendChild(dataBtn);
     footerBar.appendChild(actions);
 
     runQuery("DESCRIBE `" + tableName + "`")
       .then((res) => {
-        info.textContent = res.rows.length + " columns";
+        info.textContent = t('n_columns', { n: res.rows.length });
         renderTable(res.columns, res.rows, tableContainer, (cols, row) => showRowDetailModal(cols, row));
       })
       .catch((error) => {
@@ -947,12 +947,12 @@ function addSqlTab(initialContent) {
 
     const historyBtn = document.createElement("button");
     historyBtn.className = "ghost sql-history-btn";
-    historyBtn.innerHTML = icon('clock') + 'History \u25BE';
+    historyBtn.innerHTML = icon('clock') + t('history') + ' \u25BE';
     historyBtn.addEventListener("click", (ev) => {
       ev.stopPropagation();
       const history = loadHistory();
       if (history.length === 0) {
-        showContextMenu(ev, [{ label: "(no history)", action: () => {} }]);
+        showContextMenu(ev, [{ label: t('no_history'), action: () => {} }]);
         return;
       }
       const items = history.map((entry) => {
@@ -973,7 +973,7 @@ function addSqlTab(initialContent) {
 
     const formatBtn = document.createElement("button");
     formatBtn.className = "ghost";
-    formatBtn.innerHTML = icon('wand-2') + 'Format';
+    formatBtn.innerHTML = icon('wand-2') + t('format');
     formatBtn.addEventListener("click", () => {
       const selection = editor.getSelection();
       if (selection) {
@@ -992,7 +992,7 @@ function addSqlTab(initialContent) {
 
     const cancelBtn = document.createElement("button");
     cancelBtn.className = "danger";
-    cancelBtn.innerHTML = icon('x-circle') + 'Cancel';
+    cancelBtn.innerHTML = icon('x-circle') + t('cancel');
     cancelBtn.style.display = "none";
     cancelBtn.addEventListener("click", () => {
       cancelBtn.disabled = true;
@@ -1003,16 +1003,16 @@ function addSqlTab(initialContent) {
 
     const runLineBtn = document.createElement("button");
     runLineBtn.className = "info";
-    runLineBtn.innerHTML = icon('play') + 'Run this line';
+    runLineBtn.innerHTML = icon('play') + t('run_this_line');
     actions.appendChild(runLineBtn);
 
     const runAllBtn = document.createElement("button");
-    runAllBtn.innerHTML = icon('play') + 'Run all';
+    runAllBtn.innerHTML = icon('play') + t('run_all');
     actions.appendChild(runAllBtn);
 
     const exportBtn = document.createElement("button");
     exportBtn.className = "ghost";
-    exportBtn.innerHTML = icon('download') + 'Export \u25BE';
+    exportBtn.innerHTML = icon('download') + t('export') + ' \u25BE';
     exportBtn.style.display = "none";
     actions.appendChild(exportBtn);
 
@@ -1098,7 +1098,7 @@ function addSqlTab(initialContent) {
       const multi = statements.length > 1;
       const loadingEl = document.createElement("div");
       loadingEl.className = "result-info";
-      loadingEl.textContent = "Running...";
+      loadingEl.textContent = t('running');
       resultArea.appendChild(loadingEl);
 
       try {
@@ -1110,7 +1110,7 @@ function addSqlTab(initialContent) {
             const info = document.createElement("div");
             info.className = "result-info";
             info.style.color = "var(--danger)";
-            info.textContent = "Query cancelled.";
+            info.textContent = t('query_cancelled');
             resultArea.appendChild(info);
             return;
           }
@@ -1130,7 +1130,7 @@ function addSqlTab(initialContent) {
 
             const info = document.createElement("div");
             info.className = "result-info";
-            info.textContent = res.rows.length + " rows";
+            info.textContent = t('n_rows', { n: res.rows.length });
             resultArea.appendChild(info);
 
             const wrapper = document.createElement("div");
@@ -1140,7 +1140,7 @@ function addSqlTab(initialContent) {
             const info = document.createElement("div");
             info.className = "result-info";
             const prefix = multi ? (sql.length > 60 ? sql.substring(0, 60) + "\u2026" : sql) + " \u2192 " : "";
-            info.textContent = prefix + "Affected rows: " + (res.affected_rows != null ? res.affected_rows : 0);
+            info.textContent = prefix + t('affected_rows', { n: res.affected_rows != null ? res.affected_rows : 0 });
             resultArea.appendChild(info);
           }
         }
@@ -1153,7 +1153,7 @@ function addSqlTab(initialContent) {
         const errEl = document.createElement("div");
         errEl.className = "result-info";
         errEl.style.color = "var(--danger)";
-        errEl.textContent = cancelled ? "Query cancelled." : String(error);
+        errEl.textContent = cancelled ? t('query_cancelled') : String(error);
         resultArea.appendChild(errEl);
         if (!cancelled) markSqlError(String(error));
       } finally {
@@ -1290,3 +1290,9 @@ if (eventApi && eventApi.listen) {
     }
   });
 }
+
+// Re-render on language change
+window.addEventListener("musql:langchange", () => {
+  document.getElementById("db-modal-heading").innerHTML = icon('database', 20) + ' ' + t('select_database');
+  applyI18n();
+});

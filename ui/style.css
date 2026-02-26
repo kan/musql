@@ -297,6 +297,7 @@ pre {
 .panel-header-buttons {
   display: flex;
   gap: 8px;
+  margin-left: auto;
 }
 
 .hidden {
@@ -1101,6 +1102,34 @@ pre {
   transition: background 0.2s, color 0.2s, border-color 0.2s;
 }
 .theme-toggle:hover {
+  color: var(--ink);
+  background: var(--ghost-bg);
+}
+
+/* ── Language toggle ── */
+.lang-toggle {
+  position: fixed;
+  bottom: 16px;
+  right: 60px;
+  z-index: 9999;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--sub);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px var(--shadow-sm);
+  padding: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
+}
+.lang-toggle:hover {
   color: var(--ink);
   background: var(--ghost-bg);
 }

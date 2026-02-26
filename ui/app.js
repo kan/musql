@@ -9,12 +9,14 @@ const contextMenuEl = document.getElementById("context-menu");
 const filterInput = document.getElementById("filter-input");
 const tagFilterBarEl = document.getElementById("tag-filter-bar");
 
-// Apply icons to header buttons and heading
-document.getElementById("connections-heading").innerHTML = icon('database', 20) + ' Connections';
-groupNewBtn.innerHTML = icon('folder-plus');
-groupNewBtn.title = '新規グループ';
-profileNewBtn.innerHTML = icon('plus');
-profileNewBtn.title = '新規';
+// Apply icons to header buttons
+function applyAppLabels() {
+  groupNewBtn.innerHTML = icon('folder-plus');
+  groupNewBtn.title = t('new_group');
+  profileNewBtn.innerHTML = icon('plus');
+  profileNewBtn.title = t('new_profile');
+}
+applyAppLabels();
 
 // Search icon inside filter input
 (function() {
@@ -41,7 +43,7 @@ async function safeInvoke(command, payload) {
 
 function getItemHint(item) {
   const ssh = item.request.ssh;
-  const mysqlHost = item.request.mysql.host || "host not set";
+  const mysqlHost = item.request.mysql.host || t('host_not_set');
   return ssh && ssh.enabled && ssh.host
     ? ssh.host + " \u2192 " + mysqlHost
     : mysqlHost;
@@ -111,11 +113,11 @@ function buildItemNode(item) {
     e.preventDefault();
     e.stopPropagation();
     showContextMenu(e, [
-      { label: "開く", icon: "external-link", action: () => openQuery(item.id) },
-      { label: "設定", icon: "settings", action: () => openSettings(item.id) },
+      { label: t('ctx_open'), icon: "external-link", action: () => openQuery(item.id) },
+      { label: t('ctx_settings'), icon: "settings", action: () => openSettings(item.id) },
       { separator: true },
-      { label: "複製", icon: "copy", action: () => duplicateProfile(item.id) },
-      { label: "削除", icon: "trash-2", danger: true, action: () => deleteProfile(item.id) },
+      { label: t('ctx_duplicate'), icon: "copy", action: () => duplicateProfile(item.id) },
+      { label: t('ctx_delete'), icon: "trash-2", danger: true, action: () => deleteProfile(item.id) },
     ]);
   });
 
@@ -180,10 +182,10 @@ function buildGroupNode(group, children, forceExpand) {
     e.preventDefault();
     e.stopPropagation();
     showContextMenu(e, [
-      { label: "設定を追加", icon: "plus", action: () => openSettings("", group.id) },
+      { label: t('ctx_add_setting'), icon: "plus", action: () => openSettings("", group.id) },
       { separator: true },
-      { label: "リネーム", icon: "pencil", action: () => renameGroup(group.id, group.name) },
-      { label: "削除", icon: "trash-2", danger: true, action: () => deleteGroup(group.id) },
+      { label: t('ctx_rename'), icon: "pencil", action: () => renameGroup(group.id, group.name) },
+      { label: t('ctx_delete'), icon: "trash-2", danger: true, action: () => deleteGroup(group.id) },
     ]);
   });
 
@@ -303,7 +305,7 @@ async function duplicateProfile(id) {
 }
 
 async function deleteProfile(id) {
-  if (!confirm("このプロファイルを削除しますか？")) return;
+  if (!confirm(t('confirm_delete_profile'))) return;
   try {
     profileData = await safeInvoke("delete_profile", { id });
     renderTree();
@@ -313,7 +315,7 @@ async function deleteProfile(id) {
 }
 
 async function createGroup() {
-  const name = prompt("グループ名を入力してください:");
+  const name = prompt(t('prompt_group_name'));
   if (!name || !name.trim()) return;
   try {
     profileData = await safeInvoke("save_group", { id: null, name: name.trim() });
@@ -324,7 +326,7 @@ async function createGroup() {
 }
 
 async function renameGroup(id, currentName) {
-  const name = prompt("新しいグループ名:", currentName);
+  const name = prompt(t('prompt_rename_group'), currentName);
   if (!name || !name.trim()) return;
   try {
     profileData = await safeInvoke("save_group", { id, name: name.trim() });
@@ -335,7 +337,7 @@ async function renameGroup(id, currentName) {
 }
 
 async function deleteGroup(id) {
-  if (!confirm("このグループを削除しますか？\n（中のプロファイルはルートに移動します）")) return;
+  if (!confirm(t('confirm_delete_group'))) return;
   try {
     profileData = await safeInvoke("delete_group", { id });
     renderTree();
@@ -663,3 +665,10 @@ const eventApi = window.__TAURI__ && window.__TAURI__.event ? window.__TAURI__.e
 if (eventApi && eventApi.listen) {
   eventApi.listen("profiles:changed", () => refreshProfiles());
 }
+
+// Re-render on language change
+window.addEventListener("musql:langchange", () => {
+  applyAppLabels();
+  applyI18n();
+  renderTree();
+});

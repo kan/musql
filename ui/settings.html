@@ -10,22 +10,22 @@
   <body>
     <main>
       <h1 id="settings-heading">Settings</h1>
-      <p class="subtitle">Connection profile</p>
+      <p class="subtitle" data-i18n="connection_profile">Connection profile</p>
 
       <section class="panel">
-        <h2>General</h2>
+        <h2 data-i18n="general">General</h2>
         <div class="grid">
-          <label>Profile name <input id="profile-name" placeholder="e.g. prod/analytics" /></label>
+          <label><span data-i18n="profile_name">Profile name</span> <input id="profile-name" data-i18n-placeholder="profile_name_placeholder" placeholder="e.g. prod/analytics" /></label>
         </div>
         <div class="color-picker-row" style="margin-top: 12px">
-          <label>Color</label>
+          <label data-i18n="color">Color</label>
           <div id="color-palette" class="color-palette"></div>
         </div>
         <div class="tag-input-row" style="margin-top: 12px">
-          <label>Tags
+          <label><span data-i18n="tags">Tags</span>
             <div class="tag-input-wrapper">
               <div id="tag-chips" class="tag-chips"></div>
-              <input id="tag-input" placeholder="Add tag..." autocomplete="off" />
+              <input id="tag-input" data-i18n-placeholder="add_tag_placeholder" placeholder="Add tag..." autocomplete="off" />
               <div id="tag-suggestions" class="tag-suggestions hidden"></div>
             </div>
           </label>
@@ -33,14 +33,14 @@
       </section>
 
       <section class="panel">
-        <h2>MySQL</h2>
+        <h2 data-i18n="mysql">MySQL</h2>
         <div class="grid">
-          <label>Host <input id="mysql-host" value="127.0.0.1" /></label>
-          <label>Port <input id="mysql-port" type="number" value="3306" /></label>
-          <label>Database <input id="mysql-db" placeholder="optional" /></label>
-          <label>User <input id="mysql-user" value="root" /></label>
-          <label>Password <input id="mysql-pass" type="password" /></label>
-          <label>SSL Mode
+          <label><span data-i18n="host">Host</span> <input id="mysql-host" value="127.0.0.1" /></label>
+          <label><span data-i18n="port">Port</span> <input id="mysql-port" type="number" value="3306" /></label>
+          <label><span data-i18n="database">Database</span> <input id="mysql-db" data-i18n-placeholder="optional" placeholder="optional" /></label>
+          <label><span data-i18n="user">User</span> <input id="mysql-user" value="root" /></label>
+          <label><span data-i18n="password">Password</span> <input id="mysql-pass" type="password" /></label>
+          <label><span data-i18n="ssl_mode">SSL Mode</span>
             <select id="mysql-ssl-mode">
               <option value="DISABLED">DISABLED</option>
               <option value="REQUIRED">REQUIRED</option>
@@ -50,7 +50,7 @@
           </label>
         </div>
         <div id="ca-cert-row" class="grid hidden" style="margin-top:10px">
-          <label>CA Certificate
+          <label><span data-i18n="ca_certificate">CA Certificate</span>
             <div class="input-with-btn">
               <input id="mysql-ca-cert" placeholder="/path/to/ca-cert.pem" />
               <button type="button" id="mysql-ca-cert-browse" class="browse-btn">Browse...</button>
@@ -61,19 +61,19 @@
 
       <section class="panel">
         <div class="panel-header">
-          <h2>SSH Bastion</h2>
-          <label class="checkbox"><input id="ssh-enabled" type="checkbox" /> Enable</label>
+          <h2 data-i18n="ssh_bastion">SSH Bastion</h2>
+          <label class="checkbox"><input id="ssh-enabled" type="checkbox" /> <span data-i18n="enable">Enable</span></label>
         </div>
         <div id="ssh-fields" class="grid" style="margin-top:10px">
-          <label>Config Host
+          <label><span data-i18n="config_host">Config Host</span>
             <select id="ssh-config-host">
               <option value="">(manual)</option>
             </select>
           </label>
-          <label>Host <input id="ssh-host" placeholder="bastion.example.com" /></label>
-          <label>Port <input id="ssh-port" type="number" value="22" /></label>
-          <label>User <input id="ssh-user" placeholder="ec2-user" /></label>
-          <label>IdentityFile
+          <label><span data-i18n="host">Host</span> <input id="ssh-host" placeholder="bastion.example.com" /></label>
+          <label><span data-i18n="port">Port</span> <input id="ssh-port" type="number" value="22" /></label>
+          <label><span data-i18n="user">User</span> <input id="ssh-user" placeholder="ec2-user" /></label>
+          <label><span data-i18n="identity_file">IdentityFile</span>
             <div class="input-with-btn">
               <input id="ssh-key" placeholder="~/.ssh/id_ed25519.pub" />
               <button type="button" id="ssh-key-browse" class="browse-btn">Browse...</button>
@@ -82,17 +82,18 @@
         </div>
       </section>
       <div class="actions actions-right">
-        <button id="test-btn" class="info">接続テスト</button>
-        <button id="connect-btn" class="success">接続</button>
-        <button id="profile-save">保存</button>
-        <button id="profile-cancel" class="ghost">キャンセル</button>
-        <button id="profile-delete" class="danger">削除</button>
+        <button id="test-btn" class="info"></button>
+        <button id="connect-btn" class="success"></button>
+        <button id="profile-save"></button>
+        <button id="profile-cancel" class="ghost"></button>
+        <button id="profile-delete" class="danger"></button>
       </div>
       <pre id="result" class="log" hidden></pre>
     </main>
 
     <script src="./icons.js"></script>
+    <script src="./i18n.js"></script>
     <script src="./theme.js"></script>
-    <script src="./settings.js?v=4"></script>
+    <script src="./settings.js?v=5"></script>
   </body>
 </html>
