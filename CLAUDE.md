@@ -84,6 +84,8 @@
 - `ui/i18n.js` — i18n 管理（日英翻訳データインライン埋め込み、`t(key, params)` ヘルパー、言語トグルボタン生成・cross-window 同期）。
 - `ui/lib/codemirror/` — CodeMirror 5 vendored ファイル（コア、SQL モード、補完アドオン）。
 - `ui/lib/sql-formatter/` — sql-formatter vendored UMD ビルド（SQL 整形）。
+- `.github/workflows/release.yml` — リリースワークフロー（`v*` タグ push → NSIS ビルド → GitHub Release）。
+- `.github/workflows/ci.yml` — CI ワークフロー（main push/PR → `cargo check`）。
 
 ## Behavior notes
 - パスワード安全保存: `keyring` クレート（Windows Credential Manager）で profile ID をキーにパスワードを保存。`connections.json` にはパスワードを含めない（`#[serde(skip_serializing)]`）。`load_profiles()` で旧 JSON 内パスワードを keyring へ自動マイグレーション。`test_connection` / `run_query` は `profile_id` パラメータで keyring からパスワードを解決。`has_password` コマンドで保存状態を確認可能。Settings UI はプレースホルダー `"(saved - leave blank to keep)"` で保存済みを表示。
@@ -111,6 +113,9 @@
 - ダークモード: `ui/theme.js`（IIFE）が全ページで読み込まれ、`html.dark` クラスでテーマ切替。`:root` に Light、`html.dark` に Dark の CSS 変数パレットを定義。`prefers-color-scheme` フォールバック + 手動トグル（fixed 右下の丸ボタン、sun/moon アイコン）。トグルボタンは main ウィンドウのみ表示（`body[data-theme-toggle]`）。settings/query は `storage` イベントで自動追従。`musql:theme` を localStorage に保存。CodeMirror は CSS セレクタ `html.dark .CodeMirror*` で Material 風ダークシンタックスハイライト上書き（JS 側変更なし）。
 - i18n: `ui/i18n.js`（IIFE）が全ページで読み込まれ、日本語 (ja) / 英語 (en) を切替。翻訳データはインライン埋め込み（非同期読み込み不要・FOUC 防止）。`t(key, params)` で文字列取得（`{param}` テンプレート変数対応）。HTML 属性 `data-i18n`/`data-i18n-placeholder`/`data-i18n-title` で静的テキストを一括適用。JS 内の動的文字列は `t()` で直接置換。言語検出順: localStorage → `navigator.language` → デフォルト `ja`。言語トグルボタンは main ウィンドウのみ表示（テーマボタン左隣の 36px 円形、EN/JA 表示）。settings/query は `storage` イベント + `musql:langchange` カスタムイベントで自動追従。翻訳しない文字列: SQL/CSV/TSV（フォーマット名）、NULL/EMPTY（DB 概念）、SSL モード値、MySQL エラーメッセージ、タグプリセット名。
 
+- バージョン表示: メイン画面ヘッダーに `window.__TAURI__.app.getVersion()` で取得したバージョン（`v0.1.0` 形式）を `#app-version` span で表示。
+- 自動更新: 起動 3 秒後に `tauri-plugin-updater` で更新チェック。更新あれば `update-available` イベントで UI に通知 → info 色バナーを `.app-header` の下に表示。「更新して再起動」ボタンで `install_update` コマンド実行 → NSIS passive インストール → アプリ再起動。
+
 - ネイティブメニュー: `tauri::menu` API でウィンドウごとにメニューを構築。メニューバーは `setup_menus()` で起動時に一度だけ `set_menu()` + `hide_menu()` し、アクセラレータ登録用に保持（非表示）。各ウィンドウにハンバーガーボタン（Lucide `menu` アイコン、右上配置）を設置し、クリック時に `show_popup_menu` コマンドで `lang`/`theme` を渡してオンデマンドにメニューを構築 → `window.popup_menu()` でポップアップ表示。毎回新規構築のため `set_menu()` の再呼び出しが不要で画面のちらつきが発生しない。メニュー構成: main（File/Edit/View/Help）、query（File/Edit/View/Query）、settings（Edit/View/Settings）。Edit メニューは `PredefinedMenuItem`（OS ネイティブ Cut/Copy/Paste/Undo/Redo/Select All）。View メニューは全ウィンドウ共通で `CheckMenuItemBuilder` によるテーマ（Light/Dark）・言語（English/日本語）選択を含む（query の View にはさらに「DB 切替」）。チェック状態は `show_popup_menu` 呼び出し時の `lang`/`theme` パラメータから設定。Settings メニューは「接続テスト」「接続」「保存」「削除」。メニューイベントは `on_menu_event` で処理: Rust 完結アクション（exit/github/close）以外は `emit_to(window, "menu:action", action)` でフロントエンドへ転送。JS 側は `eventApi.listen("menu:action", ...)` でルーティング。theme-light/theme-dark は `setTheme()` を、lang-en/lang-ja は `setLang()` を呼び出し。query ウィンドウの SQL タブアクション（run/runAll/format/cancel）は `sqlTabActions` グローバルマップ経由で active tab のボタンに委譲。アクセラレータはメニュー非表示でもウィンドウに紐付いたまま動作: Ctrl+N（New Profile）、Ctrl+Shift+N（New Group）、Ctrl+T（New SQL Tab）、Ctrl+W（Close）、Ctrl+Enter（Run）、Ctrl+Shift+Enter（Run All）、Ctrl+Shift+F（Format）。メニューラベル i18n: Rust 側 `ml()` 関数で日英翻訳（サブメニュー名・メニュー項目名）。ハンバーガーボタン配置: main は `.app-header` 右端、query は `.tab-bar` 内タブ追加ボタンの右、settings は `.settings-header` 右端。
 
 ## Limits / defaults
@@ -123,8 +128,6 @@
 
 - SSH ホスト鍵検証（known_hosts / TOFU）
 - docker上のmysqlへの簡単アクセス
-- ビルド・配布手段の検討
-- アップデートチェック・セルフアップデート
 - Windows以外での動作
 
 ## localStorage keys
@@ -138,14 +141,6 @@
 - 接続設定インポート/エクスポート: 実装済み。`export_profiles` / `import_profiles` コマンド。JSON 形式（`ExportData` 構造体）。パスワードはオプションで `passwords` マップに profile ID → パスワードで格納。インポート時は全 ID を再生成して重複回避。
 - SSH 接続方法: 実装済み（russh）。`russh` v0.48（純 Rust、Tokio async）で SSH トンネルを実装。ssh.exe 外部バイナリ依存を排除。`channel_open_direct_tcpip` + `tokio::io::copy_bidirectional` でローカル TCP リスナー方式のトンネル。SSH agent（Windows named pipe / Unix socket）対応。`~/.ssh/config` パース対応。ホスト鍵検証は全受け入れ（将来 known_hosts / TOFU 対応予定）。
 - Docker MySQL: `docker ps` でコンテナ一覧を取得し、MySQL コンテナを検出。ポートマッピングから接続先を自動入力。
-- ビルド・配布: `cargo tauri build` で MSI/NSIS インストーラー生成。GitHub Actions で CI 自動ビルド。GitHub Releases で配布。`tauri-apps/tauri-action@v0` で `includeUpdaterJson: true` 指定。`v*` タグ push で自動リリース。
-- アップデートチェック・セルフアップデート:
-  - `tauri-plugin-updater` を使用。`cargo add tauri-plugin-updater` で導入。
-  - Tauri 独自の Ed25519 署名鍵ペアで更新ファイルを検証（Windows Authenticode とは別）。`cargo tauri signer generate` で生成、秘密鍵は GitHub Secrets に保存。
-  - `tauri.conf.json` に `"createUpdaterArtifacts": true` + `"plugins": { "updater": { "pubkey": "...", "endpoints": ["https://github.com/<user>/musql/releases/latest/download/latest.json"] } }` を設定。
-  - GitHub Actions の `tauri-action` が `latest.json`（バージョン・署名・ダウンロード URL）を自動生成しリリースにアップロード。
-  - 更新チェック: Rust 側で起動時に非同期で `handle.updater().check()` を実行、更新があれば `update-available` イベントを emit。UI 側で「更新あり — 再起動してインストール」バナーを表示。
-  - Windows 動作: NSIS passive モードで自動インストール → アプリ再起動。SmartScreen 警告は初回ブラウザダウンロード時のみ（自動更新では表示されない）。
-  - Windows Authenticode 署名: 初期段階ではスキップ可。SmartScreen 警告を消すには OV/EV 証明書（$100-400/年）が必要。
-  - 秘密鍵紛失は復旧不可（既存インストールへの更新配信不能）。バックアップ必須。
+- ビルド・配布: 実装済み。`cargo tauri build` で NSIS インストーラー生成。`.github/workflows/release.yml` で `v*` タグ push 時に `tauri-apps/tauri-action@v0` で自動ビルド → GitHub Releases に NSIS インストーラー + `latest.json` をアップロード。`.github/workflows/ci.yml` で main push/PR 時に `cargo check`。`tauri.conf.json` で `bundle.active: true` + `bundle.createUpdaterArtifacts: true`。Secrets: `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`。
+- アップデートチェック・セルフアップデート: 実装済み。`tauri-plugin-updater` v2 を使用。`tauri.conf.json` に `plugins.updater`（pubkey + endpoint）を設定。Rust 側: `.plugin(tauri_plugin_updater::Builder::new().build())` で登録、`setup()` 内で 3 秒遅延後に非同期更新チェック → 更新あれば `update-available` イベントを emit。`install_update` コマンドで `download_and_install()` → `app.restart()`。UI 側: main ウィンドウで `update-available` イベントを listen → info 色の更新バナー（バージョン表示 + 「更新して再起動」ボタン）を表示。i18n 対応（`update_available`/`update_install`/`update_installing`）。`capabilities/default.json` に `updater:default` パーミッション追加。Ed25519 署名鍵ペアで検証。初回リリース手順: `cargo tauri signer generate` で鍵生成 → 公開鍵を `tauri.conf.json` に設定 → 秘密鍵を GitHub Secrets に設定。
 - クロスプラットフォーム: macOS/Linux 動作確認。russh は純 Rust のため OS 固有の SSH バイナリ依存なし。CI でマルチプラットフォームビルドを追加。

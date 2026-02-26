@@ -102,6 +102,12 @@ h1 { margin-top: 0; margin-bottom: 8px; display: inline-flex; align-items: cente
   height: 36px;
   flex-shrink: 0;
 }
+.app-version {
+  font-size: 12px;
+  color: var(--sub);
+  font-weight: 400;
+  align-self: center;
+}
 
 .panel-header {
   display: flex;
@@ -1079,6 +1085,33 @@ pre {
 .truncate-btn.active {
   background: var(--accent);
   color: #fff;
+}
+
+/* ── Update banner ── */
+.update-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--info);
+  color: #fff;
+  border-radius: 10px;
+  margin-bottom: 12px;
+  font-size: 14px;
+}
+.update-banner-text {
+  flex: 1;
+}
+.update-banner button {
+  background: rgba(255,255,255,0.2);
+  color: #fff;
+  padding: 6px 14px;
+  font-size: 13px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+.update-banner button:hover {
+  background: rgba(255,255,255,0.3);
 }
 
 /* ── Menu (hamburger) button ── */

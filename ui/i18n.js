@@ -97,6 +97,11 @@
       import_success: "{n} profile(s) imported.",
       import_conflicts: "Found {groups} duplicate group(s) and {profiles} duplicate profile(s).\nOverwrite existing? (Cancel = add as new)",
 
+      // ── Update ──
+      update_available: "Update v{version} available",
+      update_install: "Update & Restart",
+      update_installing: "Installing...",
+
       // ── Common ──
       toggle_dark_mode: "Toggle dark mode",
       toggle_language: "Switch language",
@@ -195,6 +200,11 @@
       confirm_include_passwords: "エクスポートファイルにパスワードを含めますか？",
       import_success: "{n} 件のプロファイルをインポートしました。",
       import_conflicts: "重複するグループが {groups} 件、プロファイルが {profiles} 件あります。\n既存の設定を上書きしますか？（キャンセル = 新規として追加）",
+
+      // ── アップデート ──
+      update_available: "v{version} へのアップデートがあります",
+      update_install: "更新して再起動",
+      update_installing: "インストール中...",
 
       // ── 共通 ──
       toggle_dark_mode: "ダークモード切替",

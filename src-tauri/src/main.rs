@@ -1665,10 +1665,38 @@ fn setup_menus(handle: &AppHandle<Wry>) -> tauri::Result<()> {
   Ok(())
 }
 
+#[tauri::command]
+async fn install_update(app: AppHandle) -> Result<(), String> {
+  use tauri_plugin_updater::UpdaterExt;
+  let update = app.updater().map_err(|e| e.to_string())?
+    .check().await.map_err(|e| e.to_string())?;
+  if let Some(update) = update {
+    update.download_and_install(|_, _| {}, || {}).await.map_err(|e| e.to_string())?;
+    app.restart();
+  }
+  Ok(())
+}
+
 fn main() {
   tauri::Builder::default()
+    .plugin(tauri_plugin_updater::Builder::new().build())
     .setup(|app| {
       setup_menus(app.handle())?;
+
+      // Check for updates after a short delay
+      let handle = app.handle().clone();
+      tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        use tauri_plugin_updater::UpdaterExt;
+        if let Ok(updater) = handle.updater() {
+          if let Ok(Some(update)) = updater.check().await {
+            let _ = handle.emit("update-available", serde_json::json!({
+              "version": update.version
+            }));
+          }
+        }
+      });
+
       Ok(())
     })
     .on_menu_event(|app, event| {
@@ -1736,7 +1764,8 @@ fn main() {
       has_ssh_passphrase,
       export_profiles,
       import_profiles,
-      show_popup_menu
+      show_popup_menu,
+      install_update
     ])
     .run(tauri::generate_context!())
     .unwrap_or_else(|e| {

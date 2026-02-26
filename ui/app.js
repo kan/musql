@@ -714,6 +714,14 @@ profileNewBtn.addEventListener("click", () => openSettings(""));
 groupNewBtn.addEventListener("click", () => createGroup());
 filterInput.addEventListener("input", () => renderTree());
 
+// Show app version
+(async function() {
+  try {
+    var ver = await window.__TAURI__.app.getVersion();
+    document.getElementById("app-version").textContent = "v" + ver;
+  } catch(e) {}
+})();
+
 refreshProfiles().catch((error) => alert(String(error)));
 window.addEventListener("focus", () => refreshProfiles());
 
@@ -721,6 +729,35 @@ window.addEventListener("focus", () => refreshProfiles());
 const eventApi = window.__TAURI__ && window.__TAURI__.event ? window.__TAURI__.event : null;
 if (eventApi && eventApi.listen) {
   eventApi.listen("profiles:changed", () => refreshProfiles());
+
+  // Update banner
+  eventApi.listen("update-available", (event) => {
+    var version = event.payload && event.payload.version;
+    if (!version) return;
+    var existing = document.querySelector(".update-banner");
+    if (existing) return;
+    var banner = document.createElement("div");
+    banner.className = "update-banner";
+    var textEl = document.createElement("span");
+    textEl.className = "update-banner-text";
+    textEl.textContent = t("update_available", { version: version });
+    banner.appendChild(textEl);
+    var btn = document.createElement("button");
+    btn.textContent = t("update_install");
+    btn.addEventListener("click", function() {
+      btn.disabled = true;
+      btn.textContent = t("update_installing");
+      safeInvoke("install_update").catch(function(e) {
+        btn.disabled = false;
+        btn.textContent = t("update_install");
+        alert(String(e));
+      });
+    });
+    banner.appendChild(btn);
+    var main = document.querySelector("main");
+    main.insertBefore(banner, main.children[1]);
+  });
+
   eventApi.listen("menu:action", (event) => {
     switch (event.payload) {
       case "new-profile": openSettings(""); break;

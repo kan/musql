@@ -22,6 +22,7 @@ russh = "0.48"
 russh-keys = "0.48"
 async-trait = "0.1"
 tokio = { version = "1", features = ["net", "io-util", "time"] }
+tauri-plugin-updater = "2"
 
 [profile.release]
 codegen-units = 1
