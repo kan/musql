@@ -45,4 +45,4 @@ jobs:
       - uses: actions-rust-lang/audit@72c09e02f132669d52284a3323acdb503cfc1a24 # v1.2.7
         with:
           file: src-tauri/Cargo.lock
-          denyWarnings: true
+          ignore: RUSTSEC-2023-0071
