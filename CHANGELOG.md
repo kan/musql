@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.0] - 2026-02-28
+
+### Added
+- AI クエリ補完（Claude / ChatGPT / Gemini 対応）
+  - 入力停止後にインラインでSQL候補をゴースト表示（Tab で確定、Esc で破棄）
+  - スキーマ情報を自動取得しプロンプトに含めて精度向上
+  - API キーは Windows Credential Manager で安全保存
+  - チェックボックスで機能の ON/OFF 切替
+  - AI 設定モーダル（プロバイダ・モデル・API キー）
+
+### Fixed
+- 接続一覧が多い場合にウィンドウ全体がスクロールする問題を修正（リスト内スクロールに変更）
+- スクロールバーをスリムなデザインに統一
+
 ## [0.2.0] - 2026-02-26
 
 ### Changed
@@ -32,5 +46,6 @@
 - アプリ内自動更新（NSIS インストーラー + Ed25519 署名）
 - GitHub Actions CI/CD（cargo check + リリースビルド）
 
+[0.3.0]: https://github.com/kan/musql/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/kan/musql/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/kan/musql/releases/tag/v0.1.0
