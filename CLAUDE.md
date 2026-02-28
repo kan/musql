@@ -28,7 +28,7 @@
 - `ui/lib/codemirror/` — CodeMirror 5 vendored。
 - `ui/lib/sql-formatter/` — sql-formatter vendored UMD。
 - `.github/workflows/release.yml` — リリース（`v*` タグ → NSIS → GitHub Release）。
-- `.github/workflows/ci.yml` — CI（cargo check）。
+- `.github/workflows/ci.yml` — CI（fmt / clippy / test / audit）。
 - `CHANGELOG.md` — リリースノート。
 
 ## Key behaviors
