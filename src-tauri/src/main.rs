@@ -776,9 +776,8 @@ async fn ai_complete(
     database: String,
     state: tauri::State<'_, Arc<Mutex<Option<ConnectionCache>>>>,
 ) -> Result<String, String> {
-    let ai_provider: AiProvider =
-        serde_json::from_value(serde_json::json!(provider))
-            .map_err(|_| format!("Invalid AI provider: {provider}"))?;
+    let ai_provider: AiProvider = serde_json::from_value(serde_json::json!(provider))
+        .map_err(|_| format!("Invalid AI provider: {provider}"))?;
 
     let api_key = get_ai_api_key(&ai_provider);
     if api_key.is_empty() {
