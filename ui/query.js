@@ -154,6 +154,10 @@ function generateCsv(columns, rows, separator) {
   return lines.join("\n");
 }
 
+function quoteId(name) {
+  return '`' + name.replace(/`/g, '``') + '`';
+}
+
 function sqlEscapeValue(val) {
   if (val === null || val === undefined) return "NULL";
   if (typeof val === "number") return String(val);
@@ -163,11 +167,11 @@ function sqlEscapeValue(val) {
 async function generateInsertSql(tableName) {
   let createSql = "";
   try {
-    const res = await runQuery("SHOW CREATE TABLE `" + tableName + "`");
+    const res = await runQuery("SHOW CREATE TABLE " + quoteId(tableName));
     if (res.rows.length > 0) createSql = res.rows[0][1];
   } catch (_) { /* ignore */ }
 
-  const dataRes = await runQuery("SELECT * FROM `" + tableName + "`", 0);
+  const dataRes = await runQuery("SELECT * FROM " + quoteId(tableName), 0);
   const columns = dataRes.columns;
   const rows = dataRes.rows;
 
@@ -176,17 +180,17 @@ async function generateInsertSql(tableName) {
   lines.push("-- Table: " + tableName);
   lines.push("-- Exported: " + new Date().toISOString());
   lines.push("");
-  lines.push("DROP TABLE IF EXISTS `" + tableName + "`;");
+  lines.push("DROP TABLE IF EXISTS " + quoteId(tableName) + ";");
   lines.push("");
   if (createSql) {
     lines.push(createSql + ";");
     lines.push("");
   }
   if (rows.length > 0) {
-    const colList = columns.map((c) => "`" + c + "`").join(", ");
+    const colList = columns.map((c) => quoteId(c)).join(", ");
     for (let i = 0; i < rows.length; i += 1000) {
       const batch = rows.slice(i, i + 1000);
-      lines.push("INSERT INTO `" + tableName + "` (" + colList + ") VALUES");
+      lines.push("INSERT INTO " + quoteId(tableName) + " (" + colList + ") VALUES");
       batch.forEach((row, j) => {
         const vals = columns.map((_, ci) => sqlEscapeValue(row[ci])).join(", ");
         lines.push("(" + vals + ")" + (j === batch.length - 1 ? ";" : ","));
@@ -223,7 +227,7 @@ async function doExportCurrent(columns, rows, tableName, sep, ext) {
 }
 
 async function doExportAll(tableName, sep, ext) {
-  const res = await runQuery("SELECT * FROM `" + tableName + "`", 0);
+  const res = await runQuery("SELECT * FROM " + quoteId(tableName), 0);
   const content = generateCsv(res.columns, res.rows, sep);
   await saveFile(content, tableName + "_all." + ext, ext.toUpperCase(), [ext]);
 }
@@ -564,7 +568,8 @@ async function showDbModal() {
     dbNames.forEach((name) => {
       const el = document.createElement("div");
       el.className = "db-list-item";
-      el.innerHTML = icon('database', 14) + ' ' + name;
+      el.innerHTML = icon('database', 14);
+      el.appendChild(document.createTextNode(' ' + name));
       el.addEventListener("click", () => selectDatabase(name));
       dbList.appendChild(el);
     });
@@ -609,7 +614,8 @@ async function loadTableList() {
     tables.forEach((name) => {
       const el = document.createElement("div");
       el.className = "table-list-item";
-      el.innerHTML = icon('table', 14) + ' ' + name;
+      el.innerHTML = icon('table', 14);
+      el.appendChild(document.createTextNode(' ' + name));
 
       el.addEventListener("click", () => openDataTab(name));
 
@@ -690,7 +696,7 @@ function openDataTab(tableName) {
     function buildSelectExpr() {
       if (!truncateMode || !hasTruncatable) return "*";
       return allColumns.map((c) => {
-        const q = "`" + c.name + "`";
+        const q = quoteId(c.name);
         if (blobCols.includes(c.name)) {
           return "'(BLOB)' AS " + q;
         }
@@ -708,18 +714,18 @@ function openDataTab(tableName) {
           const idx = columns.indexOf(pk);
           if (idx === -1) return null;
           const val = row[idx];
-          if (val === null || val === undefined) return "`" + pk + "` IS NULL";
-          if (typeof val === "number") return "`" + pk + "` = " + val;
-          return "`" + pk + "` = '" + String(val).replace(/'/g, "\\'") + "'";
+          if (val === null || val === undefined) return quoteId(pk) + " IS NULL";
+          if (typeof val === "number") return quoteId(pk) + " = " + val;
+          return quoteId(pk) + " = '" + String(val).replace(/'/g, "\\'") + "'";
         }).filter(Boolean);
 
         if (whereParts.length > 0) {
           // Fetch full row but keep BLOB columns as placeholder (not worth transferring)
           const detailCols = allColumns.map((c) => {
-            if (blobCols.includes(c.name)) return "'(BLOB)' AS `" + c.name + "`";
-            return "`" + c.name + "`";
+            if (blobCols.includes(c.name)) return "'(BLOB)' AS " + quoteId(c.name);
+            return quoteId(c.name);
           }).join(", ");
-          runQuery("SELECT " + detailCols + " FROM `" + tableName + "` WHERE " + whereParts.join(" AND ") + " LIMIT 1")
+          runQuery("SELECT " + detailCols + " FROM " + quoteId(tableName) + " WHERE " + whereParts.join(" AND ") + " LIMIT 1")
             .then((res) => {
               if (res.rows.length > 0) {
                 showRowDetailModal(res.columns, res.rows[0]);
@@ -741,7 +747,7 @@ function openDataTab(tableName) {
         const offset = currentPage * pageSize;
         const selectExpr = buildSelectExpr();
         const res = await runQuery(
-          "SELECT " + selectExpr + " FROM `" + tableName + "` LIMIT " + offset + ", " + pageSize
+          "SELECT " + selectExpr + " FROM " + quoteId(tableName) + " LIMIT " + offset + ", " + pageSize
         );
         lastColumns = res.columns;
         lastRows = res.rows;
@@ -841,7 +847,7 @@ function openDataTab(tableName) {
     }
 
     Promise.all([
-      runQuery("SELECT COUNT(*) FROM `" + tableName + "`"),
+      runQuery("SELECT COUNT(*) FROM " + quoteId(tableName)),
       detectColumns(),
     ])
       .then(([countRes]) => {
@@ -888,7 +894,7 @@ function openSchemaTab(tableName) {
     actions.appendChild(dataBtn);
     footerBar.appendChild(actions);
 
-    runQuery("DESCRIBE `" + tableName + "`")
+    runQuery("DESCRIBE " + quoteId(tableName))
       .then((res) => {
         info.textContent = t('n_columns', { n: res.rows.length });
         renderTable(res.columns, res.rows, tableContainer, (cols, row) => showRowDetailModal(cols, row));
@@ -1216,7 +1222,10 @@ function showContextMenu(e, menuItems) {
     const el = document.createElement("div");
     el.className = "context-menu-item";
     if (mi.icon) {
-      el.innerHTML = icon(mi.icon) + '<span>' + mi.label + '</span>';
+      const iconSpan = document.createElement('span');
+      iconSpan.innerHTML = icon(mi.icon);
+      el.appendChild(iconSpan);
+      el.appendChild(document.createTextNode(' ' + mi.label));
     } else {
       el.textContent = mi.label;
     }

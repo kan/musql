@@ -135,7 +135,17 @@ impl Drop for SshTunnel {
   }
 }
 
-struct SshHandler;
+struct SshHandler {
+  host: String,
+  port: u16,
+}
+
+fn ssh_known_hosts_path() -> PathBuf {
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .unwrap_or_default();
+    PathBuf::from(&home).join(".ssh").join("known_hosts")
+}
 
 #[async_trait::async_trait]
 impl russh::client::Handler for SshHandler {
@@ -143,9 +153,40 @@ impl russh::client::Handler for SshHandler {
 
   async fn check_server_key(
     &mut self,
-    _server_public_key: &russh_keys::PublicKey,
+    server_public_key: &russh_keys::PublicKey,
   ) -> Result<bool, Self::Error> {
-    Ok(true) // Accept all host keys (initial implementation)
+    let known_hosts_path = ssh_known_hosts_path();
+    match russh_keys::known_hosts::check_known_hosts_path(
+      &self.host, self.port, server_public_key, &known_hosts_path,
+    ) {
+      Ok(true) => Ok(true),
+      Ok(false) => {
+        // Unknown host — TOFU: save and accept
+        let _ = russh_keys::known_hosts::learn_known_hosts_path(
+          &self.host, self.port, server_public_key, &known_hosts_path,
+        );
+        Ok(true)
+      }
+      Err(russh_keys::Error::KeyChanged { line }) => {
+        Err(io::Error::new(
+          io::ErrorKind::InvalidData,
+          format!(
+            "SSH host key verification failed: the server key for {}:{} has CHANGED \
+             (known_hosts line {}).\n\
+             This could indicate a man-in-the-middle attack.\n\
+             If you trust this change, remove line {} from {:?}.",
+            self.host, self.port, line, line, known_hosts_path
+          ),
+        ).into())
+      }
+      Err(_) => {
+        // File doesn't exist or parse error — treat as unknown, TOFU
+        let _ = russh_keys::known_hosts::learn_known_hosts_path(
+          &self.host, self.port, server_public_key, &known_hosts_path,
+        );
+        Ok(true)
+      }
+    }
   }
 }
 
@@ -164,6 +205,10 @@ static RUNNING_QUERY: std::sync::LazyLock<RunningQuery> = std::sync::LazyLock::n
   connection_id: AtomicU32::new(0),
   pool: Mutex::new(None),
 });
+
+fn escape_identifier(name: &str) -> String {
+    format!("`{}`", name.replace('`', "``"))
+}
 
 fn connection_fingerprint(request: &ConnectionRequest) -> String {
   let ssh_part = match &request.ssh {
@@ -708,7 +753,7 @@ async fn start_ssh_tunnel(
   let config = Arc::new(russh::client::Config::default());
   let mut session = tokio::time::timeout(
     Duration::from_secs(8),
-    russh::client::connect(config, (host.as_str(), port), SshHandler),
+    russh::client::connect(config, (host.as_str(), port), SshHandler { host: host.clone(), port }),
   )
   .await
   .map_err(|_| format!("SSH tunnel timed out (connect to {host}:{port})"))?
@@ -883,7 +928,7 @@ async fn run_query(
       // Switch database if specified
       if let Some(ref db) = db {
         if !db.trim().is_empty() {
-          conn.query_drop(format!("USE `{}`", db))
+          conn.query_drop(format!("USE {}", escape_identifier(db)))
             .map_err(|e| format!("Failed to switch database: {e}"))?;
         }
       }

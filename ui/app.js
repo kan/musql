@@ -251,7 +251,8 @@ function renderTagFilterBar() {
   [...tags].sort().forEach((tag) => {
     const chip = document.createElement("span");
     chip.className = "tag-filter-chip" + (activeFilterTag === tag ? " active" : "");
-    chip.innerHTML = icon('search', 12) + ' ' + tag;
+    chip.innerHTML = icon('search', 12);
+    chip.appendChild(document.createTextNode(' ' + tag));
     chip.addEventListener("click", () => {
       activeFilterTag = activeFilterTag === tag ? null : tag;
       renderTagFilterBar();
@@ -376,7 +377,10 @@ function showContextMenu(e, menuItems) {
     const el = document.createElement("div");
     el.className = "context-menu-item";
     if (mi.icon) {
-      el.innerHTML = icon(mi.icon) + '<span>' + mi.label + '</span>';
+      var iconSpan = document.createElement('span');
+      iconSpan.innerHTML = icon(mi.icon);
+      el.appendChild(iconSpan);
+      el.appendChild(document.createTextNode(' ' + mi.label));
     } else {
       el.textContent = mi.label;
     }

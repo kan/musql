@@ -36,7 +36,8 @@
 - **接続プール**: `ConnectionCache`（`Arc<Mutex>`）で Pool + SshTunnel をキャッシュ。fingerprint 一致で再利用。DB は `USE` で切替。
 - **クエリ実行**: `run_query`（async + `spawn_blocking`）。`max_rows` デフォルト 500。
 - **クエリキャンセル**: `RUNNING_QUERY` グローバルに connection_id + Pool 保持 → `KILL QUERY`。
-- **SSH**: `russh` v0.48。`channel_open_direct_tcpip` + `copy_bidirectional`。認証: 指定鍵 → agent → デフォルト鍵。タイムアウト 8 秒。
+- **SSH**: `russh` v0.48。`channel_open_direct_tcpip` + `copy_bidirectional`。認証: 指定鍵 → agent → デフォルト鍵。タイムアウト 8 秒。ホスト鍵検証: `~/.ssh/known_hosts` ベース TOFU。
+- **SQL 識別子エスケープ**: JS `quoteId()` / Rust `escape_identifier()` でバッククォートをエスケープ。
 - **メニュー**: ハンバーガーボタン → `show_popup_menu` で毎回構築 → `popup_menu()`。アクセラレータは非表示メニューバーで保持。
 - **アップデート**: Help メニューから手動チェック。`tauri-plugin-updater` + Ed25519 署名。
 - **インポート/エクスポート**: 重複検出付き 2 段階コール。パスワードはオプション。
@@ -48,23 +49,6 @@
 - 結果行: デフォルト 500 件。ページング: 100 件/ページ。SSH タイムアウト: 8 秒。
 
 ## Roadmap (優先度順)
-
-### Phase 1: セキュリティ修正 (Critical/High)
-
-#### 1-1. innerHTML XSS 修正
-- **箇所**: `ui/query.js` (DB名一覧 L567, テーブル名一覧 L612), `ui/app.js` (タグチップ L254)
-- **問題**: DB由来/ユーザー入力文字列を `innerHTML` で直接差し込み。`withGlobalTauri: true` のため Tauri API 呼び出し可能な XSS に繋がる。
-- **対応**: アイコンは別 `span` ノードで追加し、テキスト部分は `textContent` のみ使用。
-
-#### 1-2. SQL 識別子エスケープ統一
-- **箇所**: `ui/query.js` (L166, L170, L844, L891), `src-tauri/src/main.rs` (`USE \`{}\`` L886)
-- **問題**: バッククォートを含む DB/テーブル名で構文が壊れる。意図しないクエリ実行の余地。
-- **対応**: 識別子エスケープ関数を JS/Rust 双方に用意（`` ` → `` ``）し全箇所に適用。
-
-#### 1-3. SSH ホスト鍵検証（known_hosts / TOFU）
-- **箇所**: `src-tauri/src/main.rs` `check_server_key` (L149) が常に `Ok(true)`。
-- **問題**: MITM 攻撃に弱く SSH トンネルの安全性が実質ゼロ。
-- **対応**: `~/.ssh/known_hosts` 読み込み + TOFU（初回接続時に保存、次回以降照合）。不一致時は UI にダイアログ表示。
 
 ### Phase 2: 品質改善 (Medium)
 
