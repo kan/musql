@@ -19,6 +19,33 @@
       </div>
     </div>
 
+    <!-- AI settings modal -->
+    <div id="ai-modal" class="modal-overlay hidden">
+      <div class="modal-box" style="max-width:480px;">
+        <h2 data-i18n="ai_settings">AI Settings</h2>
+        <label><span data-i18n="ai_provider">Provider</span>
+          <select id="ai-provider">
+            <option value="">-- disabled --</option>
+            <option value="claude">Claude (Anthropic)</option>
+            <option value="openai">ChatGPT (OpenAI)</option>
+            <option value="gemini">Gemini (Google)</option>
+          </select>
+        </label>
+        <label><span data-i18n="ai_model">Model</span>
+          <select id="ai-model">
+            <option value="">--</option>
+          </select>
+        </label>
+        <label><span data-i18n="ai_api_key">API Key</span>
+          <input id="ai-api-key" type="password" />
+        </label>
+        <div class="actions actions-right">
+          <button id="ai-save-btn" data-i18n="save">Save</button>
+          <button id="ai-cancel-btn" class="ghost" data-i18n="cancel">Cancel</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Explorer -->
     <div id="explorer" class="explorer hidden">
       <!-- Sidebar -->

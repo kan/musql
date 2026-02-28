@@ -18,6 +18,14 @@ const contextMenuEl = document.getElementById("context-menu");
 
 const menuBtn = document.getElementById("menu-btn");
 
+// AI modal DOM refs
+const aiModal = document.getElementById("ai-modal");
+const aiProviderSelect = document.getElementById("ai-provider");
+const aiModelInput = document.getElementById("ai-model");
+const aiApiKeyInput = document.getElementById("ai-api-key");
+const aiSaveBtn = document.getElementById("ai-save-btn");
+const aiCancelBtn = document.getElementById("ai-cancel-btn");
+
 // Apply icons to static elements
 menuBtn.innerHTML = icon('menu');
 dbSwitchBtn.innerHTML = icon('arrow-left-right');
@@ -92,6 +100,143 @@ function buildTableHints() {
   currentTables.forEach((t) => { hints[t] = []; });
   return hints;
 }
+
+// ── AI settings modal ──
+
+const AI_MODELS = {
+  claude: [
+    { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
+    { value: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
+    { value: "claude-opus-4-6", label: "Claude Opus 4.6" },
+  ],
+  openai: [
+    { value: "gpt-5", label: "GPT-5" },
+    { value: "gpt-5-mini", label: "GPT-5 Mini" },
+    { value: "gpt-5-nano", label: "GPT-5 Nano" },
+    { value: "o4-mini", label: "O4 Mini" },
+  ],
+  gemini: [
+    { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
+    { value: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash-Lite" },
+    { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+  ],
+};
+
+function aiDefaultModel(provider) {
+  const models = AI_MODELS[provider];
+  return models && models.length > 0 ? models[0].value : "";
+}
+
+function getAiProvider() {
+  return localStorage.getItem("musql:ai:provider") || "";
+}
+
+function getAiModel() {
+  return localStorage.getItem("musql:ai:model") || "";
+}
+
+function isAiEnabled() {
+  return localStorage.getItem("musql:ai:enabled") === "true";
+}
+
+function setAiEnabled(val) {
+  localStorage.setItem("musql:ai:enabled", val ? "true" : "false");
+}
+
+function populateAiModelSelect(provider, selectedModel) {
+  const select = aiModelInput;
+  select.innerHTML = "";
+  const models = AI_MODELS[provider] || [];
+  if (models.length === 0) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "--";
+    select.appendChild(opt);
+    return;
+  }
+  models.forEach((m) => {
+    const opt = document.createElement("option");
+    opt.value = m.value;
+    opt.textContent = m.label;
+    select.appendChild(opt);
+  });
+  if (selectedModel && models.some((m) => m.value === selectedModel)) {
+    select.value = selectedModel;
+  } else {
+    select.value = models[0].value;
+  }
+}
+
+async function isAiConfigured() {
+  const provider = getAiProvider();
+  if (!provider) return false;
+  try {
+    return await safeInvoke("has_ai_api_key", { provider });
+  } catch (_) {
+    return false;
+  }
+}
+
+async function showAiModal() {
+  const provider = getAiProvider();
+  const model = getAiModel();
+  aiProviderSelect.value = provider;
+  populateAiModelSelect(provider, model);
+  aiApiKeyInput.value = "";
+  if (provider) {
+    try {
+      const hasKey = await safeInvoke("has_ai_api_key", { provider });
+      if (hasKey) aiApiKeyInput.placeholder = "(saved)";
+      else aiApiKeyInput.placeholder = "";
+    } catch (_) {
+      aiApiKeyInput.placeholder = "";
+    }
+  } else {
+    aiApiKeyInput.placeholder = "";
+  }
+  aiModal.classList.remove("hidden");
+  applyI18n();
+}
+
+function hideAiModal() {
+  aiModal.classList.add("hidden");
+}
+
+aiProviderSelect.addEventListener("change", () => {
+  const p = aiProviderSelect.value;
+  populateAiModelSelect(p, "");
+  aiApiKeyInput.value = "";
+  aiApiKeyInput.placeholder = "";
+  if (p) {
+    safeInvoke("has_ai_api_key", { provider: p }).then((hasKey) => {
+      if (hasKey) aiApiKeyInput.placeholder = "(saved)";
+    }).catch(() => {});
+  }
+});
+
+aiSaveBtn.addEventListener("click", async () => {
+  const provider = aiProviderSelect.value;
+  const model = aiModelInput.value;
+  if (provider) {
+    localStorage.setItem("musql:ai:provider", provider);
+    localStorage.setItem("musql:ai:model", model || aiDefaultModel(provider));
+    const key = aiApiKeyInput.value.trim();
+    if (key) {
+      try { await safeInvoke("save_ai_api_key", { provider, apiKey: key }); }
+      catch (e) { console.warn("Failed to save AI API key:", e); }
+    }
+  } else {
+    localStorage.removeItem("musql:ai:provider");
+    localStorage.removeItem("musql:ai:model");
+  }
+  hideAiModal();
+});
+
+aiCancelBtn.addEventListener("click", hideAiModal);
+
+aiModal.addEventListener("click", (e) => {
+  if (e.target === aiModal) hideAiModal();
+});
 
 // ── Helpers ──
 
@@ -583,6 +728,7 @@ async function selectDatabase(dbName) {
   setDatabase(dbName);
   dbModal.classList.add("hidden");
   tabManager.removeAll();
+  safeInvoke("clear_schema_cache").catch(() => {});
   await showExplorer();
 }
 
@@ -923,6 +1069,76 @@ function addSqlTab(initialContent) {
     let executing = false;
     let editorTouched = false;
 
+    // ── AI ghost text state ──
+    let aiDebounceTimer = null;
+    let ghostBookmark = null;
+    let ghostText = null;
+    let aiRequestId = 0;
+    let ghostJustPlaced = false;
+    let aiJustAccepted = false;  // suppress re-request after accept
+    let aiSuppressed = false;    // suppress retry after empty/error
+
+    function dismissGhost() {
+      if (ghostBookmark) {
+        ghostBookmark.clear();
+        ghostBookmark = null;
+      }
+      ghostText = null;
+    }
+
+    function showGhost(cm, text) {
+      dismissGhost();
+      const span = document.createElement("span");
+      span.className = "cm-ghost-text";
+      span.textContent = text;
+      ghostText = text;
+      ghostJustPlaced = true;
+      ghostBookmark = cm.setBookmark(cm.getCursor(), { widget: span, insertLeft: true });
+    }
+
+    function acceptGhost(cm) {
+      if (!ghostText) return false;
+      const text = ghostText;
+      const pos = ghostBookmark ? ghostBookmark.find() : cm.getCursor();
+      dismissGhost();
+      aiJustAccepted = true;
+      cm.replaceRange(text, pos);
+      return true;
+    }
+
+    function requestAiCompletion(cm) {
+      if (!isAiEnabled() || aiSuppressed) return;
+      const provider = getAiProvider();
+      const model = getAiModel();
+      if (!provider || !model || !currentDb) return;
+
+      const cursor = cm.getCursor();
+      const textBefore = cm.getRange({ line: 0, ch: 0 }, cursor);
+      if (textBefore.trim().length < 10) return;
+      const textAfter = cm.getRange(cursor, { line: cm.lastLine(), ch: cm.getLine(cm.lastLine()).length });
+
+      aiRequestId++;
+      const myId = aiRequestId;
+
+      safeInvoke("ai_complete", {
+        textBefore,
+        textAfter,
+        provider,
+        model,
+        database: currentDb,
+      }).then((result) => {
+        if (myId !== aiRequestId) return;
+        if (result && result.trim()) {
+          showGhost(cm, result.trim());
+        } else {
+          aiSuppressed = true;
+        }
+      }).catch((e) => {
+        aiSuppressed = true;
+        console.warn("[AI] error:", e);
+      });
+    }
+
     const editor = CodeMirror(editorDiv, {
       mode: "text/x-mysql",
       lineNumbers: true,
@@ -934,6 +1150,16 @@ function addSqlTab(initialContent) {
         tables: buildTableHints(),
       },
       extraKeys: {
+        "Tab": function (cm) {
+          if (acceptGhost(cm)) return;
+          cm.replaceSelection("\t");
+        },
+        "Escape": function (cm) {
+          if (ghostBookmark) {
+            dismissGhost();
+            return;
+          }
+        },
         "Ctrl-Enter": function () {
           if (executing) return;
           const stmt = getStatementAtCursor();
@@ -945,6 +1171,28 @@ function addSqlTab(initialContent) {
 
     editor.on("focus", function () { editorTouched = true; });
     editor.on("mousedown", function () { editorTouched = true; });
+
+    editor.on("change", function () {
+      dismissGhost();
+      aiSuppressed = false;
+      aiRequestId++;
+      if (aiDebounceTimer) clearTimeout(aiDebounceTimer);
+      if (aiJustAccepted) {
+        aiJustAccepted = false;
+        scheduleDraftSave();
+        return;
+      }
+      aiDebounceTimer = setTimeout(() => requestAiCompletion(editor), 500);
+      scheduleDraftSave();
+    });
+
+    editor.on("cursorActivity", function () {
+      if (ghostJustPlaced) {
+        ghostJustPlaced = false;
+        return;
+      }
+      dismissGhost();
+    });
 
     editor.on("inputRead", function (cm, change) {
       if (change.origin !== "+input") return;
@@ -959,7 +1207,46 @@ function addSqlTab(initialContent) {
     });
 
     if (initialContent) editor.setValue(initialContent);
-    editor.on("change", scheduleDraftSave);
+
+    // ── AI toggle checkbox ──
+    const aiRow = document.createElement("div");
+    aiRow.className = "ai-toggle-row";
+    const aiCheckbox = document.createElement("input");
+    aiCheckbox.type = "checkbox";
+    aiCheckbox.id = "ai-toggle-" + tabId;
+    aiCheckbox.checked = isAiEnabled();
+    const aiLabel = document.createElement("label");
+    aiLabel.htmlFor = aiCheckbox.id;
+    aiLabel.className = "checkbox";
+    aiLabel.style.fontSize = "12px";
+    aiLabel.style.gap = "4px";
+    aiLabel.textContent = t('ai_autocomplete');
+    aiRow.appendChild(aiCheckbox);
+    aiRow.appendChild(aiLabel);
+    const aiSettingsLink = document.createElement("span");
+    aiSettingsLink.className = "ai-settings-link";
+    aiSettingsLink.innerHTML = icon('settings', 14);
+    aiSettingsLink.title = t('ai_settings');
+    aiSettingsLink.addEventListener("click", () => showAiModal());
+    aiRow.appendChild(aiSettingsLink);
+    inputArea.appendChild(aiRow);
+
+    aiCheckbox.addEventListener("change", async () => {
+      if (aiCheckbox.checked) {
+        const configured = await isAiConfigured();
+        if (!configured) {
+          aiCheckbox.checked = false;
+          alert(t('ai_not_configured'));
+          showAiModal();
+          return;
+        }
+      }
+      setAiEnabled(aiCheckbox.checked);
+      // Sync other tabs' checkboxes
+      document.querySelectorAll('.ai-toggle-row input[type="checkbox"]').forEach((cb) => {
+        if (cb !== aiCheckbox) cb.checked = aiCheckbox.checked;
+      });
+    });
 
     const actions = document.createElement("div");
     actions.className = "actions actions-right";
@@ -1342,6 +1629,7 @@ if (eventApi && eventApi.listen) {
     switch (event.payload) {
       case "new-sql-tab": addSqlTab(); break;
       case "switch-db": dbSwitchBtn.click(); break;
+      case "ai-settings": showAiModal(); break;
       case "run": if (actions) actions.runLine(); break;
       case "run-all": if (actions) actions.runAll(); break;
       case "cancel": if (actions) actions.cancel(); break;

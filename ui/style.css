@@ -681,6 +681,33 @@ pre {
   background: var(--sql-error-bg);
   border-bottom: 2px wavy var(--sql-error-underline);
 }
+.cm-ghost-text {
+  color: var(--sub);
+  opacity: 0.5;
+  font-style: italic;
+  pointer-events: none;
+  white-space: pre;
+}
+.ai-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--sub);
+  user-select: none;
+}
+.ai-toggle-row input[type="checkbox"] {
+  margin: 0;
+}
+.ai-toggle-row .ai-settings-link {
+  cursor: pointer;
+  color: var(--accent);
+  text-decoration: none;
+  margin-left: 4px;
+}
+.ai-toggle-row .ai-settings-link:hover {
+  text-decoration: underline;
+}
 .sql-history-btn {
   margin-right: auto;
 }

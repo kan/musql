@@ -109,6 +109,14 @@
       check_update: "Check for Updates...",
       no_update_available: "You are using the latest version.",
 
+      // ── AI ──
+      ai_settings: "AI Settings",
+      ai_provider: "Provider",
+      ai_model: "Model",
+      ai_api_key: "API Key",
+      ai_autocomplete: "Autocomplete with AI",
+      ai_not_configured: "AI is not configured. Please set up the provider and API key.",
+
       // ── Common ──
       toggle_dark_mode: "Toggle dark mode",
       toggle_language: "Switch language",
@@ -219,6 +227,14 @@
       update_installing: "インストール中...",
       check_update: "アップデートを確認...",
       no_update_available: "最新バージョンです。",
+
+      // ── AI ──
+      ai_settings: "AI 設定",
+      ai_provider: "プロバイダ",
+      ai_model: "モデル",
+      ai_api_key: "API キー",
+      ai_autocomplete: "AIでクエリを補完する",
+      ai_not_configured: "AI が設定されていません。プロバイダと API キーを設定してください。",
 
       // ── 共通 ──
       toggle_dark_mode: "ダークモード切替",

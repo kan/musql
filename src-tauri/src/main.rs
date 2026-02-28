@@ -128,6 +128,35 @@ struct QueryResult {
     affected_rows: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum AiProvider {
+    Claude,
+    #[serde(alias = "openai")]
+    OpenAi,
+    Gemini,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SchemaColumn {
+    name: String,
+    data_type: String,
+    column_key: String,
+    is_nullable: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SchemaTable {
+    name: String,
+    columns: Vec<SchemaColumn>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SchemaInfo {
+    database: String,
+    tables: Vec<SchemaTable>,
+}
+
 struct SshTunnel {
     local_port: u16,
     _listener_task: tokio::task::JoinHandle<()>,
@@ -218,6 +247,9 @@ struct RunningQueryEntry {
 }
 
 static RUNNING_QUERIES: std::sync::LazyLock<Mutex<HashMap<String, RunningQueryEntry>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+
+static SCHEMA_CACHE: std::sync::LazyLock<Mutex<HashMap<String, SchemaInfo>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
 fn escape_identifier(name: &str) -> String {
@@ -517,6 +549,305 @@ fn delete_ssh_passphrase(profile_id: &str) {
 #[tauri::command]
 fn has_ssh_passphrase(profile_id: String) -> bool {
     !get_ssh_passphrase(&profile_id).is_empty()
+}
+
+// ── AI keyring ──
+
+fn ai_keyring_key(provider: &AiProvider) -> String {
+    match provider {
+        AiProvider::Claude => "ai:claude".to_string(),
+        AiProvider::OpenAi => "ai:openai".to_string(),
+        AiProvider::Gemini => "ai:gemini".to_string(),
+    }
+}
+
+fn get_ai_api_key(provider: &AiProvider) -> String {
+    let key = ai_keyring_key(provider);
+    let entry = match keyring::Entry::new(KEYRING_SERVICE, &key) {
+        Ok(e) => e,
+        Err(_) => return String::new(),
+    };
+    entry.get_password().unwrap_or_default()
+}
+
+fn set_ai_api_key(provider: &AiProvider, api_key: &str) -> Result<(), String> {
+    let key = ai_keyring_key(provider);
+    let entry =
+        keyring::Entry::new(KEYRING_SERVICE, &key).map_err(|e| format!("Keyring error: {e}"))?;
+    if api_key.is_empty() {
+        let _ = entry.delete_credential();
+    } else {
+        entry
+            .set_password(api_key)
+            .map_err(|e| format!("Failed to save AI API key: {e}"))?;
+    }
+    Ok(())
+}
+
+// ── Schema fetching ──
+
+fn fetch_schema(pool: &Pool, database: &str) -> Result<SchemaInfo, String> {
+    let mut conn = pool
+        .get_conn()
+        .map_err(|e| format!("Failed to get connection: {e}"))?;
+    conn.query_drop(format!("USE {}", escape_identifier(database)))
+        .map_err(|e| format!("Failed to switch database: {e}"))?;
+
+    let rows: Vec<Row> = conn
+        .exec(
+            "SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, COLUMN_KEY, IS_NULLABLE \
+             FROM INFORMATION_SCHEMA.COLUMNS \
+             WHERE TABLE_SCHEMA = ? \
+             ORDER BY TABLE_NAME, ORDINAL_POSITION",
+            (database,),
+        )
+        .map_err(|e| format!("Schema query failed: {e}"))?;
+
+    let mut table_map: std::collections::BTreeMap<String, Vec<SchemaColumn>> =
+        std::collections::BTreeMap::new();
+
+    for row in rows {
+        let table_name: String = row.get(0).unwrap_or_default();
+        let col = SchemaColumn {
+            name: row.get(1).unwrap_or_default(),
+            data_type: row.get(2).unwrap_or_default(),
+            column_key: row.get(3).unwrap_or_default(),
+            is_nullable: row.get(4).unwrap_or_default(),
+        };
+        table_map.entry(table_name).or_default().push(col);
+    }
+
+    // Limit to 100 tables
+    let tables: Vec<SchemaTable> = table_map
+        .into_iter()
+        .take(100)
+        .map(|(name, columns)| SchemaTable { name, columns })
+        .collect();
+
+    Ok(SchemaInfo {
+        database: database.to_string(),
+        tables,
+    })
+}
+
+// ── AI prompt building ──
+
+fn build_ai_prompt(schema: &SchemaInfo, text_before: &str, text_after: &str) -> String {
+    let mut schema_text = String::new();
+    for table in &schema.tables {
+        schema_text.push_str(&format!("-- {}\n", table.name));
+        for col in &table.columns {
+            let key_info = match col.column_key.as_str() {
+                "PRI" => " PK",
+                "MUL" => " FK",
+                "UNI" => " UQ",
+                _ => "",
+            };
+            schema_text.push_str(&format!(
+                "--   {} {}{}\n",
+                col.name, col.data_type, key_info
+            ));
+        }
+    }
+    // Truncate schema text if too long
+    if schema_text.len() > 8000 {
+        schema_text.truncate(8000);
+        schema_text.push_str("\n-- (truncated)\n");
+    }
+
+    format!(
+        "You are a MySQL query assistant. Given the database schema below and the SQL context, \
+         return ONLY the SQL fragment to insert at [CURSOR]. No explanation, no markdown, no code fences.\n\n\
+         Database: {}\n\n\
+         Schema:\n{}\n\
+         SQL context:\n{}\n[CURSOR]\n{}",
+        schema.database, schema_text, text_before, text_after
+    )
+}
+
+// ── AI API call ──
+
+async fn call_ai_api(
+    provider: &AiProvider,
+    model: &str,
+    api_key: &str,
+    prompt: &str,
+) -> Result<String, String> {
+    let client = reqwest::Client::new();
+
+    match provider {
+        AiProvider::Claude => {
+            let body = serde_json::json!({
+                "model": model,
+                "max_tokens": 512,
+                "messages": [{"role": "user", "content": prompt}]
+            });
+            let resp = client
+                .post("https://api.anthropic.com/v1/messages")
+                .header("x-api-key", api_key)
+                .header("anthropic-version", "2023-06-01")
+                .header("content-type", "application/json")
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| format!("Claude API request failed: {e}"))?;
+            let status = resp.status();
+            let json: serde_json::Value = resp
+                .json()
+                .await
+                .map_err(|e| format!("Claude API response parse failed: {e}"))?;
+            if !status.is_success() {
+                let msg = json["error"]["message"].as_str().unwrap_or("Unknown error");
+                return Err(format!("Claude API error ({status}): {msg}"));
+            }
+            json["content"][0]["text"]
+                .as_str()
+                .map(|s| s.to_string())
+                .ok_or_else(|| "Claude API: no text in response".to_string())
+        }
+        AiProvider::OpenAi => {
+            let body = serde_json::json!({
+                "model": model,
+                "max_completion_tokens": 2048,
+                "messages": [{"role": "user", "content": prompt}]
+            });
+            let resp = client
+                .post("https://api.openai.com/v1/chat/completions")
+                .header("Authorization", format!("Bearer {api_key}"))
+                .header("content-type", "application/json")
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| format!("OpenAI API request failed: {e}"))?;
+            let status = resp.status();
+            let json: serde_json::Value = resp
+                .json()
+                .await
+                .map_err(|e| format!("OpenAI API response parse failed: {e}"))?;
+            if !status.is_success() {
+                let msg = json["error"]["message"].as_str().unwrap_or("Unknown error");
+                return Err(format!("OpenAI API error ({status}): {msg}"));
+            }
+            json["choices"][0]["message"]["content"]
+                .as_str()
+                .map(|s| s.to_string())
+                .ok_or_else(|| "OpenAI API: no content in response".to_string())
+        }
+        AiProvider::Gemini => {
+            let url = format!(
+                "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+                model, api_key
+            );
+            let body = serde_json::json!({
+                "contents": [{"parts": [{"text": prompt}]}]
+            });
+            let resp = client
+                .post(&url)
+                .header("content-type", "application/json")
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| format!("Gemini API request failed: {e}"))?;
+            let status = resp.status();
+            let json: serde_json::Value = resp
+                .json()
+                .await
+                .map_err(|e| format!("Gemini API response parse failed: {e}"))?;
+            if !status.is_success() {
+                let msg = json["error"]["message"].as_str().unwrap_or("Unknown error");
+                return Err(format!("Gemini API error ({status}): {msg}"));
+            }
+            json["candidates"][0]["content"]["parts"][0]["text"]
+                .as_str()
+                .map(|s| s.to_string())
+                .ok_or_else(|| "Gemini API: no text in response".to_string())
+        }
+    }
+}
+
+// ── AI Tauri commands ──
+
+#[tauri::command]
+async fn ai_complete(
+    text_before: String,
+    text_after: String,
+    provider: String,
+    model: String,
+    database: String,
+    state: tauri::State<'_, Arc<Mutex<Option<ConnectionCache>>>>,
+) -> Result<String, String> {
+    let ai_provider: AiProvider =
+        serde_json::from_value(serde_json::json!(provider))
+            .map_err(|_| format!("Invalid AI provider: {provider}"))?;
+
+    let api_key = get_ai_api_key(&ai_provider);
+    if api_key.is_empty() {
+        return Err("AI API key not configured".to_string());
+    }
+
+    // Get pool + fingerprint from state
+    let (pool, fingerprint) = {
+        let guard = state.lock().map_err(|e| format!("Lock error: {e}"))?;
+        match guard.as_ref() {
+            Some(cached) => (cached.pool.clone(), cached.fingerprint.clone()),
+            None => return Err("Not connected".to_string()),
+        }
+    };
+
+    let cache_key = format!("{fingerprint}:{database}");
+
+    // Check schema cache
+    let schema = {
+        let cache = SCHEMA_CACHE
+            .lock()
+            .map_err(|e| format!("Lock error: {e}"))?;
+        cache.get(&cache_key).cloned()
+    };
+
+    let schema = match schema {
+        Some(s) => s,
+        None => {
+            let db = database.clone();
+            let ck = cache_key.clone();
+            let schema = tauri::async_runtime::spawn_blocking(move || fetch_schema(&pool, &db))
+                .await
+                .map_err(|e| format!("Task error: {e}"))??;
+            // Store in cache
+            if let Ok(mut cache) = SCHEMA_CACHE.lock() {
+                cache.insert(ck, schema.clone());
+            }
+            schema
+        }
+    };
+
+    let prompt = build_ai_prompt(&schema, &text_before, &text_after);
+    let result = call_ai_api(&ai_provider, &model, &api_key, &prompt).await?;
+    Ok(result.trim().to_string())
+}
+
+#[tauri::command]
+fn save_ai_api_key(provider: String, api_key: String) -> Result<(), String> {
+    let ai_provider: AiProvider =
+        serde_json::from_value(serde_json::json!(provider)).map_err(|_| "Invalid AI provider")?;
+    set_ai_api_key(&ai_provider, &api_key)
+}
+
+#[tauri::command]
+fn has_ai_api_key(provider: String) -> bool {
+    let ai_provider: AiProvider = match serde_json::from_value(serde_json::json!(provider)) {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+    !get_ai_api_key(&ai_provider).is_empty()
+}
+
+#[tauri::command]
+fn clear_schema_cache() -> Result<(), String> {
+    let mut cache = SCHEMA_CACHE
+        .lock()
+        .map_err(|e| format!("Lock error: {e}"))?;
+    cache.clear();
+    Ok(())
 }
 
 fn parse_ssh_config_hosts(content: &str) -> Vec<String> {
@@ -1722,6 +2053,7 @@ fn ml<'a>(lang: &str, key: &'a str) -> &'a str {
         ("ja", "theme_light") => "ライト",
         ("ja", "theme_dark") => "ダーク",
         ("ja", "language") => "言語",
+        ("ja", "ai_settings") => "AI 設定",
         ("ja", "test_connection") => "接続テスト",
         ("ja", "connect") => "接続",
         ("ja", "save") => "保存",
@@ -1731,6 +2063,7 @@ fn ml<'a>(lang: &str, key: &'a str) -> &'a str {
         (_, "help") => "Help",
         (_, "query") => "Query",
         (_, "view") => "View",
+        (_, "ai_settings") => "AI Settings",
         (_, "settings") => "Settings",
         (_, "new_profile") => "New Profile",
         (_, "new_group") => "New Group",
@@ -1920,7 +2253,16 @@ fn build_query_menu(handle: &AppHandle<Wry>, lang: &str, theme: &str) -> tauri::
         true,
         None::<&str>,
     )?;
-    let mut view_refs: Vec<&dyn tauri::menu::IsMenuItem<Wry>> = vec![&switch_db];
+    let ai_settings = MenuItem::with_id(
+        handle,
+        "query:ai-settings",
+        ml(lang, "ai_settings"),
+        true,
+        None::<&str>,
+    )?;
+    let ai_sep = PredefinedMenuItem::separator(handle)?;
+    let mut view_refs: Vec<&dyn tauri::menu::IsMenuItem<Wry>> =
+        vec![&switch_db, &ai_settings, &ai_sep];
     for item in &view_items {
         view_refs.push(item.as_ref());
     }
@@ -2186,7 +2528,11 @@ fn main() {
             import_profiles,
             show_popup_menu,
             check_update,
-            install_update
+            install_update,
+            ai_complete,
+            save_ai_api_key,
+            has_ai_api_key,
+            clear_schema_cache
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {
@@ -2382,5 +2728,89 @@ Host myserver
     fn generate_profile_id_prefix() {
         let id = generate_profile_id();
         assert!(id.starts_with('p'), "ID should start with 'p': {id}");
+    }
+
+    // ── ai_keyring_key ───────────────────────────────────────────────
+
+    #[test]
+    fn ai_keyring_key_claude() {
+        assert_eq!(ai_keyring_key(&AiProvider::Claude), "ai:claude");
+    }
+
+    #[test]
+    fn ai_keyring_key_openai() {
+        assert_eq!(ai_keyring_key(&AiProvider::OpenAi), "ai:openai");
+    }
+
+    #[test]
+    fn ai_keyring_key_gemini() {
+        assert_eq!(ai_keyring_key(&AiProvider::Gemini), "ai:gemini");
+    }
+
+    // ── AiProvider serde ─────────────────────────────────────────────
+
+    #[test]
+    fn ai_provider_deserialize() {
+        let p: AiProvider = serde_json::from_str("\"claude\"").unwrap();
+        assert!(matches!(p, AiProvider::Claude));
+        let p: AiProvider = serde_json::from_str("\"openai\"").unwrap();
+        assert!(matches!(p, AiProvider::OpenAi));
+        let p: AiProvider = serde_json::from_str("\"gemini\"").unwrap();
+        assert!(matches!(p, AiProvider::Gemini));
+    }
+
+    // ── build_ai_prompt ──────────────────────────────────────────────
+
+    #[test]
+    fn build_ai_prompt_basic() {
+        let schema = SchemaInfo {
+            database: "testdb".to_string(),
+            tables: vec![SchemaTable {
+                name: "users".to_string(),
+                columns: vec![
+                    SchemaColumn {
+                        name: "id".to_string(),
+                        data_type: "int".to_string(),
+                        column_key: "PRI".to_string(),
+                        is_nullable: "NO".to_string(),
+                    },
+                    SchemaColumn {
+                        name: "name".to_string(),
+                        data_type: "varchar".to_string(),
+                        column_key: "".to_string(),
+                        is_nullable: "YES".to_string(),
+                    },
+                ],
+            }],
+        };
+        let prompt = build_ai_prompt(&schema, "SELECT ", "");
+        assert!(prompt.contains("testdb"));
+        assert!(prompt.contains("-- users"));
+        assert!(prompt.contains("id int PK"));
+        assert!(prompt.contains("name varchar"));
+        assert!(prompt.contains("SELECT "));
+        assert!(prompt.contains("[CURSOR]"));
+    }
+
+    #[test]
+    fn build_ai_prompt_truncation() {
+        let schema = SchemaInfo {
+            database: "bigdb".to_string(),
+            tables: (0..200)
+                .map(|i| SchemaTable {
+                    name: format!("table_{i}"),
+                    columns: (0..20)
+                        .map(|j| SchemaColumn {
+                            name: format!("column_{j}_with_a_longer_name"),
+                            data_type: "varchar".to_string(),
+                            column_key: "".to_string(),
+                            is_nullable: "YES".to_string(),
+                        })
+                        .collect(),
+                })
+                .collect(),
+        };
+        let prompt = build_ai_prompt(&schema, "SELECT ", "");
+        assert!(prompt.contains("(truncated)"));
     }
 }

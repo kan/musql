@@ -42,9 +42,11 @@
 - **メニュー**: ハンバーガーボタン → `show_popup_menu` で毎回構築 → `popup_menu()`。アクセラレータは非表示メニューバーで保持。
 - **アップデート**: Help メニューから手動チェック。`tauri-plugin-updater` + Ed25519 署名。
 - **インポート/エクスポート**: 重複検出付き 2 段階コール。パスワードはオプション。
+- **AI 補完**: 入力停止後 500ms デバウンスで `ai_complete` → ゴーストテキスト表示（Tab 確定 / Esc 破棄）。スキーマは `SCHEMA_CACHE` でキャッシュ。API キーは `keyring` 保存。Claude / OpenAI / Gemini 対応。チェックボックスで ON/OFF 切替。補完確定後の再問い合わせ抑制（`aiJustAccepted`）、空結果・エラー時のリトライ抑制（`aiSuppressed`、次の入力でリセット）。
 
 ## localStorage keys
 - `musql:collapsed`, `musql:drafts:<profileId>`, `musql:history:<profileId>`, `musql:theme`, `musql:lang`
+- `musql:ai:provider`, `musql:ai:model`, `musql:ai:enabled` — AI 補完設定（グローバル）
 
 ## Limits
 - 結果行: デフォルト 500 件。ページング: 100 件/ページ。SSH タイムアウト: 8 秒。
@@ -63,17 +65,14 @@
 - 3-4. ユニットテスト導入（`escape_identifier` / `parse_ssh_config_host` / `connection_fingerprint` / `generate_profile_id`）
 - 3-5. clippy 全警告修正 + `rust-version` 1.77→1.80
 
-### Phase 4: AI クエリ補完
-
-SQL エディタ上でコメント（`-- ユーザーごとの売上合計` 等）を書くと、Copilot のようにインラインでクエリ候補をゴースト表示し、Tab で確定する機能。
-
-#### 仕組み
-- **スキーマ収集**: 接続中 DB の `INFORMATION_SCHEMA`（テーブル名・カラム名・型・PK/FK）を Rust 側で取得しキャッシュ。DB 切替時にリフレッシュ。
-- **プロンプト構築**: スキーマ情報 + エディタの前後コンテキスト（カーソル前 N 行）を組み合わせて LLM に送信。
-- **AI バックエンド**: ユーザーが API キーを設定画面で入力。対応モデル: OpenAI API / Anthropic API（将来的にローカル LLM も検討）。API キーは `keyring` で安全保存。
-- **UI**: CodeMirror 上でゴーストテキスト（薄いグレー）として候補を表示。Tab で挿入、Esc で破棄。入力停止後のデバウンス（500ms 程度）でリクエスト。
-- **Tauri コマンド**: `ai_complete(context, schema)` → Rust 側で API 呼び出し → 補完テキストを返却。
-- **設定**: プロファイル単位ではなくアプリグローバル設定（API プロバイダ・モデル・API キー）。Settings 画面または専用の AI 設定画面。
+### Phase 4: AI クエリ補完 ✔ 完了
+- 4-1. スキーマキャッシュ（`SCHEMA_CACHE` / `INFORMATION_SCHEMA` 取得 / テーブル数 100 上限）
+- 4-2. AI API 呼び出し（Claude / OpenAI / Gemini 3 プロバイダ対応 / `reqwest`）
+- 4-3. `ai_complete` コマンド（プロンプト構築 + API 呼び出し + スキーマキャッシュ統合）
+- 4-4. AI API キー管理（`keyring` 保存 / `save_ai_api_key` / `has_ai_api_key`）
+- 4-5. AI 設定モーダル（プロバイダ・モデル・API キー / View メニューから開く）
+- 4-6. ゴーストテキスト UI（CodeMirror `setBookmark` + widget / Tab 確定 / Esc 破棄 / 500ms デバウンス）
+- 4-7. ユニットテスト（`build_ai_prompt` / `ai_keyring_key` / `AiProvider` serde）
 
 ### Phase 5: 配布拡充
 - Windows Store (MSIX) での配布。Tauri の MSIX バンドル対応、署名、ストア申請。
