@@ -20,8 +20,12 @@ tauri = { version = "2", features = [] }
 keyring = { version = "3", features = ["windows-native"] }
 russh = { version = "0.57", default-features = false, features = ["ring", "flate2", "rsa"] }
 tokio = { version = "1", features = ["net", "io-util", "time"] }
-tauri-plugin-updater = "2"
+tauri-plugin-updater = { version = "2", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls"] }
+
+[features]
+default = ["self-updater"]
+self-updater = ["tauri-plugin-updater"]
 
 [profile.release]
 codegen-units = 1

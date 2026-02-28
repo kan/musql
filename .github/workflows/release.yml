@@ -36,3 +36,40 @@ jobs:
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true
+
+  build-store:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9 # stable
+        with:
+          toolchain: stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          workspaces: src-tauri
+          key: store
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --locked
+
+      - name: Build Store variant
+        run: cargo tauri build --config tauri.store.conf.json -- --no-default-features
+        working-directory: src-tauri
+
+      - name: Rename Store EXE
+        shell: pwsh
+        run: |
+          Copy-Item "src-tauri/target/release/musql.exe" "muSQL-store-x64.exe"
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: muSQL-store-x64.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

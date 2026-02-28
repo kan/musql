@@ -2194,28 +2194,32 @@ fn build_main_menu(handle: &AppHandle<Wry>, lang: &str, theme: &str) -> tauri::R
     )?;
     let edit_menu = build_edit_submenu(handle, lang)?;
     let view_menu = build_view_submenu(handle, lang, theme, "main")?;
-    let help_menu = Submenu::with_items(
+    let github_item = MenuItem::with_id(
         handle,
-        ml(lang, "help"),
+        "main:github",
+        ml(lang, "github"),
         true,
-        &[
-            &MenuItem::with_id(
-                handle,
-                "main:check-update",
-                ml(lang, "check_update"),
-                true,
-                None::<&str>,
-            )?,
-            &PredefinedMenuItem::separator(handle)?,
-            &MenuItem::with_id(
-                handle,
-                "main:github",
-                ml(lang, "github"),
-                true,
-                None::<&str>,
-            )?,
-        ],
+        None::<&str>,
     )?;
+    #[cfg(feature = "self-updater")]
+    let help_menu = {
+        let check_update_item = MenuItem::with_id(
+            handle,
+            "main:check-update",
+            ml(lang, "check_update"),
+            true,
+            None::<&str>,
+        )?;
+        let sep = PredefinedMenuItem::separator(handle)?;
+        Submenu::with_items(
+            handle,
+            ml(lang, "help"),
+            true,
+            &[&check_update_item, &sep, &github_item],
+        )?
+    };
+    #[cfg(not(feature = "self-updater"))]
+    let help_menu = Submenu::with_items(handle, ml(lang, "help"), true, &[&github_item])?;
     Menu::with_items(handle, &[&file_menu, &edit_menu, &view_menu, &help_menu])
 }
 
@@ -2371,6 +2375,7 @@ fn setup_menus(handle: &AppHandle<Wry>) -> tauri::Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "self-updater")]
 #[tauri::command]
 async fn check_update(app: AppHandle) -> Result<bool, String> {
     use tauri_plugin_updater::UpdaterExt;
@@ -2393,6 +2398,7 @@ async fn check_update(app: AppHandle) -> Result<bool, String> {
     }
 }
 
+#[cfg(feature = "self-updater")]
 #[tauri::command]
 async fn install_update(app: AppHandle) -> Result<(), String> {
     use tauri_plugin_updater::UpdaterExt;
@@ -2412,9 +2418,26 @@ async fn install_update(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(not(feature = "self-updater"))]
+#[tauri::command]
+async fn check_update(_app: AppHandle) -> Result<bool, String> {
+    Ok(false)
+}
+
+#[cfg(not(feature = "self-updater"))]
+#[tauri::command]
+async fn install_update(_app: AppHandle) -> Result<(), String> {
+    Ok(())
+}
+
 fn main() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_updater::Builder::new().build())
+    #[allow(unused_mut)]
+    let mut builder = tauri::Builder::default();
+    #[cfg(feature = "self-updater")]
+    {
+        builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    }
+    builder
         .setup(|app| {
             setup_menus(app.handle())?;
             Ok(())
@@ -2428,6 +2451,7 @@ fn main() {
                         .args(["/c", "start", "", "https://github.com/kan/musql"])
                         .spawn();
                 }
+                #[cfg(feature = "self-updater")]
                 "main:check-update" => {
                     let handle = app.clone();
                     tauri::async_runtime::spawn(async move {
