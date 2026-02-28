@@ -56,33 +56,12 @@
 - 2-2. import_profiles の sleep 除去（atomic counter による ID 生成）
 - 2-3. パスワード明示削除（Settings UI × ボタン + `clear_password` フラグ）
 
-### Phase 3: CI/テスト強化
-
-#### 3-1. CI ワークフロー強化 + セキュリティ設定
-- `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test` 追加。
-- `cargo audit` ジョブ追加（`rustsec/audit-check` または `cargo install cargo-audit && cargo audit`）。
-- `.github/dependabot.yml` 作成（cargo + github-actions の自動更新）。
-- `permissions: contents: read` 明示。
-- GitHub Actions SHA pinning（`release.yml` / `ci.yml` の actions を commit SHA に固定）:
-  - `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5` (v4.3.1)
-  - `dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9` (stable, Rust 1.93.1)
-  - `swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5` (v2.8.2)
-  - `tauri-apps/tauri-action@73fb865345c54760d875b94642314f8c0c894afa` (v0.6.1)
-  - `actions-rust-lang/audit@72c09e02f132669d52284a3323acdb503cfc1a24` (v1.2.7)
-- その他推奨セキュリティ設定: `SECURITY.md` 作成（脆弱性報告窓口）、CodeQL 検討。
-
-#### 3-2. ユニットテスト導入
-- **純ロジックテスト** (`cargo test` で常時実行):
-  - `resolve_ssh_config_host` — テスト用文字列からのパース検証。
-  - `ml()` — 全キーの日英翻訳が key そのままにフォールバックしないことを検証。
-  - SQL 識別子エスケープ関数（Phase 1-2 で新規作成）— バッククォート・空文字・Unicode。
-  - `connection_fingerprint` — 同一設定で一致、異なる設定で不一致。
-- **MySQL 結合テスト** (`#[ignore]` 付き、CI で `cargo test -- --ignored` 実行):
-  - ローカルに `root:root@127.0.0.1:3306` の mysqld がある前提。
-  - CI では `ubuntu-latest` + MySQL サービスコンテナで実行。
-  - `build_opts` → `Pool::new` → 接続・クエリ実行・DB 切替・`row_to_json` 検証。
-- **テスト対象外**: SSH トンネル、keyring 操作、Tauri ウィンドウ操作。
-- **方針**: `#[cfg(test)] mod tests` を `main.rs` 末尾に追加。テスト対象の関数は必要に応じてヘルパーとして切り出し。
+### Phase 3: CI/テスト強化 ✔ 完了
+- 3-1. CI ワークフロー強化（`cargo fmt --check` / `cargo clippy -- -D warnings` / `cargo test` + `cargo audit` ジョブ）
+- 3-2. GitHub Actions SHA ピニング（`ci.yml` / `release.yml`）
+- 3-3. `.github/dependabot.yml`（cargo + github-actions 週次更新）
+- 3-4. ユニットテスト導入（`escape_identifier` / `parse_ssh_config_host` / `connection_fingerprint` / `generate_profile_id`）
+- 3-5. clippy 全警告修正 + `rust-version` 1.77→1.80
 
 ### Phase 4: AI クエリ補完
 
