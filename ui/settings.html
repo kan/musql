@@ -42,7 +42,12 @@
           <label><span data-i18n="port">Port</span> <input id="mysql-port" type="number" value="3306" /></label>
           <label><span data-i18n="database">Database</span> <input id="mysql-db" data-i18n-placeholder="optional" placeholder="optional" /></label>
           <label><span data-i18n="user">User</span> <input id="mysql-user" value="root" /></label>
-          <label><span data-i18n="password">Password</span> <input id="mysql-pass" type="password" /></label>
+          <label><span data-i18n="password">Password</span>
+            <div class="input-with-btn">
+              <input id="mysql-pass" type="password" />
+              <button type="button" id="mysql-pass-clear" class="browse-btn clear-pw-btn hidden" data-i18n-title="clear_password">&times;</button>
+            </div>
+          </label>
           <label><span data-i18n="ssl_mode">SSL Mode</span>
             <select id="mysql-ssl-mode">
               <option value="DISABLED">DISABLED</option>
@@ -83,7 +88,10 @@
             </div>
           </label>
           <label><span data-i18n="ssh_passphrase">Passphrase</span>
-            <input id="ssh-passphrase" type="password" />
+            <div class="input-with-btn">
+              <input id="ssh-passphrase" type="password" />
+              <button type="button" id="ssh-passphrase-clear" class="browse-btn clear-pw-btn hidden" data-i18n-title="clear_ssh_passphrase">&times;</button>
+            </div>
           </label>
         </div>
       </section>

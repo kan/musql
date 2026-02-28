@@ -110,9 +110,10 @@ async function loadProfile(id) {
   currentProfileName = profile.name;
 }
 
-function runQuery(sql, maxRows) {
+function runQuery(sql, maxRows, tabId) {
   const payload = { request: requestCache, query: sql, profileId: currentProfileId || null };
   if (maxRows != null) payload.maxRows = maxRows;
+  if (tabId) payload.tabId = tabId;
   return safeInvoke("run_query", payload);
 }
 
@@ -920,6 +921,7 @@ function addSqlTab(initialContent) {
     inputArea.appendChild(editorDiv);
 
     let executing = false;
+    let editorTouched = false;
 
     const editor = CodeMirror(editorDiv, {
       mode: "text/x-mysql",
@@ -940,6 +942,9 @@ function addSqlTab(initialContent) {
         "Ctrl-Space": "autocomplete",
       },
     });
+
+    editor.on("focus", function () { editorTouched = true; });
+    editor.on("mousedown", function () { editorTouched = true; });
 
     editor.on("inputRead", function (cm, change) {
       if (change.origin !== "+input") return;
@@ -1011,7 +1016,7 @@ function addSqlTab(initialContent) {
     cancelBtn.addEventListener("click", () => {
       cancelBtn.disabled = true;
       cancelled = true;
-      safeInvoke("cancel_query").catch(() => {});
+      safeInvoke("cancel_query", { tabId }).catch(() => {});
     });
     actions.appendChild(cancelBtn);
 
@@ -1117,7 +1122,7 @@ function addSqlTab(initialContent) {
 
       try {
         for (const sql of statements) {
-          const res = await runQuery(sql);
+          const res = await runQuery(sql, undefined, tabId);
 
           if (cancelled) {
             loadingEl.remove();
@@ -1177,6 +1182,21 @@ function addSqlTab(initialContent) {
 
     runLineBtn.addEventListener("click", () => {
       if (executing) return;
+      if (!editorTouched) {
+        const stmts = getAllStatements();
+        if (stmts.length === 1) {
+          executeStatements([stmts[0]]);
+        } else if (stmts.length > 1) {
+          resultArea.innerHTML = "";
+          const info = document.createElement("div");
+          info.className = "result-info";
+          info.style.color = "var(--danger)";
+          info.textContent = t('place_cursor_hint');
+          resultArea.appendChild(info);
+          editor.focus();
+        }
+        return;
+      }
       const stmt = getStatementAtCursor();
       if (stmt) executeStatements([stmt]);
     });

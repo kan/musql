@@ -35,8 +35,9 @@
 - **パスワード**: `keyring`（Windows Credential Manager）で保存。`connections.json` には非保存。
 - **接続プール**: `ConnectionCache`（`Arc<Mutex>`）で Pool + SshTunnel をキャッシュ。fingerprint 一致で再利用。DB は `USE` で切替。
 - **クエリ実行**: `run_query`（async + `spawn_blocking`）。`max_rows` デフォルト 500。
-- **クエリキャンセル**: `RUNNING_QUERY` グローバルに connection_id + Pool 保持 → `KILL QUERY`。
-- **SSH**: `russh` v0.48。`channel_open_direct_tcpip` + `copy_bidirectional`。認証: 指定鍵 → agent → デフォルト鍵。タイムアウト 8 秒。ホスト鍵検証: `~/.ssh/known_hosts` ベース TOFU。
+- **クエリキャンセル**: `RUNNING_QUERIES`（`HashMap<String, RunningQueryEntry>`）でタブ単位に connection_id + Pool 保持 → `KILL QUERY`。`tab_id` で対象タブを特定。
+- **パスワード削除**: `save_profile` で `clear_password` / `clear_ssh_passphrase` フラグにより keyring から明示削除。Settings UI に × ボタン。
+- **SSH**: `russh` v0.50。`channel_open_direct_tcpip` + `copy_bidirectional`。認証: 指定鍵 → agent → デフォルト鍵。タイムアウト 8 秒。ホスト鍵検証: `~/.ssh/known_hosts` ベース TOFU。
 - **SQL 識別子エスケープ**: JS `quoteId()` / Rust `escape_identifier()` でバッククォートをエスケープ。
 - **メニュー**: ハンバーガーボタン → `show_popup_menu` で毎回構築 → `popup_menu()`。アクセラレータは非表示メニューバーで保持。
 - **アップデート**: Help メニューから手動チェック。`tauri-plugin-updater` + Ed25519 署名。
@@ -50,22 +51,10 @@
 
 ## Roadmap (優先度順)
 
-### Phase 2: 品質改善 (Medium)
-
-#### 2-1. クエリキャンセル状態のタブ単位管理
-- **箇所**: `RUNNING_QUERY` グローバル 1 本（`main.rs` L163）。
-- **問題**: 複数 SQL タブ同時実行時に別クエリを KILL QUERY する可能性。
-- **対応**: タブ ID を `run_query` / `cancel_query` に渡し、`HashMap<String, RunningQuery>` で管理。
-
-#### 2-2. import_profiles 内の `std::thread::sleep` 除去
-- **箇所**: `main.rs` L1169, L1210（インポートループ内で 2ms sleep）。
-- **問題**: async コンテキストをブロックし UI 応答性に悪影響。
-- **対応**: ID 生成を `uuid` クレートに置換し sleep 依存を削除。
-
-#### 2-3. パスワード明示削除機能
-- **箇所**: `main.rs` L1270 付近（空文字は「既存維持」扱い）。
-- **問題**: 保存済みパスワードをユーザーが消せない。
-- **対応**: Settings UI に「保存済みパスワードを削除」チェックボックスまたはボタンを追加。`save_profile` に `clear_password` フラグを新設。
+### Phase 2: 品質改善 ✔ 完了
+- 2-1. タブ単位クエリキャンセル（`RUNNING_QUERIES` HashMap）
+- 2-2. import_profiles の sleep 除去（atomic counter による ID 生成）
+- 2-3. パスワード明示削除（Settings UI × ボタン + `clear_password` フラグ）
 
 ### Phase 3: CI/テスト強化
 

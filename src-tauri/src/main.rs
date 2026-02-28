@@ -3,9 +3,9 @@
 use mysql::{prelude::Queryable, OptsBuilder, Pool, Row, SslOpts, Value};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::HashMap;
 use std::io;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::menu::{CheckMenuItemBuilder, Menu, MenuItem, PredefinedMenuItem, Submenu};
@@ -73,6 +73,10 @@ struct ConnectionProfile {
   #[serde(default)]
   tags: Vec<String>,
   request: ConnectionRequest,
+  #[serde(default, skip_serializing)]
+  clear_password: bool,
+  #[serde(default, skip_serializing)]
+  clear_ssh_passphrase: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -200,15 +204,13 @@ struct ConnectionCache {
   _tunnel: Option<SshTunnel>,
 }
 
-struct RunningQuery {
-  connection_id: AtomicU32,
-  pool: Mutex<Option<Pool>>,
+struct RunningQueryEntry {
+  connection_id: u32,
+  pool: Pool,
 }
 
-static RUNNING_QUERY: std::sync::LazyLock<RunningQuery> = std::sync::LazyLock::new(|| RunningQuery {
-  connection_id: AtomicU32::new(0),
-  pool: Mutex::new(None),
-});
+static RUNNING_QUERIES: std::sync::LazyLock<Mutex<HashMap<String, RunningQueryEntry>>> =
+  std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
 fn escape_identifier(name: &str) -> String {
     format!("`{}`", name.replace('`', "``"))
@@ -414,12 +416,15 @@ fn save_profiles(app: &AppHandle, store: &ConnectionProfileStore) -> Result<(), 
 }
 
 fn generate_profile_id() -> String {
+  use std::sync::atomic::{AtomicU64, Ordering};
   use std::time::{SystemTime, UNIX_EPOCH};
+  static COUNTER: AtomicU64 = AtomicU64::new(0);
   let ts = SystemTime::now()
     .duration_since(UNIX_EPOCH)
     .unwrap_or_else(|_| Duration::from_millis(0))
     .as_millis();
-  format!("p{ts}")
+  let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+  format!("p{ts}_{seq}")
 }
 
 const KEYRING_SERVICE: &str = "musql";
@@ -942,6 +947,7 @@ async fn run_query(
   query: String,
   max_rows: Option<usize>,
   profile_id: Option<String>,
+  tab_id: Option<String>,
   state: tauri::State<'_, Arc<Mutex<Option<ConnectionCache>>>>,
 ) -> Result<QueryResult, String> {
   if query.trim().is_empty() {
@@ -957,14 +963,15 @@ async fn run_query(
   let pool = get_or_create_pool_async(&cache, &request).await?;
 
   let db = request.mysql.database.clone();
+  let tab_key = tab_id.unwrap_or_else(|| "__internal__".to_string());
+  let tab_key_cleanup = tab_key.clone();
   tauri::async_runtime::spawn_blocking(move || {
     let mut conn = pool.get_conn().map_err(|e| format!("Failed to get connection: {e}"))?;
 
-    // Store connection ID + pool for cancel support
+    // Store connection ID + pool for cancel support (per tab)
     let cid = conn.connection_id();
-    RUNNING_QUERY.connection_id.store(cid, Ordering::SeqCst);
-    if let Ok(mut p) = RUNNING_QUERY.pool.lock() {
-      *p = Some(pool.clone());
+    if let Ok(mut map) = RUNNING_QUERIES.lock() {
+      map.insert(tab_key, RunningQueryEntry { connection_id: cid, pool: pool.clone() });
     }
 
     let result = (|| -> Result<QueryResult, String> {
@@ -1003,7 +1010,9 @@ async fn run_query(
       })
     })();
 
-    RUNNING_QUERY.connection_id.store(0, Ordering::SeqCst);
+    if let Ok(mut map) = RUNNING_QUERIES.lock() {
+      map.remove(&tab_key_cleanup);
+    }
     result
   })
   .await
@@ -1011,18 +1020,21 @@ async fn run_query(
 }
 
 #[tauri::command]
-async fn cancel_query() -> Result<(), String> {
-  let cid = RUNNING_QUERY.connection_id.load(Ordering::SeqCst);
+async fn cancel_query(tab_id: Option<String>) -> Result<(), String> {
+  let tab_key = tab_id.unwrap_or_else(|| "__internal__".to_string());
+  let entry = {
+    let map = RUNNING_QUERIES.lock().map_err(|e| format!("Lock error: {e}"))?;
+    match map.get(&tab_key) {
+      Some(e) => Some((e.connection_id, e.pool.clone())),
+      None => None,
+    }
+  };
+  let Some((cid, pool)) = entry else {
+    return Ok(());
+  };
   if cid == 0 {
     return Ok(());
   }
-
-  let pool_opt = RUNNING_QUERY.pool.lock()
-    .map_err(|e| format!("Lock error: {e}"))?
-    .clone();
-  let Some(pool) = pool_opt else {
-    return Ok(());
-  };
 
   tauri::async_runtime::spawn_blocking(move || {
     let mut conn = pool.get_conn()
@@ -1254,7 +1266,6 @@ async fn import_profiles(
       order: next_order,
     });
     next_order += 1000;
-    std::thread::sleep(Duration::from_millis(2));
   }
 
   let mut profile_id_map = std::collections::HashMap::new();
@@ -1292,10 +1303,11 @@ async fn import_profiles(
       color: item.color.clone(),
       tags: item.tags.clone(),
       request: item.request.clone(),
+      clear_password: false,
+      clear_ssh_passphrase: false,
     });
     next_order += 1000;
     imported_count += 1;
-    std::thread::sleep(Duration::from_millis(2));
   }
 
   save_profiles(&app, &store)?;
@@ -1354,15 +1366,19 @@ fn save_profile(app: AppHandle, mut profile: ConnectionProfile) -> Result<Profil
       .unwrap_or(0);
     profile.order = max_order + 1000;
   }
-  // Extract password: non-empty → save to keyring; empty → keep existing keyring entry
+  // Extract password: clear flag → delete; non-empty → save; empty → keep existing
   let password = std::mem::take(&mut profile.request.mysql.password);
-  if !password.is_empty() {
+  if profile.clear_password {
+    delete_password(&profile.id);
+  } else if !password.is_empty() {
     set_password(&profile.id, &password)?;
   }
   // Extract SSH passphrase: same pattern as MySQL password
   if let Some(ref mut ssh) = profile.request.ssh {
     let passphrase = std::mem::take(&mut ssh.passphrase);
-    if !passphrase.is_empty() {
+    if profile.clear_ssh_passphrase {
+      delete_ssh_passphrase(&profile.id);
+    } else if !passphrase.is_empty() {
       set_ssh_passphrase(&profile.id, &passphrase)?;
     }
   }
@@ -1487,6 +1503,8 @@ fn duplicate_profile(app: AppHandle, id: String) -> Result<ProfileListResponse, 
     color: source.color,
     tags: source.tags,
     request: source.request,
+    clear_password: false,
+    clear_ssh_passphrase: false,
   };
   store.items.push(new_profile);
   save_profiles(&app, &store)?;

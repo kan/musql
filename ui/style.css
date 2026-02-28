@@ -193,6 +193,12 @@ button:disabled {
   white-space: nowrap;
   flex-shrink: 0;
 }
+.clear-pw-btn {
+  padding: 8px 10px;
+  font-size: 16px;
+  color: var(--danger);
+  cursor: pointer;
+}
 
 textarea {
   width: 100%;

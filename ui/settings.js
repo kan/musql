@@ -310,6 +310,37 @@ async function safeInvoke(command, payload) {
 menuBtn.addEventListener("click", () => safeInvoke("show_popup_menu", { lang: getLang(), theme: getTheme() }));
 
 const mysqlPassInput = document.getElementById("mysql-pass");
+const mysqlPassClearBtn = document.getElementById("mysql-pass-clear");
+const sshPassphraseInput = document.getElementById("ssh-passphrase");
+const sshPassphraseClearBtn = document.getElementById("ssh-passphrase-clear");
+let clearPasswordFlag = false;
+let clearSshPassphraseFlag = false;
+
+mysqlPassClearBtn.addEventListener("click", () => {
+  clearPasswordFlag = true;
+  mysqlPassInput.value = "";
+  mysqlPassInput.placeholder = t('password_cleared');
+  mysqlPassClearBtn.classList.add("hidden");
+});
+
+mysqlPassInput.addEventListener("input", () => {
+  if (clearPasswordFlag) {
+    clearPasswordFlag = false;
+  }
+});
+
+sshPassphraseClearBtn.addEventListener("click", () => {
+  clearSshPassphraseFlag = true;
+  sshPassphraseInput.value = "";
+  sshPassphraseInput.placeholder = t('ssh_passphrase_cleared');
+  sshPassphraseClearBtn.classList.add("hidden");
+});
+
+sshPassphraseInput.addEventListener("input", () => {
+  if (clearSshPassphraseFlag) {
+    clearSshPassphraseFlag = false;
+  }
+});
 
 async function loadProfile(id) {
   const data = await safeInvoke("list_profiles");
@@ -326,19 +357,25 @@ async function loadProfile(id) {
   renderColorPalette();
   renderTagChips();
   applyRequest(profile.request);
-  // Show placeholder if password is stored in keyring
+  // Show placeholder and clear button if password is stored in keyring
+  clearPasswordFlag = false;
+  clearSshPassphraseFlag = false;
   try {
     const stored = await safeInvoke("has_password", { profileId: id });
     mysqlPassInput.placeholder = stored ? t('password_saved_placeholder') : "";
+    mysqlPassClearBtn.classList.toggle("hidden", !stored);
   } catch (_) {
     mysqlPassInput.placeholder = "";
+    mysqlPassClearBtn.classList.add("hidden");
   }
-  // Show placeholder if SSH passphrase is stored in keyring
+  // Show placeholder and clear button if SSH passphrase is stored in keyring
   try {
     const sshPpStored = await safeInvoke("has_ssh_passphrase", { profileId: id });
-    document.getElementById("ssh-passphrase").placeholder = sshPpStored ? t('ssh_passphrase_saved_placeholder') : "";
+    sshPassphraseInput.placeholder = sshPpStored ? t('ssh_passphrase_saved_placeholder') : "";
+    sshPassphraseClearBtn.classList.toggle("hidden", !sshPpStored);
   } catch (_) {
-    document.getElementById("ssh-passphrase").placeholder = "";
+    sshPassphraseInput.placeholder = "";
+    sshPassphraseClearBtn.classList.add("hidden");
   }
   return profile;
 }
@@ -346,7 +383,11 @@ async function loadProfile(id) {
 function clearForm() {
   profileNameInput.value = "";
   mysqlPassInput.placeholder = "";
-  document.getElementById("ssh-passphrase").placeholder = "";
+  mysqlPassClearBtn.classList.add("hidden");
+  clearPasswordFlag = false;
+  sshPassphraseInput.placeholder = "";
+  sshPassphraseClearBtn.classList.add("hidden");
+  clearSshPassphraseFlag = false;
   selectedColor = null;
   selectedTags = [];
   renderColorPalette();
@@ -399,6 +440,8 @@ saveBtn.addEventListener("click", async () => {
       color: selectedColor || null,
       tags: selectedTags,
       request: collectRequest(),
+      clear_password: clearPasswordFlag,
+      clear_ssh_passphrase: clearSshPassphraseFlag,
     };
     await safeInvoke("save_profile", { profile });
     if (eventApi && eventApi.emit) {
