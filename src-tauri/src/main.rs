@@ -147,44 +147,48 @@ fn ssh_known_hosts_path() -> PathBuf {
     PathBuf::from(&home).join(".ssh").join("known_hosts")
 }
 
-#[async_trait::async_trait]
 impl russh::client::Handler for SshHandler {
   type Error = russh::Error;
 
-  async fn check_server_key(
+  fn check_server_key(
     &mut self,
-    server_public_key: &russh_keys::PublicKey,
-  ) -> Result<bool, Self::Error> {
-    let known_hosts_path = ssh_known_hosts_path();
-    match russh_keys::known_hosts::check_known_hosts_path(
-      &self.host, self.port, server_public_key, &known_hosts_path,
-    ) {
-      Ok(true) => Ok(true),
-      Ok(false) => {
-        // Unknown host — TOFU: save and accept
-        let _ = russh_keys::known_hosts::learn_known_hosts_path(
-          &self.host, self.port, server_public_key, &known_hosts_path,
-        );
-        Ok(true)
-      }
-      Err(russh_keys::Error::KeyChanged { line }) => {
-        Err(io::Error::new(
-          io::ErrorKind::InvalidData,
-          format!(
-            "SSH host key verification failed: the server key for {}:{} has CHANGED \
-             (known_hosts line {}).\n\
-             This could indicate a man-in-the-middle attack.\n\
-             If you trust this change, remove line {} from {:?}.",
-            self.host, self.port, line, line, known_hosts_path
-          ),
-        ).into())
-      }
-      Err(_) => {
-        // File doesn't exist or parse error — treat as unknown, TOFU
-        let _ = russh_keys::known_hosts::learn_known_hosts_path(
-          &self.host, self.port, server_public_key, &known_hosts_path,
-        );
-        Ok(true)
+    server_public_key: &russh::keys::PublicKey,
+  ) -> impl std::future::Future<Output = Result<bool, Self::Error>> + Send {
+    let host = self.host.clone();
+    let port = self.port;
+    let key = server_public_key.clone();
+    async move {
+      let known_hosts_path = ssh_known_hosts_path();
+      match russh::keys::known_hosts::check_known_hosts_path(
+        &host, port, &key, &known_hosts_path,
+      ) {
+        Ok(true) => Ok(true),
+        Ok(false) => {
+          // Unknown host — TOFU: save and accept
+          let _ = russh::keys::known_hosts::learn_known_hosts_path(
+            &host, port, &key, &known_hosts_path,
+          );
+          Ok(true)
+        }
+        Err(russh::keys::Error::KeyChanged { line }) => {
+          Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+              "SSH host key verification failed: the server key for {}:{} has CHANGED \
+               (known_hosts line {}).\n\
+               This could indicate a man-in-the-middle attack.\n\
+               If you trust this change, remove line {} from {:?}.",
+              host, port, line, line, known_hosts_path
+            ),
+          ).into())
+        }
+        Err(_) => {
+          // File doesn't exist or parse error — treat as unknown, TOFU
+          let _ = russh::keys::known_hosts::learn_known_hosts_path(
+            &host, port, &key, &known_hosts_path,
+          );
+          Ok(true)
+        }
       }
     }
   }
@@ -612,12 +616,20 @@ async fn authenticate_ssh(
   // 1. Try explicit private key file (skip .pub files)
   if let Some(path) = key_path {
     if !path.ends_with(".pub") {
-      if let Ok(key) = russh_keys::load_secret_key(path, passphrase) {
+      if let Ok(key) = russh::keys::load_secret_key(path, passphrase) {
+        let hash_alg = if key.algorithm().is_rsa() {
+          Some(russh::keys::HashAlg::Sha256)
+        } else {
+          None
+        };
         match session
-          .authenticate_publickey(username, Arc::new(key))
+          .authenticate_publickey(
+            username,
+            russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg),
+          )
           .await
         {
-          Ok(true) => return Ok(true),
+          Ok(res) if res.success() => return Ok(true),
           _ => {} // auth rejected → fall through to agent
         }
       }
@@ -633,39 +645,52 @@ async fn authenticate_ssh(
       format!("{path}.pub")
     };
     let content = std::fs::read_to_string(&pub_path).ok()?;
-    russh_keys::PublicKey::from_openssh(content.trim()).ok()
+    russh::keys::PublicKey::from_openssh(content.trim()).ok()
   });
 
   #[cfg(windows)]
   {
-    if let Ok(pipe) = tokio::net::windows::named_pipe::ClientOptions::new()
+    match tokio::net::windows::named_pipe::ClientOptions::new()
       .open(r"\\.\pipe\openssh-ssh-agent")
     {
-      let mut agent = russh_keys::agent::client::AgentClient::connect(pipe);
-      if let Ok(identities) = agent.request_identities().await {
-        // If hint provided, try matching identity first
-        if let Some(ref hint) = pub_key_hint {
-          for id in &identities {
-            if id.key_data() == hint.key_data() {
-              if let Ok(true) = session
-                .authenticate_publickey_with(username, id.clone(), &mut agent)
-                .await
-              {
-                return Ok(true);
+      Ok(pipe) => {
+        let mut agent = russh::keys::agent::client::AgentClient::connect(pipe);
+        if let Ok(identities) = agent.request_identities().await {
+          let rsa_hash_alg = |key: &russh::keys::PublicKey| -> Option<russh::keys::HashAlg> {
+            if key.algorithm().is_rsa() {
+              Some(russh::keys::HashAlg::Sha256)
+            } else {
+              None
+            }
+          };
+
+          // If hint provided, try matching identity first
+          if let Some(ref hint) = pub_key_hint {
+            for id in &identities {
+              if id.key_data() == hint.key_data() {
+                let hash_alg = rsa_hash_alg(id);
+                if let Ok(res) = session
+                  .authenticate_publickey_with(username, id.clone(), hash_alg, &mut agent)
+                  .await
+                {
+                  if res.success() { return Ok(true); }
+                }
               }
             }
           }
-        }
-        // Try all identities
-        for id in &identities {
-          if let Ok(true) = session
-            .authenticate_publickey_with(username, id.clone(), &mut agent)
-            .await
-          {
-            return Ok(true);
+          // Try all identities
+          for id in &identities {
+            let hash_alg = rsa_hash_alg(id);
+            if let Ok(res) = session
+              .authenticate_publickey_with(username, id.clone(), hash_alg, &mut agent)
+              .await
+            {
+              if res.success() { return Ok(true); }
+            }
           }
         }
       }
+      Err(_) => {}
     }
   }
 
@@ -673,26 +698,36 @@ async fn authenticate_ssh(
   {
     if let Ok(sock) = std::env::var("SSH_AUTH_SOCK") {
       if let Ok(stream) = tokio::net::UnixStream::connect(&sock).await {
-        let mut agent = russh_keys::agent::client::AgentClient::connect(stream);
+        let mut agent = russh::keys::agent::client::AgentClient::connect(stream);
         if let Ok(identities) = agent.request_identities().await {
           if let Some(ref hint) = pub_key_hint {
             for id in &identities {
               if id.key_data() == hint.key_data() {
-                if let Ok(true) = session
-                  .authenticate_publickey_with(username, id.clone(), &mut agent)
+                let hash_alg = if id.algorithm().is_rsa() {
+                  Some(russh::keys::HashAlg::Sha256)
+                } else {
+                  None
+                };
+                if let Ok(res) = session
+                  .authenticate_publickey_with(username, id.clone(), hash_alg, &mut agent)
                   .await
                 {
-                  return Ok(true);
+                  if res.success() { return Ok(true); }
                 }
               }
             }
           }
           for id in &identities {
-            if let Ok(true) = session
-              .authenticate_publickey_with(username, id.clone(), &mut agent)
+            let hash_alg = if id.algorithm().is_rsa() {
+              Some(russh::keys::HashAlg::Sha256)
+            } else {
+              None
+            };
+            if let Ok(res) = session
+              .authenticate_publickey_with(username, id.clone(), hash_alg, &mut agent)
               .await
             {
-              return Ok(true);
+              if res.success() { return Ok(true); }
             }
           }
         }
@@ -711,12 +746,20 @@ async fn authenticate_ssh(
       for name in &["id_ed25519", "id_rsa", "id_ecdsa"] {
         let kp = ssh_dir.join(name);
         if kp.exists() {
-          if let Ok(key) = russh_keys::load_secret_key(&kp, None) {
-            if let Ok(true) = session
-              .authenticate_publickey(username, Arc::new(key))
+          if let Ok(key) = russh::keys::load_secret_key(&kp, None) {
+            let hash_alg = if key.algorithm().is_rsa() {
+              Some(russh::keys::HashAlg::Sha256)
+            } else {
+              None
+            };
+            if let Ok(res) = session
+              .authenticate_publickey(
+                username,
+                russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg),
+              )
               .await
             {
-              return Ok(true);
+              if res.success() { return Ok(true); }
             }
           }
         }
