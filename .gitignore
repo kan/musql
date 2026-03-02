@@ -3,3 +3,4 @@ src-tauri/target/
 rustup-init.exe
 src-tauri/gen/
 .claude/settings.local.json
+*.msix

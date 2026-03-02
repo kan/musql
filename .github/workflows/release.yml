@@ -67,9 +67,29 @@ jobs:
         run: |
           Copy-Item "src-tauri/target/release/musql.exe" "muSQL-store-x64.exe"
 
+      - name: Derive MSIX version
+        id: msix-version
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}" -replace '^v',''
+          $parts = $tag.Split('.')
+          while ($parts.Count -lt 4) { $parts += '0' }
+          $ver = $parts[0..3] -join '.'
+          echo "version=$ver" >> $env:GITHUB_OUTPUT
+
+      - name: Build MSIX
+        shell: pwsh
+        run: |
+          .\store\build-msix.ps1 `
+            -Version "${{ steps.msix-version.outputs.version }}" `
+            -ExePath  "src-tauri\target\release\musql.exe" `
+            -OutputPath "muSQL-store-x64.msix"
+
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
-          files: muSQL-store-x64.exe
+          files: |
+            muSQL-store-x64.exe
+            muSQL-store-x64.msix
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

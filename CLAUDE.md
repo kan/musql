@@ -40,9 +40,10 @@ Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`
 
 ## Roadmap
 
-### Phase 5: Windows Store 配布（残タスク）
-- MSIX パッケージング: `AppxManifest.xml` 作成（Identity/Publisher は Store 開発者アカウント登録後に確定）→ `MakeAppx.exe` で MSIX 生成。
-- Store 開発者アカウント登録（法人予定）→ アプリ名 "muSQL" 予約 → MSIX 提出。
+### Phase 5: Windows Store 配布
+- MSIX パッケージング: `store/AppxManifest.xml` + `store/build-msix.ps1` で未署名 MSIX を生成。CI (`release.yml` の `build-store`) がタグ push 時に EXE + MSIX をリリースにアップロード。
+- Partner Center Identity: `CommunitylinksInc.muSQL` / `CN=38A0E012-12F7-45AE-8FAA-50937924F823`。
+- 残タスク: Partner Center へ MSIX を提出 → Microsoft 自動署名 → Store 公開。
 
 ### Phase 6: 機能拡充
 - Docker MySQL 簡単アクセス（`docker ps` でコンテナ検出、ポートマッピング自動入力）。
