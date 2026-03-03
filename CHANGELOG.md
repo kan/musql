@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.1] - 2026-03-04
+
+### Changed
+- russh を 0.57.1 に更新（デッドロック修正・keepalive 修正）
+- reqwest を 0.13 に更新
+
+### Other
+- README にバッジ追加（CI・Rust・Tauri・Windows）
+
 ## [0.4.0] - 2026-03-04
 
 ### Added
@@ -65,6 +74,7 @@
 - アプリ内自動更新（NSIS インストーラー + Ed25519 署名）
 - GitHub Actions CI/CD（cargo check + リリースビルド）
 
+[0.4.1]: https://github.com/kan/musql/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/kan/musql/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/kan/musql/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/kan/musql/compare/v0.1.0...v0.2.0
