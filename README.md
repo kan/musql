@@ -10,6 +10,10 @@
 
 <p align="center">
   <a href="https://github.com/kan/musql/releases/latest"><img src="https://img.shields.io/github/v/release/kan/musql?style=flat-square" alt="Release" /></a>
+  <a href="https://github.com/kan/musql/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/kan/musql/ci.yml?branch=main&style=flat-square&label=CI" alt="CI" /></a>
+  <img src="https://img.shields.io/badge/Rust-1.80+-f74c00?style=flat-square&logo=rust&logoColor=white" alt="Rust" />
+  <img src="https://img.shields.io/badge/Tauri-v2-24c8db?style=flat-square&logo=tauri&logoColor=white" alt="Tauri v2" />
+  <img src="https://img.shields.io/badge/platform-Windows-0078d4?style=flat-square&logo=windows&logoColor=white" alt="Windows" />
   <a href="LICENSE"><img src="https://img.shields.io/github/license/kan/musql?style=flat-square" alt="License" /></a>
 </p>
 
