@@ -50,10 +50,76 @@ Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`
 - Partner Center Identity: `CommunitylinksInc.muSQL` / `CN=38A0E012-12F7-45AE-8FAA-50937924F823`。
 - 残タスク: Partner Center へ MSIX を提出 → Microsoft 自動署名 → Store 公開。
 
-### Phase 6: 機能拡充
-- Docker MySQL 簡単アクセス（`docker ps` でコンテナ検出、ポートマッピング自動入力）。
-- TablePlusの設定引き継ぎ
-- クロスプラットフォーム対応（macOS/Linux ビルド・CI マトリクス化）。
+### Phase 6: マルチDB 抽象化 + PostgreSQL / MariaDB
+最初のマルチ DB 対応。抽象化レイヤーを構築し、PostgreSQL を追加する。MariaDB は MySQL 互換のためラベル追加のみ。
+
+**6a. DB 抽象化レイヤー構築**
+- Rust: DB 方言 trait を導入（接続・クエリ実行・スキーマ取得・識別子エスケープ・キャンセル・型変換）
+- JS: 方言差の吸収（識別子引用符、ページング構文、文字列関数、スキーマ問い合わせ）
+- 設定画面: DB Engine ドロップダウンを有効化、エンジン別のデフォルト値（ポート等）切替
+- AI プロンプトのエンジン名動的化（「MySQL query assistant」→ エンジン名に応じて変更）
+- MySQL 固有の主な箇所（約40箇所）:
+  - Rust: `mysql` クレート / `OptsBuilder` / `Value` 型変換 / `KILL QUERY` / `escape_identifier`（バッククォート）/ INFORMATION_SCHEMA クエリ / `USE db`
+  - JS: `SHOW DATABASES` / `SHOW TABLES` / `DESCRIBE` / `SHOW INDEX` / `quoteId`（バッククォート）/ `CHAR_LENGTH`・`CONCAT`・`LEFT` / `LIMIT offset, n` / BLOB/TEXT 型名ハードコード
+
+**6b. PostgreSQL 対応**
+- クレート: `tokio-postgres` または `sqlx`
+- 方言差: 識別子は `""`、ページングは `LIMIT n OFFSET m`、スキーマは `information_schema`（カラム名差異あり）、`SHOW DATABASES` → `SELECT datname FROM pg_database`、`SHOW TABLES` → `pg_tables`、`DESCRIBE` → `information_schema.columns`、`SHOW INDEX` → `pg_indexes`、キャンセルは `pg_cancel_backend(pid)`、型名は `bytea` / `text` / `varchar` 等
+- デフォルトポート: 5432、デフォルトユーザー: `postgres`
+
+**6c. MariaDB 対応**
+- MySQL ワイヤープロトコル互換のため、既存の `mysql` クレートでそのまま接続可能
+- 設定画面の DB Engine ドロップダウンに選択肢を追加するのみ（コード変更は実質なし）
+
+### Phase 7: SQLite / Redshift
+Phase 6 の抽象化レイヤーの上に追加。
+
+**7a. SQLite**
+- クレート: `rusqlite`（ファイルベース、ネットワーク不要）
+- 接続設定: ホスト/ポートではなくファイルパス指定（設定画面の動的フィールド切替が必要）
+- SSH 不要、SSL 不要
+- 方言差: `SHOW DATABASES` → 概念なし（単一ファイル＝単一DB）、`SHOW TABLES` → `sqlite_master`、`DESCRIBE` → `PRAGMA table_info()`、`SHOW INDEX` → `PRAGMA index_list()` + `PRAGMA index_info()`、型は動的型付け
+- DB 選択モーダルをスキップ、テーブル一覧を直接表示
+
+**7b. Redshift**
+- PostgreSQL ワイヤープロトコル互換のため、Phase 6 の PostgreSQL 対応がベース
+- `tokio-postgres` でほぼ接続可能
+- 追加考慮: `DISTKEY` / `SORTKEY` 等の Redshift 固有スキーマ情報表示、`STL_QUERY` 等のシステムテーブル
+- デフォルトポート: 5439
+
+### Phase 8: Redis
+SQL ではない KVS だが、既存 UI 部品の流用で実用的な GUI を構築可能。
+
+**クレート**: `redis`（Rust、非同期対応）
+
+**UI 設計:**
+- サイドバー: Key Browser（パターンフィルタで `SCAN`、型別グルーピング: string / hash / list / set / zset / stream）
+- メインペイン（キータブ）: 型別に既存の結果テーブルを流用
+  - string → 値表示（JSON なら自動整形）
+  - hash → フィールド / 値 の2カラムテーブル
+  - list → インデックス / 値 の2カラムテーブル
+  - set → 値の1カラムテーブル
+  - zset → スコア / 値 の2カラムテーブル
+  - stream → ID / フィールド群のテーブル
+- CLI タブ: CodeMirror エディタを流用し Redis コマンドを入力・実行（SQL タブと同じ位置づけ）
+- 各キータブのヘッダーに型・TTL・メモリ使用量を表示
+- SSH トンネル・AI アシスト（コマンド生成）・コマンド履歴は既存資産を流用
+
+**既存資産の流用:**
+- 結果テーブル（ページング・ソート・行詳細）→ hash/list/set/zset 値表示
+- JSON 自動整形 → string 値表示
+- CodeMirror エディタ → CLI タブ
+- 履歴機能 → コマンド履歴
+- SSH トンネル → Redis サーバーへの踏み台接続
+
+**新規実装:**
+- Rust: `redis` クレート接続・コマンド実行・型判定
+- JS: Key Browser（SCAN ベース遅延読み込み）、型別表示の分岐
+
+### Phase 9: その他機能拡充
+- Docker MySQL 簡単アクセス（`docker ps` でコンテナ検出、ポートマッピング自動入力）
+- TablePlus の設定引き継ぎ
+- クロスプラットフォーム対応（macOS/Linux ビルド・CI マトリクス化）
 
 ### Phase X: 優先改修事項
 - 全項目完了済み
