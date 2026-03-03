@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.4.0] - 2026-03-04
+
+### Added
+- AI アシスト（チャット形式モーダル）
+  - 自然言語でプロンプト → AI が SQL を生成
+  - チャット履歴を DB 毎に保持（最大 50 件）
+  - 生成 SQL のコピー / エディタ挿入ボタン
+  - Claude / ChatGPT / Gemini 対応（旧ゴーストテキスト補完を置換）
+- タブのドラッグ並び替え（マウスイベントベース）
+- テーブルタブ（Data/Structure）の永続化・復元
+- SQL タブ番号の再利用（閉じた番号を再割当）と SQL 内容の復元
+- CodeMirror アクティブ行ハイライト
+- 接続ボタンでプロファイルを自動保存してから接続（新規プロファイルでも即接続可能）
+
+### Changed
+- 設定画面を 1 カード化、操作ボタンを上部に配置
+- メイン画面の空状態ナビ・マージン調整
+- アプリ identifier を `jp.co.communitylinks.musql` に変更
+
 ## [0.3.0] - 2026-02-28
 
 ### Added
@@ -46,6 +65,7 @@
 - アプリ内自動更新（NSIS インストーラー + Ed25519 署名）
 - GitHub Actions CI/CD（cargo check + リリースビルド）
 
+[0.4.0]: https://github.com/kan/musql/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/kan/musql/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/kan/musql/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/kan/musql/releases/tag/v0.1.0
