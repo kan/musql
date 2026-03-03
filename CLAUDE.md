@@ -41,6 +41,10 @@ Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`
 
 ## Roadmap
 
+### Phase 4.5: Store リリース前の優先改修
+- SSHサーバーへのパスワード認証サポート（現在は鍵認証のみ）
+- パスワード・パスフレーズの接続時都度入力サポート（keyring 保存だけでなく、接続のたびに入力する選択肢を追加）
+
 ### Phase 5: Windows Store 配布
 - MSIX パッケージング: `store/AppxManifest.xml` + `store/build-msix.ps1` で未署名 MSIX を生成。CI (`release.yml` の `build-store`) がタグ push 時に EXE + MSIX をリリースにアップロード。
 - Partner Center Identity: `CommunitylinksInc.muSQL` / `CN=38A0E012-12F7-45AE-8FAA-50937924F823`。
