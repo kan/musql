@@ -576,9 +576,30 @@ deleteBtn.addEventListener("click", async () => {
 });
 
 connectBtn.addEventListener("click", async () => {
-  if (!selectedProfileId) return;
   try {
-    await safeInvoke("open_query_window", { id: selectedProfileId });
+    const name = profileNameInput.value.trim();
+    if (!name) {
+      show(t('profile_name_required'));
+      return;
+    }
+    // Save profile first (same logic as save button)
+    const profile = {
+      id: selectedProfileId || "",
+      name,
+      group_id: selectedGroupId,
+      order: selectedOrder,
+      color: selectedColor || null,
+      tags: selectedTags,
+      request: collectRequest(),
+      clear_password: clearPasswordFlag,
+      clear_ssh_passphrase: clearSshPassphraseFlag,
+    };
+    const result = await safeInvoke("save_profile", { profile });
+    if (eventApi && eventApi.emit) {
+      await eventApi.emit("profiles:changed");
+    }
+    const profileId = result.saved_id || selectedProfileId;
+    await safeInvoke("open_query_window", { id: profileId });
     await safeInvoke("hide_window");
   } catch (error) {
     show(String(error));
@@ -590,14 +611,16 @@ cancelBtn.addEventListener("click", async () => {
 });
 
 profileNameInput.addEventListener("input", () => {
-  saveBtn.disabled = !profileNameInput.value.trim();
+  const hasName = !!profileNameInput.value.trim();
+  saveBtn.disabled = !hasName;
+  connectBtn.disabled = !hasName;
 });
 
 clearForm();
 renderSshConfigRow();
 saveBtn.disabled = true;
 deleteBtn.disabled = true;
-connectBtn.disabled = true;
+connectBtn.disabled = true; // enabled when profile name is entered
 
 if (eventApi && eventApi.listen) {
   eventApi.listen("menu:action", (event) => {
@@ -618,14 +641,16 @@ if (eventApi && eventApi.listen) {
     const groupId = (typeof payload === "object" && payload !== null) ? (payload.group_id || null) : null;
     selectedProfileId = id;
     deleteBtn.disabled = !selectedProfileId;
-    connectBtn.disabled = !selectedProfileId;
     show("");
     Promise.all([loadSshConfigHosts(), loadAllExistingTags()]).then(() => {
       if (selectedProfileId) {
-        loadProfile(selectedProfileId).catch((error) => show(String(error)));
+        loadProfile(selectedProfileId).then(() => {
+          connectBtn.disabled = !profileNameInput.value.trim();
+        }).catch((error) => show(String(error)));
       } else {
         clearForm();
         selectedGroupId = groupId;
+        connectBtn.disabled = true;
       }
     });
   });

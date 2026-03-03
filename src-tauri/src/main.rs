@@ -91,6 +91,8 @@ struct ConnectionProfileStore {
 struct ProfileListResponse {
     groups: Vec<ProfileGroup>,
     items: Vec<ConnectionProfile>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    saved_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1885,6 +1887,7 @@ fn list_profiles(app: AppHandle) -> Result<ProfileListResponse, String> {
     Ok(ProfileListResponse {
         groups: store.groups,
         items: store.items,
+        saved_id: None,
     })
 }
 
@@ -1925,6 +1928,7 @@ fn save_profile(
             set_ssh_passphrase(&profile.id, &passphrase)?;
         }
     }
+    let saved_id = profile.id.clone();
     let mut store = load_profiles(&app)?;
     let mut updated = false;
     for item in store.items.iter_mut() {
@@ -1941,6 +1945,7 @@ fn save_profile(
     Ok(ProfileListResponse {
         groups: store.groups,
         items: store.items,
+        saved_id: Some(saved_id),
     })
 }
 
@@ -1954,6 +1959,7 @@ fn delete_profile(app: AppHandle, id: String) -> Result<ProfileListResponse, Str
     Ok(ProfileListResponse {
         groups: store.groups,
         items: store.items,
+        saved_id: None,
     })
 }
 
@@ -1995,6 +2001,7 @@ fn save_group(
     Ok(ProfileListResponse {
         groups: store.groups,
         items: store.items,
+        saved_id: None,
     })
 }
 
@@ -2012,6 +2019,7 @@ fn delete_group(app: AppHandle, id: String) -> Result<ProfileListResponse, Strin
     Ok(ProfileListResponse {
         groups: store.groups,
         items: store.items,
+        saved_id: None,
     })
 }
 
@@ -2058,6 +2066,7 @@ fn duplicate_profile(app: AppHandle, id: String) -> Result<ProfileListResponse, 
     Ok(ProfileListResponse {
         groups: store.groups,
         items: store.items,
+        saved_id: None,
     })
 }
 
@@ -2096,6 +2105,7 @@ fn reorder(
     Ok(ProfileListResponse {
         groups: store.groups,
         items: store.items,
+        saved_id: None,
     })
 }
 
