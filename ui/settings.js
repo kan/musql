@@ -9,10 +9,11 @@ const saveBtn = document.getElementById("profile-save");
 const cancelBtn = document.getElementById("profile-cancel");
 const deleteBtn = document.getElementById("profile-delete");
 const connectBtn = document.getElementById("connect-btn");
-const sshConfigHostSelect = document.getElementById("ssh-config-host");
+const sshConfigRow = document.getElementById("ssh-config-row");
 const sshEnabledCheck = document.getElementById("ssh-enabled");
 const sshFieldsDiv = document.getElementById("ssh-fields");
 const sshManualFieldIds = ["ssh-host", "ssh-port", "ssh-user", "ssh-key"];
+let sshConfigHostValue = ""; // current config host alias (empty = manual)
 const sslModeSelect = document.getElementById("mysql-ssl-mode");
 const caCertRow = document.getElementById("ca-cert-row");
 const caCertInput = document.getElementById("mysql-ca-cert");
@@ -22,9 +23,8 @@ const sshKeyBrowseBtn = document.getElementById("ssh-key-browse");
 const menuBtn = document.getElementById("menu-btn");
 menuBtn.innerHTML = icon('menu');
 
-// Apply icons to heading and buttons
+// Apply icons to buttons
 function applySettingsLabels() {
-  document.getElementById("settings-heading").innerHTML = icon('settings', 24) + ' ' + t('settings_heading');
   testBtn.innerHTML = icon('zap') + t('test_connection');
   connectBtn.innerHTML = icon('play') + t('connect');
   saveBtn.innerHTML = icon('save') + t('save');
@@ -197,34 +197,130 @@ function show(value) {
   resultEl.hidden = !text;
 }
 
+let sshConfigHosts = []; // cached list
+
 async function loadSshConfigHosts() {
   try {
-    const hosts = await safeInvoke("list_ssh_config_hosts");
-    sshConfigHostSelect.innerHTML = '<option value="">' + t('config_host_manual') + '</option>';
-    hosts.forEach((h) => {
-      const opt = document.createElement("option");
-      opt.value = h;
-      opt.textContent = h;
-      sshConfigHostSelect.appendChild(opt);
+    sshConfigHosts = await safeInvoke("list_ssh_config_hosts");
+  } catch (_) {
+    sshConfigHosts = [];
+  }
+}
+
+function renderSshConfigRow() {
+  sshConfigRow.innerHTML = "";
+  const enabled = sshEnabledCheck.checked;
+
+  if (!sshConfigHostValue) {
+    // Initial state: show "Load from ssh config" button
+    const loadBtn = document.createElement("button");
+    loadBtn.className = "ghost";
+    loadBtn.textContent = t('ssh_config_load');
+    loadBtn.disabled = !enabled;
+    loadBtn.addEventListener("click", showSshConfigModal);
+    sshConfigRow.appendChild(loadBtn);
+  } else {
+    // Active state: show reference text + clear button
+    const refText = document.createElement("span");
+    refText.className = "ssh-config-ref";
+    refText.textContent = t('ssh_config_ref', { name: sshConfigHostValue });
+    sshConfigRow.appendChild(refText);
+    const clearBtn = document.createElement("button");
+    clearBtn.className = "ghost danger";
+    clearBtn.textContent = t('ssh_config_clear');
+    clearBtn.disabled = !enabled;
+    clearBtn.addEventListener("click", clearSshConfig);
+    sshConfigRow.appendChild(clearBtn);
+  }
+}
+
+function showSshConfigModal() {
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  const box = document.createElement("div");
+  box.className = "modal-box";
+  const heading = document.createElement("h2");
+  heading.textContent = t('ssh_config_select');
+  box.appendChild(heading);
+
+  if (sshConfigHosts.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "modal-status";
+    empty.textContent = "No hosts found in ~/.ssh/config";
+    box.appendChild(empty);
+  } else {
+    const list = document.createElement("div");
+    list.className = "db-list";
+    sshConfigHosts.forEach((host) => {
+      const el = document.createElement("div");
+      el.className = "db-list-item";
+      el.textContent = host;
+      el.addEventListener("click", () => {
+        close();
+        selectSshConfigHost(host);
+      });
+      list.appendChild(el);
     });
+    box.appendChild(list);
+  }
+
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+
+  function close() {
+    overlay.remove();
+    document.removeEventListener("keydown", onKey);
+  }
+  function onKey(e) { if (e.key === "Escape") close(); }
+  document.addEventListener("keydown", onKey);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+}
+
+async function selectSshConfigHost(alias) {
+  sshConfigHostValue = alias;
+  renderSshConfigRow();
+  updateSshFieldVisibility();
+  try {
+    const resolved = await safeInvoke("resolve_ssh_config", { alias });
+    document.getElementById("ssh-host").value = resolved.host || "";
+    document.getElementById("ssh-port").value = resolved.port || 22;
+    document.getElementById("ssh-user").value = resolved.user || "";
+    document.getElementById("ssh-key").value = resolved.identity_file || "";
   } catch (_) {}
+}
+
+function clearSshConfig() {
+  sshConfigHostValue = "";
+  document.getElementById("ssh-host").value = "";
+  document.getElementById("ssh-port").value = "22";
+  document.getElementById("ssh-user").value = "";
+  document.getElementById("ssh-key").value = "";
+  renderSshConfigRow();
+  updateSshFieldVisibility();
 }
 
 function updateSshFieldVisibility() {
   const enabled = sshEnabledCheck.checked;
-  // Disable all inputs/selects/buttons inside ssh-fields when SSH is off
+  const useConfig = sshConfigHostValue !== "";
+
+  // Disable all inputs/buttons inside ssh-fields when SSH is off
   sshFieldsDiv.querySelectorAll("input, select, button").forEach((el) => {
     el.disabled = !enabled;
   });
-  // Hide manual fields when Config Host is selected
-  const useConfig = sshConfigHostSelect.value !== "";
+  // When config host is set, also disable manual fields + their buttons
   sshManualFieldIds.forEach((id) => {
-    document.getElementById(id).closest("label").classList.toggle("hidden", useConfig);
+    const el = document.getElementById(id);
+    const label = el.closest("label");
+    if (useConfig && enabled) {
+      el.disabled = true;
+      label.querySelectorAll("button").forEach((btn) => { btn.disabled = true; });
+    }
   });
+  // Also update the config row buttons
+  renderSshConfigRow();
 }
 
 sshEnabledCheck.addEventListener("change", updateSshFieldVisibility);
-sshConfigHostSelect.addEventListener("change", updateSshFieldVisibility);
 
 function updateCaCertVisibility() {
   const mode = sslModeSelect.value;
@@ -267,7 +363,7 @@ function collectRequest() {
       port: Number(document.getElementById("ssh-port").value || 22),
       username: document.getElementById("ssh-user").value.trim(),
       private_key_path: document.getElementById("ssh-key").value.trim() || null,
-      config_host: document.getElementById("ssh-config-host").value || null,
+      config_host: sshConfigHostValue || null,
       passphrase: document.getElementById("ssh-passphrase").value,
     },
   };
@@ -291,13 +387,24 @@ function applyRequest(request) {
     private_key_path: null,
   };
   document.getElementById("ssh-enabled").checked = !!ssh.enabled;
-  document.getElementById("ssh-config-host").value = ssh.config_host || "";
+  sshConfigHostValue = ssh.config_host || "";
   document.getElementById("ssh-host").value = ssh.host || "";
   document.getElementById("ssh-port").value = ssh.port || 22;
   document.getElementById("ssh-user").value = ssh.username || "";
   document.getElementById("ssh-key").value = ssh.private_key_path || "";
   document.getElementById("ssh-passphrase").value = ssh.passphrase || "";
+  renderSshConfigRow();
   updateSshFieldVisibility();
+
+  // If config_host is set, resolve and populate SSH fields
+  if (ssh.config_host) {
+    safeInvoke("resolve_ssh_config", { alias: ssh.config_host }).then((resolved) => {
+      document.getElementById("ssh-host").value = resolved.host || "";
+      document.getElementById("ssh-port").value = resolved.port || 22;
+      document.getElementById("ssh-user").value = resolved.user || "";
+      document.getElementById("ssh-key").value = resolved.identity_file || "";
+    }).catch(() => {});
+  }
 }
 
 async function safeInvoke(command, payload) {
@@ -487,6 +594,7 @@ profileNameInput.addEventListener("input", () => {
 });
 
 clearForm();
+renderSshConfigRow();
 saveBtn.disabled = true;
 deleteBtn.disabled = true;
 connectBtn.disabled = true;

@@ -5,18 +5,27 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>muSQL Settings</title>
     <link rel="icon" href="./icon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="./style.css?v=6" />
+    <link rel="stylesheet" href="./style.css?v=7" />
   </head>
   <body>
-    <main>
-      <div class="settings-header" style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
-        <h1 id="settings-heading" style="margin-bottom:0;">Settings</h1>
+    <main class="settings-main">
+      <!-- Header with menu button -->
+      <div class="settings-header-bar">
         <button id="menu-btn" class="ghost menu-btn" style="margin-left:auto;"></button>
       </div>
-      <p class="subtitle" data-i18n="connection_profile">Connection profile</p>
+      <!-- Action bar -->
+      <div class="settings-action-bar" style="justify-content:flex-end;">
+        <button id="test-btn" class="info"></button>
+        <button id="connect-btn" class="success"></button>
+        <button id="profile-save"></button>
+        <button id="profile-cancel" class="ghost"></button>
+        <button id="profile-delete" class="danger"></button>
+      </div>
 
-      <section class="panel">
-        <h2 data-i18n="general">General</h2>
+      <!-- Single unified panel -->
+      <section class="panel settings-panel">
+        <!-- General section -->
+        <h3 class="settings-section-heading" data-i18n="general">General</h3>
         <div class="grid">
           <label><span data-i18n="profile_name">Profile name</span> <input id="profile-name" data-i18n-placeholder="profile_name_placeholder" placeholder="e.g. prod/analytics" /></label>
         </div>
@@ -33,11 +42,17 @@
             </div>
           </label>
         </div>
-      </section>
 
-      <section class="panel">
-        <h2 data-i18n="mysql">MySQL</h2>
+        <hr class="settings-divider" />
+
+        <!-- DB section -->
+        <h3 class="settings-section-heading" data-i18n="mysql">DB Settings</h3>
         <div class="grid">
+          <label><span data-i18n="db_engine">DB Engine</span>
+            <select id="db-engine" disabled>
+              <option value="mysql" selected>MySQL</option>
+            </select>
+          </label>
           <label><span data-i18n="host">Host</span> <input id="mysql-host" value="127.0.0.1" /></label>
           <label><span data-i18n="port">Port</span> <input id="mysql-port" type="number" value="3306" /></label>
           <label><span data-i18n="database">Database</span> <input id="mysql-db" data-i18n-placeholder="optional" placeholder="optional" /></label>
@@ -65,19 +80,15 @@
             </div>
           </label>
         </div>
-      </section>
 
-      <section class="panel">
-        <div class="panel-header">
-          <h2 data-i18n="ssh_bastion">SSH Bastion</h2>
-          <label class="checkbox"><input id="ssh-enabled" type="checkbox" /> <span data-i18n="enable">Enable</span></label>
-        </div>
+        <hr class="settings-divider" />
+
+        <!-- SSH section - header is a checkbox -->
+        <label class="settings-section-heading settings-ssh-toggle">
+          <input id="ssh-enabled" type="checkbox" />
+          <span data-i18n="ssh_via">SSH</span>
+        </label>
         <div id="ssh-fields" class="grid" style="margin-top:10px">
-          <label><span data-i18n="config_host">Config Host</span>
-            <select id="ssh-config-host">
-              <option value="">(manual)</option>
-            </select>
-          </label>
           <label><span data-i18n="host">Host</span> <input id="ssh-host" placeholder="bastion.example.com" /></label>
           <label><span data-i18n="port">Port</span> <input id="ssh-port" type="number" value="22" /></label>
           <label><span data-i18n="user">User</span> <input id="ssh-user" placeholder="ec2-user" /></label>
@@ -93,21 +104,16 @@
               <button type="button" id="ssh-passphrase-clear" class="browse-btn clear-pw-btn hidden" data-i18n-title="clear_ssh_passphrase">&times;</button>
             </div>
           </label>
+          <div id="ssh-config-row" class="ssh-config-row"></div>
         </div>
       </section>
-      <div class="actions actions-right">
-        <button id="test-btn" class="info"></button>
-        <button id="connect-btn" class="success"></button>
-        <button id="profile-save"></button>
-        <button id="profile-cancel" class="ghost"></button>
-        <button id="profile-delete" class="danger"></button>
-      </div>
+
       <pre id="result" class="log" hidden></pre>
     </main>
 
     <script src="./icons.js"></script>
     <script src="./i18n.js"></script>
     <script src="./theme.js"></script>
-    <script src="./settings.js?v=5"></script>
+    <script src="./settings.js?v=6"></script>
   </body>
 </html>

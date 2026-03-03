@@ -26,10 +26,25 @@ const aiApiKeyInput = document.getElementById("ai-api-key");
 const aiSaveBtn = document.getElementById("ai-save-btn");
 const aiCancelBtn = document.getElementById("ai-cancel-btn");
 
+// AI Assist modal DOM refs
+const aiAssistModal = document.getElementById("ai-assist-modal");
+const aiAssistMessages = document.getElementById("ai-assist-messages");
+const aiAssistInput = document.getElementById("ai-assist-input");
+const aiAssistSendBtn = document.getElementById("ai-assist-send-btn");
+const aiAssistClearBtn = document.getElementById("ai-assist-clear-btn");
+const aiAssistSettingsBtn = document.getElementById("ai-assist-settings-btn");
+const aiAssistCloseBtn = document.getElementById("ai-assist-close-btn");
+
 // Apply icons to static elements
 menuBtn.innerHTML = icon('menu');
 dbSwitchBtn.innerHTML = icon('arrow-left-right');
 tabAddBtn.innerHTML = icon('plus');
+aiAssistSendBtn.innerHTML = icon('send');
+aiAssistClearBtn.innerHTML = icon('eraser');
+aiAssistClearBtn.title = t('ai_assist_clear');
+aiAssistSettingsBtn.innerHTML = icon('settings');
+aiAssistSettingsBtn.title = t('ai_settings');
+aiAssistCloseBtn.innerHTML = icon('x');
 
 menuBtn.addEventListener("click", () => safeInvoke("show_popup_menu", { lang: getLang(), theme: getTheme() }));
 document.getElementById("db-modal-heading").innerHTML = icon('database', 20) + ' ' + t('select_database');
@@ -37,11 +52,11 @@ document.getElementById("db-modal-heading").innerHTML = icon('database', 20) + '
 // ── State ──
 let requestCache = null;
 let currentDb = null;
-let sqlTabCounter = 0;
 let currentTables = [];
 let currentProfileId = null;
 let currentProfileName = null;
 const sqlTabActions = {}; // tabId → { runLine, runAll, format, history, cancel }
+const closedDrafts = {}; // tabNumber → content (in-session restore for closed tabs)
 
 // ── Draft save/restore ──
 
@@ -49,24 +64,54 @@ let draftSaveTimer = null;
 
 function saveDrafts() {
   if (!currentProfileId) return;
-  const drafts = [];
+  const tabs = [];
   tabManager.tabs.forEach((tab) => {
-    if (tab.type !== "sql") return;
-    const cmEl = tab.paneEl.querySelector(".CodeMirror");
-    if (cmEl && cmEl.CodeMirror) drafts.push(cmEl.CodeMirror.getValue());
+    if (tab.type === "sql") {
+      const cmEl = tab.paneEl.querySelector(".CodeMirror");
+      const content = (cmEl && cmEl.CodeMirror) ? cmEl.CodeMirror.getValue() : "";
+      const match = tab.id.match(/^sql-(\d+)$/);
+      const num = match ? parseInt(match[1]) : 0;
+      tabs.push({ type: "sql", num, content });
+    } else if (tab.type === "data") {
+      const match = tab.id.match(/^table-(.+)$/);
+      if (match) {
+        const view = tab.paneEl.dataset.view || "data";
+        tabs.push({ type: "table", name: match[1], view });
+      }
+    }
   });
   const key = "musql:drafts:" + currentProfileId;
-  if (drafts.length === 0 || drafts.every((d) => d === "")) {
+  const hasContent = tabs.some((t) => t.type === "table" || (t.type === "sql" && t.content));
+  if (tabs.length === 0 || !hasContent) {
     localStorage.removeItem(key);
   } else {
-    localStorage.setItem(key, JSON.stringify(drafts));
+    localStorage.setItem(key, JSON.stringify({ tabs, activeTabId: tabManager.activeId || null }));
   }
 }
 
 function loadDrafts() {
-  if (!currentProfileId) return [];
-  try { return JSON.parse(localStorage.getItem("musql:drafts:" + currentProfileId)) || []; }
-  catch (_) { return []; }
+  if (!currentProfileId) return { tabs: [], activeTabId: null };
+  try {
+    const raw = JSON.parse(localStorage.getItem("musql:drafts:" + currentProfileId));
+    if (!raw) return { tabs: [], activeTabId: null };
+
+    // New format: { tabs: [...], activeTabId }
+    if (raw.tabs && Array.isArray(raw.tabs)) {
+      return { tabs: raw.tabs, activeTabId: raw.activeTabId || null };
+    }
+
+    // Old format: array of SQL-only drafts
+    if (Array.isArray(raw)) {
+      const sqlTabs = raw.map((d, i) => {
+        if (typeof d === "string") return { type: "sql", num: i + 1, content: d };
+        if (d.num !== undefined) return { type: "sql", num: d.num, content: d.content || "" };
+        return { type: "sql", num: i + 1, content: d.content || "" };
+      });
+      return { tabs: sqlTabs, activeTabId: null };
+    }
+
+    return { tabs: [], activeTabId: null };
+  } catch (_) { return { tabs: [], activeTabId: null }; }
 }
 
 function scheduleDraftSave() {
@@ -93,6 +138,87 @@ function loadHistory() {
   if (!currentProfileId) return [];
   try { return JSON.parse(localStorage.getItem("musql:history:" + currentProfileId)) || []; }
   catch (_) { return []; }
+}
+
+function showHistoryMenu(anchorEvent, entries, onSelect) {
+  // Remove any existing history menu
+  const existing = document.querySelector(".history-menu-container");
+  if (existing) existing.remove();
+
+  const container = document.createElement("div");
+  container.className = "history-menu-container";
+
+  const list = document.createElement("div");
+  list.className = "history-menu-list";
+
+  const preview = document.createElement("div");
+  preview.className = "history-menu-preview";
+  const previewPre = document.createElement("pre");
+  preview.appendChild(previewPre);
+
+  entries.forEach((entry, i) => {
+    const d = new Date(entry.ts);
+    const time = String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+    const sqlPreview = entry.sql.replace(/\s+/g, " ");
+    const label = time + "  " + (sqlPreview.length > 60 ? sqlPreview.substring(0, 60) + "\u2026" : sqlPreview);
+
+    const el = document.createElement("div");
+    el.className = "history-menu-item";
+    el.textContent = label;
+    el.addEventListener("mouseenter", () => {
+      list.querySelectorAll(".history-menu-item").forEach((x) => x.classList.remove("active"));
+      el.classList.add("active");
+      previewPre.textContent = entry.sql;
+      preview.classList.add("visible");
+    });
+    el.addEventListener("click", () => {
+      close();
+      onSelect(entry.sql);
+    });
+    list.appendChild(el);
+
+    // Show first item preview by default
+    if (i === 0) {
+      el.classList.add("active");
+      previewPre.textContent = entry.sql;
+      preview.classList.add("visible");
+    }
+  });
+
+  container.appendChild(list);
+  container.appendChild(preview);
+  document.body.appendChild(container);
+
+  // Position relative to click
+  const x = anchorEvent.clientX;
+  const y = anchorEvent.clientY;
+  container.style.left = x + "px";
+  container.style.top = y + "px";
+
+  // Adjust if overflowing
+  requestAnimationFrame(() => {
+    const rect = container.getBoundingClientRect();
+    if (rect.right > window.innerWidth) {
+      container.style.left = Math.max(4, window.innerWidth - rect.width - 4) + "px";
+    }
+    if (rect.bottom > window.innerHeight) {
+      container.style.top = Math.max(4, window.innerHeight - rect.height - 4) + "px";
+    }
+  });
+
+  function close() {
+    container.remove();
+    document.removeEventListener("click", onDocClick, true);
+    document.removeEventListener("keydown", onKey);
+  }
+  function onDocClick(e) {
+    if (!container.contains(e.target)) close();
+  }
+  function onKey(e) { if (e.key === "Escape") close(); }
+  setTimeout(() => {
+    document.addEventListener("click", onDocClick, true);
+    document.addEventListener("keydown", onKey);
+  }, 0);
 }
 
 function buildTableHints() {
@@ -133,14 +259,6 @@ function getAiProvider() {
 
 function getAiModel() {
   return localStorage.getItem("musql:ai:model") || "";
-}
-
-function isAiEnabled() {
-  return localStorage.getItem("musql:ai:enabled") === "true";
-}
-
-function setAiEnabled(val) {
-  localStorage.setItem("musql:ai:enabled", val ? "true" : "false");
 }
 
 function populateAiModelSelect(provider, selectedModel) {
@@ -236,6 +354,182 @@ aiCancelBtn.addEventListener("click", hideAiModal);
 
 aiModal.addEventListener("click", (e) => {
   if (e.target === aiModal) hideAiModal();
+});
+
+// ── AI Assist modal ──
+
+let aiAssistEditor = null; // reference to the editor that opened the modal
+const AI_CHAT_MAX = 50;
+
+function getAiChatKey() {
+  if (!currentProfileId || !currentDb) return null;
+  return "musql:ai-chat:" + currentProfileId + ":" + currentDb;
+}
+
+function loadAiChat() {
+  const key = getAiChatKey();
+  if (!key) return [];
+  try { return JSON.parse(localStorage.getItem(key)) || []; }
+  catch (_) { return []; }
+}
+
+function saveAiChat(messages) {
+  const key = getAiChatKey();
+  if (!key) return;
+  if (messages.length > AI_CHAT_MAX) {
+    messages = messages.slice(messages.length - AI_CHAT_MAX);
+  }
+  localStorage.setItem(key, JSON.stringify(messages));
+}
+
+function openAiAssistModal(editor) {
+  aiAssistEditor = editor;
+  aiAssistInput.placeholder = t('ai_assist_placeholder');
+  renderAiMessages();
+  aiAssistModal.classList.remove("hidden");
+  aiAssistInput.focus();
+}
+
+function closeAiAssistModal() {
+  aiAssistModal.classList.add("hidden");
+  aiAssistEditor = null;
+}
+
+function renderAiMessages() {
+  aiAssistMessages.innerHTML = "";
+  const messages = loadAiChat();
+  if (messages.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "ai-assist-empty";
+    empty.textContent = t('ai_assist_empty');
+    aiAssistMessages.appendChild(empty);
+    return;
+  }
+  messages.forEach((msg) => {
+    const el = document.createElement("div");
+    if (msg.role === "user") {
+      el.className = "ai-msg user";
+      el.textContent = msg.content;
+    } else if (msg.role === "error") {
+      el.className = "ai-msg error";
+      el.textContent = msg.content;
+    } else {
+      el.className = "ai-msg assistant";
+      const pre = document.createElement("pre");
+      pre.textContent = msg.content;
+      el.appendChild(pre);
+      const actions = document.createElement("div");
+      actions.className = "ai-msg-actions";
+      const copyBtn = document.createElement("button");
+      copyBtn.className = "ghost";
+      copyBtn.innerHTML = icon('copy', 14) + " " + t('ai_assist_copy');
+      copyBtn.addEventListener("click", () => {
+        navigator.clipboard.writeText(msg.content).catch(() => {});
+      });
+      actions.appendChild(copyBtn);
+      const insertBtn = document.createElement("button");
+      insertBtn.className = "ghost";
+      insertBtn.innerHTML = icon('terminal', 14) + " " + t('ai_assist_insert');
+      insertBtn.addEventListener("click", () => {
+        if (aiAssistEditor) {
+          const cursor = aiAssistEditor.getCursor();
+          aiAssistEditor.replaceRange(msg.content + "\n", cursor);
+          closeAiAssistModal();
+          aiAssistEditor.focus();
+        }
+      });
+      actions.appendChild(insertBtn);
+      el.appendChild(actions);
+    }
+    aiAssistMessages.appendChild(el);
+  });
+  aiAssistMessages.scrollTop = aiAssistMessages.scrollHeight;
+}
+
+async function sendAiAssistMessage() {
+  const prompt = aiAssistInput.value.trim();
+  if (!prompt) return;
+
+  const configured = await isAiConfigured();
+  if (!configured) {
+    alert(t('ai_not_configured'));
+    showAiModal();
+    return;
+  }
+
+  const provider = getAiProvider();
+  const model = getAiModel();
+
+  // Add user message
+  const messages = loadAiChat();
+  messages.push({ role: "user", content: prompt, ts: Date.now() });
+  saveAiChat(messages);
+  aiAssistInput.value = "";
+  renderAiMessages();
+
+  // Show progress
+  const progressEl = document.createElement("div");
+  progressEl.className = "ai-assist-progress";
+  progressEl.innerHTML = '<span class="ai-spinner"></span>' + t('ai_requesting');
+  aiAssistMessages.appendChild(progressEl);
+  aiAssistMessages.scrollTop = aiAssistMessages.scrollHeight;
+  aiAssistSendBtn.disabled = true;
+
+  // Build conversation context (last few messages)
+  const conversationContext = messages.slice(-10).map((m) => {
+    return (m.role === "user" ? "User" : "Assistant") + ": " + m.content;
+  }).join("\n");
+
+  const editorContent = aiAssistEditor ? aiAssistEditor.getValue() : "";
+
+  try {
+    const result = await safeInvoke("ai_assist", {
+      prompt,
+      editorContent,
+      conversationContext,
+      provider,
+      model,
+      database: currentDb,
+    });
+    progressEl.remove();
+    const updated = loadAiChat();
+    updated.push({ role: "assistant", content: result, ts: Date.now() });
+    saveAiChat(updated);
+    renderAiMessages();
+  } catch (e) {
+    progressEl.remove();
+    const updated = loadAiChat();
+    updated.push({ role: "error", content: String(e), ts: Date.now() });
+    saveAiChat(updated);
+    renderAiMessages();
+  } finally {
+    aiAssistSendBtn.disabled = false;
+  }
+}
+
+aiAssistSendBtn.addEventListener("click", sendAiAssistMessage);
+
+aiAssistInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    sendAiAssistMessage();
+  }
+});
+
+aiAssistCloseBtn.addEventListener("click", closeAiAssistModal);
+
+aiAssistModal.addEventListener("click", (e) => {
+  if (e.target === aiAssistModal) closeAiAssistModal();
+});
+
+aiAssistClearBtn.addEventListener("click", () => {
+  const key = getAiChatKey();
+  if (key) localStorage.removeItem(key);
+  renderAiMessages();
+});
+
+aiAssistSettingsBtn.addEventListener("click", () => {
+  showAiModal();
 });
 
 // ── Helpers ──
@@ -469,7 +763,7 @@ function showRowDetailModal(columns, row) {
 
 // ── renderTable utility ──
 
-function renderTable(columns, rows, container, onRowClick, sortState) {
+function renderTable(columns, rows, container, onRowClick, sortState, onSortCallback) {
   container.innerHTML = "";
   const scrollDiv = document.createElement("div");
   scrollDiv.className = "table-scroll";
@@ -493,12 +787,17 @@ function renderTable(columns, rows, container, onRowClick, sortState) {
 
     const indicator = document.createElement("span");
     indicator.className = "sort-indicator";
-    // Restore indicator from existing state
     if (ci === ss.colIndex && ss.dir === "asc") { indicator.textContent = " \u25B2"; th.classList.add("sort-active"); }
     else if (ci === ss.colIndex && ss.dir === "desc") { indicator.textContent = " \u25BC"; th.classList.add("sort-active"); }
     th.appendChild(indicator);
 
     th.addEventListener("click", () => {
+      if (onSortCallback) {
+        // Server-side sort: delegate to callback
+        onSortCallback(ci);
+        return;
+      }
+      // Client-side sort
       if (ss.colIndex === ci) {
         if (ss.dir === "asc") ss.dir = "desc";
         else if (ss.dir === "desc") { ss.dir = null; ss.colIndex = -1; }
@@ -507,7 +806,6 @@ function renderTable(columns, rows, container, onRowClick, sortState) {
         ss.colIndex = ci;
         ss.dir = "asc";
       }
-      // Update header indicators
       thEls.forEach((t, ti) => {
         const ind = t.querySelector(".sort-indicator");
         t.classList.toggle("sort-active", ti === ss.colIndex && ss.dir !== null);
@@ -528,27 +826,23 @@ function renderTable(columns, rows, container, onRowClick, sortState) {
   table.appendChild(tbody);
 
   function getSortedRows() {
-    if (ss.colIndex < 0 || ss.dir === null) return rows;
+    if (onSortCallback || ss.colIndex < 0 || ss.dir === null) return rows;
     const sorted = rows.slice();
     const ci = ss.colIndex;
     const dir = ss.dir === "asc" ? 1 : -1;
     sorted.sort((a, b) => {
       const va = a[ci];
       const vb = b[ci];
-      // NULL always last
       if ((va === null || va === undefined) && (vb === null || vb === undefined)) return 0;
       if (va === null || va === undefined) return 1;
       if (vb === null || vb === undefined) return -1;
-      // EMPTY before NULL but after real values — empty goes toward end
       if (va === "" && vb === "") return 0;
       if (va === "") return 1;
       if (vb === "") return -1;
-      // Numeric comparison
       if (typeof va === "number" && typeof vb === "number") return (va - vb) * dir;
       const na = Number(va);
       const nb = Number(vb);
       if (!isNaN(na) && !isNaN(nb) && va !== "" && vb !== "") return (na - nb) * dir;
-      // String comparison
       return String(va).localeCompare(String(vb)) * dir;
     });
     return sorted;
@@ -629,7 +923,72 @@ const tabManager = {
     });
     el.appendChild(closeBtn);
 
-    el.addEventListener("click", () => this.activate(id));
+    // ── Tab reorder via mouse drag ──
+    let tabDragged = false;
+    el.addEventListener("click", () => {
+      if (tabDragged) return;
+      this.activate(id);
+    });
+    el.addEventListener("mousedown", (e) => {
+      if (e.target.closest(".tab-close")) return;
+      if (e.button !== 0) return;
+
+      const startX = e.clientX;
+      tabDragged = false;
+
+      const onMove = (me) => {
+        if (!tabDragged) {
+          if (Math.abs(me.clientX - startX) < 5) return;
+          tabDragged = true;
+          el.classList.add("dragging");
+        }
+
+        tabBarTabs.querySelectorAll(".tab-item").forEach((t) => {
+          t.classList.remove("tab-drop-before", "tab-drop-after");
+        });
+        const target = Array.from(tabBarTabs.querySelectorAll(".tab-item")).find((t) => {
+          if (t === el) return false;
+          const rect = t.getBoundingClientRect();
+          return me.clientX >= rect.left && me.clientX <= rect.right;
+        });
+        if (target) {
+          const rect = target.getBoundingClientRect();
+          const mid = rect.left + rect.width / 2;
+          if (me.clientX < mid) {
+            target.classList.add("tab-drop-before");
+          } else {
+            target.classList.add("tab-drop-after");
+          }
+        }
+      };
+
+      const onUp = (ue) => {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+
+        if (!tabDragged) return;
+        el.classList.remove("dragging");
+        tabBarTabs.querySelectorAll(".tab-item").forEach((t) => {
+          t.classList.remove("tab-drop-before", "tab-drop-after");
+        });
+
+        const target = Array.from(tabBarTabs.querySelectorAll(".tab-item")).find((t) => {
+          if (t === el) return false;
+          const rect = t.getBoundingClientRect();
+          return ue.clientX >= rect.left && ue.clientX <= rect.right;
+        });
+        if (target) {
+          const targetId = target.dataset.tabId;
+          const rect = target.getBoundingClientRect();
+          const mid = rect.left + rect.width / 2;
+          this._reorderTab(id, targetId, ue.clientX < mid);
+        }
+      };
+
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+    });
+
     tabBarTabs.appendChild(el);
 
     // Pane
@@ -647,6 +1006,30 @@ const tabManager = {
     return tab;
   },
 
+  _reorderTab(draggedId, targetId, insertBefore) {
+    const dragIdx = this.tabs.findIndex((t) => t.id === draggedId);
+    const targetIdx = this.tabs.findIndex((t) => t.id === targetId);
+    if (dragIdx === -1 || targetIdx === -1) return;
+
+    const dragTab = this.tabs[dragIdx];
+    const targetTab = this.tabs[targetIdx];
+
+    // Reorder DOM
+    if (insertBefore) {
+      tabBarTabs.insertBefore(dragTab.el, targetTab.el);
+    } else {
+      tabBarTabs.insertBefore(dragTab.el, targetTab.el.nextSibling);
+    }
+
+    // Reorder array
+    this.tabs.splice(dragIdx, 1);
+    let newIdx = this.tabs.indexOf(targetTab);
+    if (!insertBefore) newIdx++;
+    this.tabs.splice(newIdx, 0, dragTab);
+
+    scheduleDraftSave();
+  },
+
   activate(id) {
     this.activeId = id;
     this.tabs.forEach((t) => {
@@ -662,6 +1045,7 @@ const tabManager = {
         });
       });
     }
+    scheduleDraftSave();
   },
 
   closeTab(id) {
@@ -669,6 +1053,19 @@ const tabManager = {
     if (idx === -1) return;
 
     const tab = this.tabs[idx];
+
+    // Save closed SQL tab content for in-session restore
+    if (tab.type === "sql") {
+      const match = tab.id.match(/^sql-(\d+)$/);
+      if (match) {
+        const cmEl = tab.paneEl.querySelector(".CodeMirror");
+        if (cmEl && cmEl.CodeMirror) {
+          const content = cmEl.CodeMirror.getValue();
+          if (content) closedDrafts[parseInt(match[1])] = content;
+        }
+      }
+    }
+
     tab.el.remove();
     tab.paneEl.remove();
     this.tabs.splice(idx, 1);
@@ -680,6 +1077,8 @@ const tabManager = {
     } else if (this.tabs.length === 0) {
       this.activeId = null;
     }
+
+    saveDrafts();
   },
 
   removeAll() {
@@ -690,7 +1089,8 @@ const tabManager = {
     });
     this.tabs = [];
     this.activeId = null;
-    sqlTabCounter = 0;
+    // Clear in-session closed drafts on full reset
+    Object.keys(closedDrafts).forEach((k) => delete closedDrafts[k]);
   },
 
   has(id) {
@@ -738,9 +1138,18 @@ async function showExplorer() {
   explorerEl.classList.remove("hidden");
   sidebarDbName.textContent = currentDb;
   await loadTableList();
-  const drafts = loadDrafts();
-  if (drafts.length > 0) {
-    drafts.forEach((text) => addSqlTab(text));
+  const { tabs, activeTabId } = loadDrafts();
+  if (tabs.length > 0) {
+    tabs.forEach((d) => {
+      if (d.type === "table") {
+        openTableTab(d.name, d.view || "data");
+      } else {
+        addSqlTab(d.content, d.num);
+      }
+    });
+    if (activeTabId && tabManager.has(activeTabId)) {
+      tabManager.activate(activeTabId);
+    }
   } else {
     addSqlTab();
   }
@@ -764,14 +1173,14 @@ async function loadTableList() {
       el.innerHTML = icon('table', 14);
       el.appendChild(document.createTextNode(' ' + name));
 
-      el.addEventListener("click", () => openDataTab(name));
+      el.addEventListener("click", () => openTableTab(name, "data"));
 
       el.addEventListener("contextmenu", (e) => {
         e.preventDefault();
         e.stopPropagation();
         showContextMenu(e, [
-          { label: t('data'), icon: "table", action: () => openDataTab(name) },
-          { label: t('schema'), icon: "columns-3", action: () => openSchemaTab(name) },
+          { label: t('data'), icon: "table", action: () => openTableTab(name, "data") },
+          { label: t('schema'), icon: "columns-3", action: () => openTableTab(name, "structure") },
         ]);
       });
 
@@ -785,14 +1194,40 @@ async function loadTableList() {
   }
 }
 
-// ── Data tab ──
+// ── Table tab (Data + Structure unified) ──
 
-function openDataTab(tableName) {
-  const tabId = "data-" + tableName;
+function openTableTab(tableName, initialView) {
+  const tabId = "table-" + tableName;
+
+  // If already open, just activate
+  if (tabManager.has(tabId)) {
+    tabManager.activate(tabId);
+    return;
+  }
 
   tabManager.addTab(tabId, "data", tableName, (pane) => {
     const body = document.createElement("div");
     body.className = "data-tab-body";
+
+    // View toggle bar (Data | Structure) — right-aligned
+    const toggleBar = document.createElement("div");
+    toggleBar.className = "view-toggle-bar";
+    const toggleLabel = document.createElement("span");
+    toggleLabel.style.cssText = "font-size:13px;font-weight:600;";
+    toggleLabel.textContent = tableName;
+    toggleBar.appendChild(toggleLabel);
+    const toggleGroup = document.createElement("div");
+    toggleGroup.className = "view-toggle-group";
+    const dataToggle = document.createElement("button");
+    dataToggle.className = "view-toggle-btn" + (initialView !== "structure" ? " active" : "");
+    dataToggle.textContent = t('data');
+    const structToggle = document.createElement("button");
+    structToggle.className = "view-toggle-btn" + (initialView === "structure" ? " active" : "");
+    structToggle.textContent = t('schema');
+    toggleGroup.appendChild(dataToggle);
+    toggleGroup.appendChild(structToggle);
+    toggleBar.appendChild(toggleGroup);
+    body.appendChild(toggleBar);
 
     const info = document.createElement("div");
     info.className = "result-info";
@@ -809,22 +1244,25 @@ function openDataTab(tableName) {
 
     pane.appendChild(body);
 
+    let currentView = initialView || "data";
     let currentPage = 0;
     let pageSize = 100;
     let totalRows = 0;
     let lastColumns = [];
     let lastRows = [];
-    const sortState = { colIndex: -1, dir: null };
+    const sortState = { colIndex: -1, dir: null, column: null };
 
     // Column metadata from INFORMATION_SCHEMA
-    let allColumns = [];    // [{name, dataType, columnKey}]
-    let blobCols = [];      // column names
-    let textCols = [];      // column names
-    let pkCols = [];        // column names
+    let allColumns = [];
+    let blobCols = [];
+    let textCols = [];
+    let pkCols = [];
     let truncateMode = true;
     let hasTruncatable = false;
+    let columnsDetected = false;
 
     async function detectColumns() {
+      if (columnsDetected) return;
       const sql = "SELECT COLUMN_NAME, DATA_TYPE, COLUMN_KEY " +
         "FROM INFORMATION_SCHEMA.COLUMNS " +
         "WHERE TABLE_SCHEMA = '" + currentDb.replace(/'/g, "\\'") + "' " +
@@ -838,25 +1276,26 @@ function openDataTab(tableName) {
       textCols = allColumns.filter((c) => textTypes.includes(c.dataType)).map((c) => c.name);
       pkCols = allColumns.filter((c) => c.columnKey === "PRI").map((c) => c.name);
       hasTruncatable = blobCols.length > 0 || textCols.length > 0;
+      columnsDetected = true;
     }
 
     function buildSelectExpr() {
       if (!truncateMode || !hasTruncatable) return "*";
       return allColumns.map((c) => {
         const q = quoteId(c.name);
-        if (blobCols.includes(c.name)) {
-          return "'(BLOB)' AS " + q;
-        }
-        if (textCols.includes(c.name)) {
-          return "CASE WHEN CHAR_LENGTH(" + q + ") > 200 THEN CONCAT(LEFT(" + q + ", 200), '\u2026') ELSE " + q + " END AS " + q;
-        }
+        if (blobCols.includes(c.name)) return "'(BLOB)' AS " + q;
+        if (textCols.includes(c.name)) return "CASE WHEN CHAR_LENGTH(" + q + ") > 200 THEN CONCAT(LEFT(" + q + ", 200), '\u2026') ELSE " + q + " END AS " + q;
         return q;
       }).join(", ");
     }
 
+    function buildOrderByClause() {
+      if (sortState.colIndex < 0 || !sortState.dir || !sortState.column) return "";
+      return " ORDER BY " + quoteId(sortState.column) + (sortState.dir === "desc" ? " DESC" : " ASC");
+    }
+
     function onRowClick(columns, row) {
       if (pkCols.length > 0) {
-        // Build WHERE clause from PK values in current row
         const whereParts = pkCols.map((pk) => {
           const idx = columns.indexOf(pk);
           if (idx === -1) return null;
@@ -865,20 +1304,14 @@ function openDataTab(tableName) {
           if (typeof val === "number") return quoteId(pk) + " = " + val;
           return quoteId(pk) + " = '" + String(val).replace(/'/g, "\\'") + "'";
         }).filter(Boolean);
-
         if (whereParts.length > 0) {
-          // Fetch full row but keep BLOB columns as placeholder (not worth transferring)
           const detailCols = allColumns.map((c) => {
             if (blobCols.includes(c.name)) return "'(BLOB)' AS " + quoteId(c.name);
             return quoteId(c.name);
           }).join(", ");
           runQuery("SELECT " + detailCols + " FROM " + quoteId(tableName) + " WHERE " + whereParts.join(" AND ") + " LIMIT 1")
             .then((res) => {
-              if (res.rows.length > 0) {
-                showRowDetailModal(res.columns, res.rows[0]);
-              } else {
-                showRowDetailModal(columns, row);
-              }
+              showRowDetailModal(res.rows.length > 0 ? res.columns : columns, res.rows.length > 0 ? res.rows[0] : row);
             })
             .catch(() => showRowDetailModal(columns, row));
           return;
@@ -887,14 +1320,36 @@ function openDataTab(tableName) {
       showRowDetailModal(columns, row);
     }
 
-    async function loadPage() {
+    // Server-side sort handler: overrides renderTable's client-side sort
+    function onSort(colIndex, columns) {
+      const colName = columns[colIndex];
+      if (sortState.colIndex === colIndex) {
+        if (sortState.dir === "asc") sortState.dir = "desc";
+        else if (sortState.dir === "desc") { sortState.dir = null; sortState.colIndex = -1; sortState.column = null; }
+        else sortState.dir = "asc";
+      } else {
+        sortState.colIndex = colIndex;
+        sortState.dir = "asc";
+        sortState.column = colName;
+      }
+      currentPage = 0;
+      loadDataView();
+    }
+
+    async function loadDataView() {
       info.textContent = t('loading');
       tableContainer.innerHTML = "";
       try {
+        await detectColumns();
+        if (totalRows === 0) {
+          const countRes = await runQuery("SELECT COUNT(*) FROM " + quoteId(tableName));
+          totalRows = countRes.rows[0][0];
+        }
         const offset = currentPage * pageSize;
         const selectExpr = buildSelectExpr();
+        const orderBy = buildOrderByClause();
         const res = await runQuery(
-          "SELECT " + selectExpr + " FROM " + quoteId(tableName) + " LIMIT " + offset + ", " + pageSize
+          "SELECT " + selectExpr + " FROM " + quoteId(tableName) + orderBy + " LIMIT " + offset + ", " + pageSize
         );
         lastColumns = res.columns;
         lastRows = res.rows;
@@ -905,43 +1360,82 @@ function openDataTab(tableName) {
           const to = offset + res.rows.length;
           info.textContent = t('rows_range', { from: from, to: to, total: totalRows });
         }
-        renderTable(res.columns, res.rows, tableContainer, onRowClick, sortState);
-        renderFooter();
+        // Use renderTable but disable client-side sort — we handle sort via onSort
+        renderTable(res.columns, res.rows, tableContainer, onRowClick, sortState, (ci) => onSort(ci, res.columns));
+        renderDataFooter();
       } catch (error) {
         info.textContent = String(error);
       }
     }
 
-    function renderFooter() {
+    async function loadStructureView() {
+      info.textContent = t('loading');
+      tableContainer.innerHTML = "";
+      footerBar.innerHTML = "";
+      try {
+        const [descRes, indexRes] = await Promise.all([
+          runQuery("DESCRIBE " + quoteId(tableName)),
+          runQuery("SHOW INDEX FROM " + quoteId(tableName)),
+        ]);
+        info.textContent = t('n_columns', { n: descRes.rows.length });
+        renderTable(descRes.columns, descRes.rows, tableContainer, (cols, row) => showRowDetailModal(cols, row));
+
+        // Index information
+        if (indexRes.rows.length > 0) {
+          const heading = document.createElement("div");
+          heading.className = "index-section-heading";
+          heading.textContent = t('indexes');
+          tableContainer.appendChild(heading);
+
+          const indexContainer = document.createElement("div");
+          indexContainer.className = "table-scroll";
+          // Remove "Table" column and move "Key_name" to the front
+          const tableIdx = indexRes.columns.indexOf("Table");
+          const keyNameIdx = indexRes.columns.indexOf("Key_name");
+          let idxCols = indexRes.columns.slice();
+          let idxRows = indexRes.rows.map((r) => r.slice());
+          if (tableIdx >= 0) {
+            idxCols.splice(tableIdx, 1);
+            idxRows = idxRows.map((r) => { r.splice(tableIdx, 1); return r; });
+          }
+          const knPos = idxCols.indexOf("Key_name");
+          if (knPos > 0) {
+            idxCols.splice(knPos, 1);
+            idxCols.unshift("Key_name");
+            idxRows = idxRows.map((r) => { const v = r.splice(knPos, 1)[0]; r.unshift(v); return r; });
+          }
+          renderTable(idxCols, idxRows, indexContainer);
+          tableContainer.appendChild(indexContainer);
+        }
+      } catch (error) {
+        info.textContent = String(error);
+      }
+    }
+
+    function renderDataFooter() {
       footerBar.innerHTML = "";
       const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
 
-      // Paging nav
       const nav = document.createElement("div");
       nav.className = "paging-nav";
-
       const prevBtn = document.createElement("button");
       prevBtn.className = "ghost paging-btn";
       prevBtn.innerHTML = icon('chevron-left') + t('prev');
       prevBtn.disabled = currentPage === 0;
-      prevBtn.addEventListener("click", () => { currentPage--; loadPage(); });
+      prevBtn.addEventListener("click", () => { currentPage--; loadDataView(); });
       nav.appendChild(prevBtn);
-
       const pageInfo = document.createElement("span");
       pageInfo.className = "paging-info";
       pageInfo.textContent = (currentPage + 1) + " / " + totalPages;
       nav.appendChild(pageInfo);
-
       const nextBtn = document.createElement("button");
       nextBtn.className = "ghost paging-btn";
       nextBtn.innerHTML = t('next') + icon('chevron-right');
       nextBtn.disabled = currentPage >= totalPages - 1;
-      nextBtn.addEventListener("click", () => { currentPage++; loadPage(); });
+      nextBtn.addEventListener("click", () => { currentPage++; loadDataView(); });
       nav.appendChild(nextBtn);
-
       footerBar.appendChild(nav);
 
-      // Page size selector
       const sizeSelector = document.createElement("div");
       sizeSelector.className = "paging-sizes";
       [50, 100, 200, 500].forEach((size) => {
@@ -952,16 +1446,14 @@ function openDataTab(tableName) {
           if (size === pageSize) return;
           pageSize = size;
           currentPage = 0;
-          loadPage();
+          loadDataView();
         });
         sizeSelector.appendChild(btn);
       });
       footerBar.appendChild(sizeSelector);
 
-      // Actions: Truncate + Schema + Export
       const actions = document.createElement("div");
       actions.className = "footer-actions";
-
       if (hasTruncatable) {
         const truncBtn = document.createElement("button");
         truncBtn.className = "ghost truncate-btn" + (truncateMode ? " active" : "");
@@ -970,17 +1462,10 @@ function openDataTab(tableName) {
         truncBtn.addEventListener("click", () => {
           truncateMode = !truncateMode;
           truncBtn.classList.toggle("active", truncateMode);
-          loadPage();
+          loadDataView();
         });
         actions.appendChild(truncBtn);
       }
-
-      const schemaBtn = document.createElement("button");
-      schemaBtn.className = "ghost paging-btn";
-      schemaBtn.innerHTML = icon('columns-3') + t('schema');
-      schemaBtn.addEventListener("click", () => openSchemaTab(tableName));
-      actions.appendChild(schemaBtn);
-
       const exportBtn = document.createElement("button");
       exportBtn.className = "ghost paging-btn";
       exportBtn.innerHTML = icon('download') + t('export') + ' \u25BE';
@@ -989,75 +1474,64 @@ function openDataTab(tableName) {
         showExportMenu(ev, lastColumns, lastRows, tableName);
       });
       actions.appendChild(exportBtn);
-
       footerBar.appendChild(actions);
     }
 
-    Promise.all([
-      runQuery("SELECT COUNT(*) FROM " + quoteId(tableName)),
-      detectColumns(),
-    ])
-      .then(([countRes]) => {
-        totalRows = countRes.rows[0][0];
-        return loadPage();
-      })
-      .catch((error) => {
-        info.textContent = String(error);
-      });
-  });
-}
+    function switchView(view) {
+      currentView = view;
+      pane.dataset.view = view;
+      dataToggle.classList.toggle("active", view === "data");
+      structToggle.classList.toggle("active", view === "structure");
+      // Update tab icon
+      const tab = tabManager.tabs.find((t) => t.id === tabId);
+      if (tab) {
+        const tabIcon = tab.el.querySelector("span");
+        if (tabIcon) tabIcon.innerHTML = icon(view === "structure" ? "columns-3" : "table", 14);
+      }
+      if (view === "data") {
+        loadDataView();
+      } else {
+        loadStructureView();
+      }
+      scheduleDraftSave();
+    }
 
-// ── Schema tab ──
+    dataToggle.addEventListener("click", () => switchView("data"));
+    structToggle.addEventListener("click", () => switchView("structure"));
 
-function openSchemaTab(tableName) {
-  const tabId = "schema-" + tableName;
-
-  tabManager.addTab(tabId, "schema", tableName + " " + t('schema_suffix'), (pane) => {
-    const body = document.createElement("div");
-    body.className = "data-tab-body";
-
-    const info = document.createElement("div");
-    info.className = "result-info";
-    info.textContent = t('loading');
-    body.appendChild(info);
-
-    const tableContainer = document.createElement("div");
-    tableContainer.className = "table-wrap";
-    body.appendChild(tableContainer);
-
-    const footerBar = document.createElement("div");
-    footerBar.className = "paging-bar";
-    body.appendChild(footerBar);
-
-    pane.appendChild(body);
-
-    // Footer with Data button
-    const actions = document.createElement("div");
-    actions.className = "footer-actions";
-    const dataBtn = document.createElement("button");
-    dataBtn.className = "ghost paging-btn";
-    dataBtn.innerHTML = icon('table') + t('data');
-    dataBtn.addEventListener("click", () => openDataTab(tableName));
-    actions.appendChild(dataBtn);
-    footerBar.appendChild(actions);
-
-    runQuery("DESCRIBE " + quoteId(tableName))
-      .then((res) => {
-        info.textContent = t('n_columns', { n: res.rows.length });
-        renderTable(res.columns, res.rows, tableContainer, (cols, row) => showRowDetailModal(cols, row));
-      })
-      .catch((error) => {
-        info.textContent = String(error);
-      });
+    // Initial load
+    switchView(currentView);
   });
 }
 
 // ── SQL tab ──
 
-function addSqlTab(initialContent) {
-  sqlTabCounter++;
-  const tabId = "sql-" + sqlTabCounter;
-  const title = "SQL" + (sqlTabCounter > 1 ? " " + sqlTabCounter : "");
+function addSqlTab(initialContent, tabNum) {
+  let num;
+  if (tabNum) {
+    num = tabNum;
+  } else {
+    // Find the lowest unused SQL tab number
+    const usedNumbers = new Set();
+    tabManager.tabs.forEach((tab) => {
+      if (tab.type === "sql") {
+        const match = tab.id.match(/^sql-(\d+)$/);
+        if (match) usedNumbers.add(parseInt(match[1]));
+      }
+    });
+    num = 1;
+    while (usedNumbers.has(num)) num++;
+  }
+
+  // Determine content: explicit arg > closedDraft > empty
+  let content = initialContent;
+  if (content === undefined && closedDrafts[num] !== undefined) {
+    content = closedDrafts[num];
+    delete closedDrafts[num];
+  }
+
+  const tabId = "sql-" + num;
+  const title = "SQL" + (num > 1 ? " " + num : "");
 
   tabManager.addTab(tabId, "sql", title, (pane) => {
     const inputArea = document.createElement("div");
@@ -1069,96 +1543,20 @@ function addSqlTab(initialContent) {
     let executing = false;
     let editorTouched = false;
 
-    // ── AI ghost text state ──
-    let aiDebounceTimer = null;
-    let ghostBookmark = null;
-    let ghostText = null;
-    let aiRequestId = 0;
-    let ghostJustPlaced = false;
-    let aiJustAccepted = false;  // suppress re-request after accept
-    let aiSuppressed = false;    // suppress retry after empty/error
-
-    function dismissGhost() {
-      if (ghostBookmark) {
-        ghostBookmark.clear();
-        ghostBookmark = null;
-      }
-      ghostText = null;
-    }
-
-    function showGhost(cm, text) {
-      dismissGhost();
-      const span = document.createElement("span");
-      span.className = "cm-ghost-text";
-      span.textContent = text;
-      ghostText = text;
-      ghostJustPlaced = true;
-      ghostBookmark = cm.setBookmark(cm.getCursor(), { widget: span, insertLeft: true });
-    }
-
-    function acceptGhost(cm) {
-      if (!ghostText) return false;
-      const text = ghostText;
-      const pos = ghostBookmark ? ghostBookmark.find() : cm.getCursor();
-      dismissGhost();
-      aiJustAccepted = true;
-      cm.replaceRange(text, pos);
-      return true;
-    }
-
-    function requestAiCompletion(cm) {
-      if (!isAiEnabled() || aiSuppressed) return;
-      const provider = getAiProvider();
-      const model = getAiModel();
-      if (!provider || !model || !currentDb) return;
-
-      const cursor = cm.getCursor();
-      const textBefore = cm.getRange({ line: 0, ch: 0 }, cursor);
-      if (textBefore.trim().length < 10) return;
-      const textAfter = cm.getRange(cursor, { line: cm.lastLine(), ch: cm.getLine(cm.lastLine()).length });
-
-      aiRequestId++;
-      const myId = aiRequestId;
-
-      safeInvoke("ai_complete", {
-        textBefore,
-        textAfter,
-        provider,
-        model,
-        database: currentDb,
-      }).then((result) => {
-        if (myId !== aiRequestId) return;
-        if (result && result.trim()) {
-          showGhost(cm, result.trim());
-        } else {
-          aiSuppressed = true;
-        }
-      }).catch((e) => {
-        aiSuppressed = true;
-        console.warn("[AI] error:", e);
-      });
-    }
-
     const editor = CodeMirror(editorDiv, {
       mode: "text/x-mysql",
       lineNumbers: true,
       indentWithTabs: true,
       smartIndent: true,
       lineWrapping: false,
+      styleActiveLine: true,
       hintOptions: {
         completeSingle: false,
         tables: buildTableHints(),
       },
       extraKeys: {
         "Tab": function (cm) {
-          if (acceptGhost(cm)) return;
           cm.replaceSelection("\t");
-        },
-        "Escape": function (cm) {
-          if (ghostBookmark) {
-            dismissGhost();
-            return;
-          }
         },
         "Ctrl-Enter": function () {
           if (executing) return;
@@ -1173,25 +1571,7 @@ function addSqlTab(initialContent) {
     editor.on("mousedown", function () { editorTouched = true; });
 
     editor.on("change", function () {
-      dismissGhost();
-      aiSuppressed = false;
-      aiRequestId++;
-      if (aiDebounceTimer) clearTimeout(aiDebounceTimer);
-      if (aiJustAccepted) {
-        aiJustAccepted = false;
-        scheduleDraftSave();
-        return;
-      }
-      aiDebounceTimer = setTimeout(() => requestAiCompletion(editor), 500);
       scheduleDraftSave();
-    });
-
-    editor.on("cursorActivity", function () {
-      if (ghostJustPlaced) {
-        ghostJustPlaced = false;
-        return;
-      }
-      dismissGhost();
     });
 
     editor.on("inputRead", function (cm, change) {
@@ -1206,46 +1586,30 @@ function addSqlTab(initialContent) {
       }
     });
 
-    if (initialContent) editor.setValue(initialContent);
+    if (content) editor.setValue(content);
 
-    // ── AI toggle checkbox ──
-    const aiRow = document.createElement("div");
-    aiRow.className = "ai-toggle-row";
-    const aiCheckbox = document.createElement("input");
-    aiCheckbox.type = "checkbox";
-    aiCheckbox.id = "ai-toggle-" + tabId;
-    aiCheckbox.checked = isAiEnabled();
-    const aiLabel = document.createElement("label");
-    aiLabel.htmlFor = aiCheckbox.id;
-    aiLabel.className = "checkbox";
-    aiLabel.style.fontSize = "12px";
-    aiLabel.style.gap = "4px";
-    aiLabel.textContent = t('ai_autocomplete');
-    aiRow.appendChild(aiCheckbox);
-    aiRow.appendChild(aiLabel);
-    const aiSettingsLink = document.createElement("span");
-    aiSettingsLink.className = "ai-settings-link";
-    aiSettingsLink.innerHTML = icon('settings', 14);
-    aiSettingsLink.title = t('ai_settings');
-    aiSettingsLink.addEventListener("click", () => showAiModal());
-    aiRow.appendChild(aiSettingsLink);
-    inputArea.appendChild(aiRow);
+    // ── Resize handle ──
+    const resizeHandle = document.createElement("div");
+    resizeHandle.className = "sql-resize-handle";
+    inputArea.appendChild(resizeHandle);
 
-    aiCheckbox.addEventListener("change", async () => {
-      if (aiCheckbox.checked) {
-        const configured = await isAiConfigured();
-        if (!configured) {
-          aiCheckbox.checked = false;
-          alert(t('ai_not_configured'));
-          showAiModal();
-          return;
-        }
+    resizeHandle.addEventListener("mousedown", (startE) => {
+      startE.preventDefault();
+      const cmWrap = editorDiv.querySelector(".CodeMirror");
+      if (!cmWrap) return;
+      const startY = startE.clientY;
+      const startH = cmWrap.offsetHeight;
+      function onMove(e) {
+        const newH = Math.max(80, startH + (e.clientY - startY));
+        cmWrap.style.height = newH + "px";
+        editor.refresh();
       }
-      setAiEnabled(aiCheckbox.checked);
-      // Sync other tabs' checkboxes
-      document.querySelectorAll('.ai-toggle-row input[type="checkbox"]').forEach((cb) => {
-        if (cb !== aiCheckbox) cb.checked = aiCheckbox.checked;
-      });
+      function onUp() {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+      }
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
     });
 
     const actions = document.createElement("div");
@@ -1261,14 +1625,7 @@ function addSqlTab(initialContent) {
         showContextMenu(ev, [{ label: t('no_history'), action: () => {} }]);
         return;
       }
-      const items = history.map((entry) => {
-        const d = new Date(entry.ts);
-        const time = String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
-        const sqlPreview = entry.sql.replace(/\s+/g, " ");
-        const label = time + "  " + (sqlPreview.length > 60 ? sqlPreview.substring(0, 60) + "\u2026" : sqlPreview);
-        return { label, action: () => editor.setValue(entry.sql) };
-      });
-      showContextMenu(ev, items);
+      showHistoryMenu(ev, history, (sql) => addSqlTab(sql));
     });
     actions.appendChild(historyBtn);
 
@@ -1293,6 +1650,12 @@ function addSqlTab(initialContent) {
       }
     });
     actions.appendChild(formatBtn);
+
+    const aiAssistBtn = document.createElement("button");
+    aiAssistBtn.className = "ghost";
+    aiAssistBtn.innerHTML = icon('sparkles') + " " + t('ai_assist');
+    aiAssistBtn.addEventListener("click", () => openAiAssistModal(editor));
+    actions.appendChild(aiAssistBtn);
 
     let cancelled = false;
 
@@ -1391,6 +1754,21 @@ function addSqlTab(initialContent) {
       if (state) cancelBtn.disabled = false;
     }
 
+    function makeResultInfo(text, elapsed) {
+      const info = document.createElement("div");
+      info.className = "result-info";
+      const span = document.createElement("span");
+      span.textContent = text;
+      info.appendChild(span);
+      if (elapsed != null) {
+        const timeSpan = document.createElement("span");
+        timeSpan.className = "exec-time";
+        timeSpan.textContent = elapsed < 1000 ? Math.round(elapsed) + " ms" : (elapsed / 1000).toFixed(2) + " s";
+        info.appendChild(timeSpan);
+      }
+      return info;
+    }
+
     async function executeStatements(statements) {
       resultArea.innerHTML = "";
       lastColumns = [];
@@ -1406,10 +1784,13 @@ function addSqlTab(initialContent) {
       loadingEl.className = "result-info";
       loadingEl.textContent = t('running');
       resultArea.appendChild(loadingEl);
+      const execStart = performance.now();
 
       try {
         for (const sql of statements) {
+          const stmtStart = performance.now();
           const res = await runQuery(sql, undefined, tabId);
+          const stmtElapsed = performance.now() - stmtStart;
 
           if (cancelled) {
             loadingEl.remove();
@@ -1434,20 +1815,14 @@ function addSqlTab(initialContent) {
               resultArea.appendChild(header);
             }
 
-            const info = document.createElement("div");
-            info.className = "result-info";
-            info.textContent = t('n_rows', { n: res.rows.length });
-            resultArea.appendChild(info);
+            resultArea.appendChild(makeResultInfo(t('n_rows', { n: res.rows.length }), stmtElapsed));
 
             const wrapper = document.createElement("div");
             resultArea.appendChild(wrapper);
             renderTable(res.columns, res.rows, wrapper, (cols, row) => showRowDetailModal(cols, row));
           } else {
-            const info = document.createElement("div");
-            info.className = "result-info";
             const prefix = multi ? (sql.length > 60 ? sql.substring(0, 60) + "\u2026" : sql) + " \u2192 " : "";
-            info.textContent = prefix + t('affected_rows', { n: res.affected_rows != null ? res.affected_rows : 0 });
-            resultArea.appendChild(info);
+            resultArea.appendChild(makeResultInfo(prefix + t('affected_rows', { n: res.affected_rows != null ? res.affected_rows : 0 }), stmtElapsed));
           }
         }
         loadingEl.remove();
@@ -1456,11 +1831,10 @@ function addSqlTab(initialContent) {
         }
       } catch (error) {
         loadingEl.remove();
-        const errEl = document.createElement("div");
-        errEl.className = "result-info";
-        errEl.style.color = "var(--danger)";
-        errEl.textContent = cancelled ? t('query_cancelled') : String(error);
-        resultArea.appendChild(errEl);
+        const totalElapsed = performance.now() - execStart;
+        const errInfo = makeResultInfo(cancelled ? t('query_cancelled') : String(error), totalElapsed);
+        errInfo.style.color = "var(--danger)";
+        resultArea.appendChild(errInfo);
         if (!cancelled) markSqlError(String(error));
       } finally {
         setExecuting(false);
@@ -1565,7 +1939,12 @@ function hideContextMenu() {
 
 document.addEventListener("click", hideContextMenu);
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") hideContextMenu();
+  if (e.key === "Escape") {
+    hideContextMenu();
+    if (!aiAssistModal.classList.contains("hidden")) {
+      closeAiAssistModal();
+    }
+  }
 });
 
 // ── Reset ──

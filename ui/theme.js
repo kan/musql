@@ -38,31 +38,5 @@
     if (!localStorage.getItem(STORAGE_KEY)) apply(getPreferred());
   });
 
-  // Build toggle button after DOM ready (main window only)
-  document.addEventListener("DOMContentLoaded", function() {
-    if (!document.body.hasAttribute("data-theme-toggle")) return;
-
-    var btn = document.createElement("button");
-    btn.className = "theme-toggle";
-    btn.title = typeof t === "function" ? t("toggle_dark_mode") : "Toggle dark mode";
-
-    function updateIcon() {
-      var isDark = document.documentElement.classList.contains("dark");
-      btn.innerHTML = typeof icon === "function" ? icon(isDark ? "sun" : "moon", 18) : (isDark ? "\u2600" : "\u263D");
-    }
-
-    btn.addEventListener("click", function() {
-      var next = getPreferred() === "dark" ? "light" : "dark";
-      setTheme(next);
-      updateIcon();
-    });
-
-    updateIcon();
-    document.body.appendChild(btn);
-
-    // Update title when language changes
-    window.addEventListener("musql:langchange", function() {
-      btn.title = typeof t === "function" ? t("toggle_dark_mode") : "Toggle dark mode";
-    });
-  });
+  // Theme toggle is now menu-only; no floating button.
 })();

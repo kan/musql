@@ -46,6 +46,25 @@
       </div>
     </div>
 
+    <!-- AI Assist modal -->
+    <div id="ai-assist-modal" class="modal-overlay hidden">
+      <div class="ai-assist-box">
+        <div class="ai-assist-header">
+          <h2 data-i18n-html="ai_assist" data-i18n-icon="sparkles" data-i18n-icon-size="18">AI Assist</h2>
+          <div class="ai-assist-header-actions">
+            <button id="ai-assist-clear-btn" class="ghost sidebar-btn" title="Clear chat"></button>
+            <button id="ai-assist-settings-btn" class="ghost sidebar-btn" title="AI Settings"></button>
+            <button id="ai-assist-close-btn" class="ghost sidebar-btn"></button>
+          </div>
+        </div>
+        <div id="ai-assist-messages" class="ai-assist-messages"></div>
+        <div class="ai-assist-footer">
+          <textarea id="ai-assist-input" rows="2" placeholder="Ask AI to write SQL..."></textarea>
+          <button id="ai-assist-send-btn"></button>
+        </div>
+      </div>
+    </div>
+
     <!-- Explorer -->
     <div id="explorer" class="explorer hidden">
       <!-- Sidebar -->
@@ -60,8 +79,8 @@
       <!-- Main pane -->
       <div class="main-pane">
         <div class="tab-bar">
-          <div id="tab-bar-tabs" class="tab-bar-tabs"></div>
           <button id="tab-add-btn" class="tab-add-btn" data-i18n-title="add_sql_tab_title" title="SQL タブ追加"></button>
+          <div id="tab-bar-tabs" class="tab-bar-tabs"></div>
           <button id="menu-btn" class="ghost menu-btn sidebar-btn"></button>
         </div>
         <div id="tab-content" class="tab-content"></div>
@@ -75,6 +94,7 @@
     <script src="./lib/codemirror/sql.min.js"></script>
     <script src="./lib/codemirror/show-hint.min.js"></script>
     <script src="./lib/codemirror/sql-hint.min.js"></script>
+    <script src="./lib/codemirror/active-line.min.js"></script>
     <script src="./lib/sql-formatter/sql-formatter.min.js"></script>
     <script src="./icons.js"></script>
     <script src="./i18n.js"></script>

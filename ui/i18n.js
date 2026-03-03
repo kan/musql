@@ -19,6 +19,8 @@
       prompt_group_name: "Enter group name:",
       prompt_rename_group: "New group name:",
       confirm_delete_group: "Delete this group?\n(Profiles inside will be moved to root)",
+      empty_state_msg: "No connections yet",
+      empty_state_btn: "New Connection",
 
       // ── Settings window ──
       settings_heading: "Settings",
@@ -29,7 +31,8 @@
       color_none: "None",
       tags: "Tags",
       add_tag_placeholder: "Add tag...",
-      mysql: "MySQL",
+      mysql: "DB Settings",
+      db_engine: "DB Engine",
       host: "Host",
       port: "Port",
       database: "Database",
@@ -37,10 +40,15 @@
       password: "Password",
       ssl_mode: "SSL Mode",
       ca_certificate: "CA Certificate",
+      ssh_via: "SSH",
       ssh_bastion: "SSH Bastion",
       enable: "Enable",
       config_host: "Config Host",
       config_host_manual: "(manual)",
+      ssh_config_load: "Load from ssh config",
+      ssh_config_ref: "Referencing ssh config ({name})",
+      ssh_config_clear: "Clear",
+      ssh_config_select: "Select SSH Config Host",
       identity_file: "IdentityFile",
       ssh_passphrase: "Passphrase",
       ssh_passphrase_saved_placeholder: "(saved - leave blank to keep)",
@@ -79,12 +87,14 @@
       next: "Next",
       truncate: "Truncate",
       truncate_title: "Truncate BLOB/TEXT columns",
-      schema: "View schema",
+      schema: "Structure",
       schema_suffix: "(schema)",
-      data: "View data",
+      data: "Data",
+      indexes: "Indexes",
       export: "Export",
       history: "History",
       no_history: "(no history)",
+      history_open: "Open in new tab",
       format: "Format",
       run_this_line: "Run this line",
       run_all: "Run all",
@@ -114,8 +124,15 @@
       ai_provider: "Provider",
       ai_model: "Model",
       ai_api_key: "API Key",
-      ai_autocomplete: "Autocomplete with AI",
+      ai_requesting: "Requesting...",
       ai_not_configured: "AI is not configured. Please set up the provider and API key.",
+      ai_assist: "AI Assist",
+      ai_assist_placeholder: "Ask AI to write SQL...",
+      ai_assist_send: "Send",
+      ai_assist_copy: "Copy",
+      ai_assist_insert: "Insert",
+      ai_assist_clear: "Clear chat",
+      ai_assist_empty: "Ask AI to generate SQL queries based on your database schema. Describe what you need in natural language.",
 
       // ── Common ──
       toggle_dark_mode: "Toggle dark mode",
@@ -138,6 +155,8 @@
       prompt_group_name: "グループ名を入力してください:",
       prompt_rename_group: "新しいグループ名:",
       confirm_delete_group: "このグループを削除しますか？\n（中のプロファイルはルートに移動します）",
+      empty_state_msg: "接続先がありません",
+      empty_state_btn: "新規接続",
 
       // ── 設定画面 ──
       settings_heading: "設定",
@@ -148,18 +167,24 @@
       color_none: "なし",
       tags: "タグ",
       add_tag_placeholder: "タグを追加...",
-      mysql: "MySQL",
+      mysql: "DB設定",
+      db_engine: "DBエンジン",
       host: "ホスト",
       port: "ポート",
-      database: "データベース",
+      database: "データベース名",
       user: "ユーザー",
       password: "パスワード",
       ssl_mode: "SSL モード",
       ca_certificate: "CA 証明書",
+      ssh_via: "SSH経由",
       ssh_bastion: "SSH 踏み台",
       enable: "有効",
       config_host: "Config Host",
       config_host_manual: "（手動）",
+      ssh_config_load: "ssh configから情報を読み込む",
+      ssh_config_ref: "ssh config ({name}) を参照",
+      ssh_config_clear: "解除",
+      ssh_config_select: "SSH Config Host を選択",
       identity_file: "IdentityFile",
       ssh_passphrase: "パスフレーズ",
       ssh_passphrase_saved_placeholder: "（保存済み - 変更しない場合は空欄）",
@@ -196,14 +221,16 @@
       row_detail: "行の詳細",
       prev: "前へ",
       next: "次へ",
-      truncate: "カラム切詰",
-      truncate_title: "BLOB/TEXT カラムの切り詰め表示",
-      schema: "構造を参照",
+      truncate: "短縮表示",
+      truncate_title: "BLOB/TEXT カラムの短縮表示",
+      schema: "構造",
       schema_suffix: "（構造）",
-      data: "データ閲覧",
+      data: "データ",
+      indexes: "インデックス",
       export: "ファイル出力",
       history: "履歴",
       no_history: "（履歴なし）",
+      history_open: "新しいタブで開く",
       format: "整形",
       run_this_line: "この行を実行",
       run_all: "全て実行",
@@ -233,8 +260,15 @@
       ai_provider: "プロバイダ",
       ai_model: "モデル",
       ai_api_key: "API キー",
-      ai_autocomplete: "AIでクエリを補完する",
+      ai_requesting: "リクエスト中...",
       ai_not_configured: "AI が設定されていません。プロバイダと API キーを設定してください。",
+      ai_assist: "AI アシスト",
+      ai_assist_placeholder: "AIにSQLを書いてもらう...",
+      ai_assist_send: "送信",
+      ai_assist_copy: "コピー",
+      ai_assist_insert: "挿入",
+      ai_assist_clear: "チャットをクリア",
+      ai_assist_empty: "データベースのスキーマに基づいて、AIがSQLクエリを生成します。必要なことを自然言語で記述してください。",
 
       // ── 共通 ──
       toggle_dark_mode: "ダークモード切替",
@@ -246,8 +280,10 @@
     var saved = localStorage.getItem(STORAGE_KEY);
     if (saved === "en" || saved === "ja") return saved;
     var nav = (navigator.language || "").toLowerCase();
-    if (nav.startsWith("ja")) return "ja";
-    return "en";
+    var detected = nav.startsWith("ja") ? "ja" : "en";
+    // Persist detected language so it doesn't re-detect
+    localStorage.setItem(STORAGE_KEY, detected);
+    return detected;
   }
 
   var currentLang = detectLang();
@@ -314,26 +350,7 @@
   // Apply after DOM ready
   document.addEventListener("DOMContentLoaded", function () {
     applyI18n();
-
-    // Language toggle button (main window only)
-    if (document.body.hasAttribute("data-theme-toggle")) {
-      var btn = document.createElement("button");
-      btn.className = "lang-toggle";
-      btn.title = t("toggle_language");
-
-      function updateLabel() {
-        btn.textContent = currentLang === "ja" ? "EN" : "JA";
-        btn.title = t("toggle_language");
-      }
-
-      btn.addEventListener("click", function () {
-        setLang(currentLang === "ja" ? "en" : "ja");
-        updateLabel();
-      });
-
-      updateLabel();
-      document.body.appendChild(btn);
-    }
+    // Language toggle is now menu-only; no floating button.
   });
 
   // Sync across windows via storage event

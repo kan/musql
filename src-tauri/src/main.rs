@@ -824,6 +824,125 @@ async fn ai_complete(
     Ok(result.trim().to_string())
 }
 
+fn build_ai_assist_prompt(
+    schema: &SchemaInfo,
+    prompt: &str,
+    editor_content: &str,
+    conversation_context: &str,
+) -> String {
+    let mut schema_text = String::new();
+    for table in &schema.tables {
+        schema_text.push_str(&format!("-- {}\n", table.name));
+        for col in &table.columns {
+            let key_info = match col.column_key.as_str() {
+                "PRI" => " PK",
+                "MUL" => " FK",
+                "UNI" => " UQ",
+                _ => "",
+            };
+            schema_text.push_str(&format!(
+                "--   {} {}{}\n",
+                col.name, col.data_type, key_info
+            ));
+        }
+    }
+    if schema_text.len() > 8000 {
+        schema_text.truncate(8000);
+        schema_text.push_str("\n-- (truncated)\n");
+    }
+
+    let mut parts = format!(
+        "You are a MySQL query assistant. Given the database schema below, \
+         write SQL based on the user's request. Return ONLY the SQL query. \
+         No explanation, no markdown, no code fences.\n\n\
+         Database: {}\n\n\
+         Schema:\n{}",
+        schema.database, schema_text
+    );
+
+    if !editor_content.trim().is_empty() {
+        parts.push_str(&format!("\nCurrent SQL in editor:\n{}\n", editor_content));
+    }
+    if !conversation_context.trim().is_empty() {
+        parts.push_str(&format!(
+            "\nPrevious conversation:\n{}\n",
+            conversation_context
+        ));
+    }
+    parts.push_str(&format!("\nUser request: {}", prompt));
+    parts
+}
+
+#[tauri::command]
+async fn ai_assist(
+    prompt: String,
+    editor_content: String,
+    conversation_context: String,
+    provider: String,
+    model: String,
+    database: String,
+    state: tauri::State<'_, Arc<Mutex<Option<ConnectionCache>>>>,
+) -> Result<String, String> {
+    let ai_provider: AiProvider = serde_json::from_value(serde_json::json!(provider))
+        .map_err(|_| format!("Invalid AI provider: {provider}"))?;
+
+    let api_key = get_ai_api_key(&ai_provider);
+    if api_key.is_empty() {
+        return Err("AI API key not configured".to_string());
+    }
+
+    let (pool, fingerprint) = {
+        let guard = state.lock().map_err(|e| format!("Lock error: {e}"))?;
+        match guard.as_ref() {
+            Some(cached) => (cached.pool.clone(), cached.fingerprint.clone()),
+            None => return Err("Not connected".to_string()),
+        }
+    };
+
+    let cache_key = format!("{fingerprint}:{database}");
+
+    let schema = {
+        let cache = SCHEMA_CACHE
+            .lock()
+            .map_err(|e| format!("Lock error: {e}"))?;
+        cache.get(&cache_key).cloned()
+    };
+
+    let schema = match schema {
+        Some(s) => s,
+        None => {
+            let db = database.clone();
+            let ck = cache_key.clone();
+            let schema = tauri::async_runtime::spawn_blocking(move || fetch_schema(&pool, &db))
+                .await
+                .map_err(|e| format!("Task error: {e}"))??;
+            if let Ok(mut cache) = SCHEMA_CACHE.lock() {
+                cache.insert(ck, schema.clone());
+            }
+            schema
+        }
+    };
+
+    let ai_prompt =
+        build_ai_assist_prompt(&schema, &prompt, &editor_content, &conversation_context);
+    let result = call_ai_api(&ai_provider, &model, &api_key, &ai_prompt).await?;
+
+    // Strip code fences if present
+    let trimmed = result.trim();
+    let cleaned = if trimmed.starts_with("```") {
+        let inner = trimmed
+            .trim_start_matches("```sql")
+            .trim_start_matches("```SQL")
+            .trim_start_matches("```")
+            .trim_end_matches("```");
+        inner.trim().to_string()
+    } else {
+        trimmed.to_string()
+    };
+
+    Ok(cleaned)
+}
+
 #[tauri::command]
 fn save_ai_api_key(provider: String, api_key: String) -> Result<(), String> {
     let ai_provider: AiProvider =
@@ -883,6 +1002,25 @@ fn list_ssh_config_hosts() -> Vec<String> {
         Err(_) => return vec![],
     };
     parse_ssh_config_hosts(&content)
+}
+
+#[derive(serde::Serialize)]
+struct SshConfigResolved {
+    host: String,
+    port: u16,
+    user: Option<String>,
+    identity_file: Option<String>,
+}
+
+#[tauri::command]
+fn resolve_ssh_config(alias: &str) -> SshConfigResolved {
+    let (host, port, user, identity_file) = resolve_ssh_config_host(alias);
+    SshConfigResolved {
+        host,
+        port,
+        user,
+        identity_file,
+    }
 }
 
 fn parse_ssh_config_host(
@@ -2545,6 +2683,7 @@ fn main() {
             export_file,
             pick_file,
             list_ssh_config_hosts,
+            resolve_ssh_config,
             has_password,
             has_ssh_passphrase,
             export_profiles,
@@ -2553,6 +2692,7 @@ fn main() {
             check_update,
             install_update,
             ai_complete,
+            ai_assist,
             save_ai_api_key,
             has_ai_api_key,
             clear_schema_cache

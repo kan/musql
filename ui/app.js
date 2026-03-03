@@ -5,8 +5,6 @@ const invoke = (window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.co
 const treeEl = document.getElementById("profile-tree");
 const profileNewBtn = document.getElementById("profile-new");
 const groupNewBtn = document.getElementById("group-new");
-const importBtn = document.getElementById("import-btn");
-const exportBtn = document.getElementById("export-btn");
 const contextMenuEl = document.getElementById("context-menu");
 const filterInput = document.getElementById("filter-input");
 const tagFilterBarEl = document.getElementById("tag-filter-bar");
@@ -15,10 +13,6 @@ const menuBtn = document.getElementById("menu-btn");
 // Apply icons to header buttons
 function applyAppLabels() {
   menuBtn.innerHTML = icon('menu');
-  importBtn.innerHTML = icon('download');
-  importBtn.title = t('import_profiles_title');
-  exportBtn.innerHTML = icon('upload');
-  exportBtn.title = t('export_profiles_title');
   groupNewBtn.innerHTML = icon('folder-plus');
   groupNewBtn.title = t('new_group');
   profileNewBtn.innerHTML = icon('plus');
@@ -270,6 +264,26 @@ function renderTree() {
   const items = profileData.items || [];
   const query = filterInput.value.trim();
   const filtering = query.length > 0 || activeFilterTag != null;
+
+  // Show empty state when no connections at all
+  if (groups.length === 0 && items.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    const emptyIcon = document.createElement("div");
+    emptyIcon.className = "empty-state-icon";
+    emptyIcon.innerHTML = icon('database', 40);
+    empty.appendChild(emptyIcon);
+    const msg = document.createElement("div");
+    msg.className = "empty-state-msg";
+    msg.textContent = t('empty_state_msg');
+    empty.appendChild(msg);
+    const btn = document.createElement("button");
+    btn.innerHTML = icon('plus') + ' ' + t('empty_state_btn');
+    btn.addEventListener("click", () => openSettings(""));
+    empty.appendChild(btn);
+    treeEl.appendChild(empty);
+    return;
+  }
 
   // Build top-level entries: root items (group_id == null) and groups, interleaved by order
   const rootItems = items.filter((it) => !it.group_id && itemMatchesFilter(it, query));
@@ -712,8 +726,6 @@ async function importProfiles() {
 
 // ── Event handlers ──
 
-exportBtn.addEventListener("click", () => exportProfiles());
-importBtn.addEventListener("click", () => importProfiles());
 profileNewBtn.addEventListener("click", () => openSettings(""));
 groupNewBtn.addEventListener("click", () => createGroup());
 filterInput.addEventListener("input", () => renderTree());

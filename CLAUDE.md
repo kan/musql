@@ -10,7 +10,7 @@ Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`
 ## Architecture
 - **main** (`ui/index.html`, `ui/app.js`): 接続プロファイル一覧。
 - **settings** (`ui/settings.html`, `ui/settings.js`): プロファイル編集・接続テスト。
-- **query** (`ui/query.html`, `ui/query.js`): DB エクスプローラ（テーブル一覧・Data/Schema/SQL タブ・AI 補完）。
+- **query** (`ui/query.html`, `ui/query.js`): DB エクスプローラ（テーブル一覧・Data/Schema/SQL タブ・AI アシスト）。タブはドラッグで並び替え可。全タブ状態（SQL 内容・テーブルタブ・表示順・アクティブタブ）を localStorage に永続化。
 - `src-tauri/src/main.rs` に全 Rust ロジック集約。
 - ウィンドウは `tauri.conf.json` で事前定義、show/hide パターンで管理。
 
@@ -19,14 +19,15 @@ Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`
 - **接続プール**: `ConnectionCache`（`Arc<Mutex>`）で Pool + SshTunnel をキャッシュ。fingerprint 一致で再利用。
 - **クエリキャンセル**: `RUNNING_QUERIES` でタブ単位に `KILL QUERY`。
 - **SSH**: `russh` v0.50。認証: 指定鍵 → agent → デフォルト鍵。タイムアウト 8 秒。
-- **AI 補完**: 500ms デバウンス → `ai_complete` → ゴーストテキスト（Tab 確定 / Esc 破棄）。スキーマは `SCHEMA_CACHE` でキャッシュ。Claude / OpenAI / Gemini 対応。ON/OFF チェックボックス。確定後・空結果・エラー時はリトライ抑制。
+- **AI アシスト**: チャット形式モーダル。ユーザーが自然言語でプロンプト → `ai_assist` コマンドで SQL 生成。スキーマは `SCHEMA_CACHE` でキャッシュ。Claude / OpenAI / Gemini 対応。チャット履歴は DB 毎に localStorage で保持（最大 50 件）。生成 SQL はコピー / エディタ挿入可。
 - **メニュー**: ハンバーガーボタン → `popup_menu()`。アクセラレータは非表示メニューバーで保持。
 - **アップデート**: `tauri-plugin-updater` + Ed25519 署名。手動チェック。Cargo feature `self-updater`（デフォルト有効）で分離。`--no-default-features` で Store ビルド（アップデータ無効）。
 - **SQL 識別子**: JS `quoteId()` / Rust `escape_identifier()` でバッククォートエスケープ。
 
 ## localStorage keys
 - `musql:collapsed`, `musql:drafts:<profileId>`, `musql:history:<profileId>`, `musql:theme`, `musql:lang`
-- `musql:ai:provider`, `musql:ai:model`, `musql:ai:enabled`
+- `musql:ai:provider`, `musql:ai:model`
+- `musql:ai-chat:<profileId>:<database>` — AI アシストのチャット履歴
 
 ## Limits
 - 結果行 500 件、ページング 100 件/ページ、SSH タイムアウト 8 秒。
@@ -51,40 +52,4 @@ Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`
 - クロスプラットフォーム対応（macOS/Linux ビルド・CI マトリクス化）。
 
 ### Phase X: 優先改修事項
-- mainウインドウ
-  - タイトルの上下のマージンが大きすぎる
-  - 言語設定は初回起動時に環境情報から取得して決定
-  - モードと言語のUIは消す(メニューから変更のみ)
-  - リストの下にもマージンを設ける
-  - インポート/エクスポートのUIボタンは消す
-  - ハンバーガーメニューボタンのサイズを他と揃える
-  - connectionsが1つも無い時はナビゲーション表示
-- settingウインドウ
-  - タイトル自体なくす
-  - 縮めるとカードが重なるUIが気持ち悪いので修正
-  - カードの高さをfixにして、はみ出す時はスクロール
-  - 3つのカードを1つにまとめる
-  - フッターにある操作ボタンは上の右にもってくる
-  - タグの補完のz-indexを上げる
-  - MySQLカードは「DB設定」にする
-  - DBエンジンのプルダウンを追加(とりあえずMySQL固定)
-  - 「SSH踏み台」カードを「SSH経由」に変えて、これ自体を有効化のチェックボックスにする
-  - ssh configの読み込みがバグっているので確認
-  - configを読み込んだ内容を変更不可にする
-- queryウインドウ
-  - ソートは全体のソートにする
-  - テーブルはタブいっぱいに表示する
-  - テーブルは交互に行の色を変える
-  - 「カラム切詰」→ 「短縮表示」に
-  - 構造タブでは下にインデックス情報を表示
-  - データと構造は同一タブ内で切り替え(ボタンは右端に置く)
-  - SQLタブの操作ボタンを小さくする
-  - カーソルの居る行をハイライトする
-  - SQL実行結果もタブ一杯に表示
-  - 結果件数は左寄せ。右寄せで実行時間を表示
-  - SQL入力欄をリサイズ可能に
-  - SQL1,2,3の単位でSQLを保存して、開き直した時に復元する
-  - SQLタブの追加ボタンは左側へ
-  - 履歴プルダウンを選んだらSQL全体をポップアップ
-  - 履歴を選択したら新しいSQLタブを開く
-  - AI補完のAPI呼び出しをプログレス表示 & 結果サマリーも表示
+- 全項目完了済み

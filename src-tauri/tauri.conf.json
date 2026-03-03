@@ -22,10 +22,10 @@
         "label": "settings",
         "title": "muSQL Settings",
         "url": "settings.html",
-        "width": 920,
-        "height": 760,
+        "width": 640,
+        "height": 820,
         "visible": false,
-        "resizable": true,
+        "resizable": false,
         "maximizable": false
       },
       {
