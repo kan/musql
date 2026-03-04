@@ -113,6 +113,7 @@
       csv_all: "CSV (all rows)",
       tsv_all: "TSV (all rows)",
       sql_all: "SQL (all rows)",
+      markdown_schema: "Markdown",
 
       // ── Import/Export ──
       export_profiles_title: "Export profiles",
@@ -266,6 +267,7 @@
       csv_all: "CSV（全行）",
       tsv_all: "TSV（全行）",
       sql_all: "SQL（全行）",
+      markdown_schema: "Markdown",
 
       // ── インポート/エクスポート ──
       export_profiles_title: "プロファイルをエクスポート",

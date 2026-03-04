@@ -722,6 +722,192 @@ async function generateInsertSql(tableName) {
   return lines.join("\n");
 }
 
+async function generateMarkdownSchema(tableName) {
+  const escaped = tableName.replace(/'/g, "''");
+  const [createRes, descRes, indexRes, commentRes, colCommentRes, fkParentRes, fkChildRes] = await Promise.all([
+    runQuery("SHOW CREATE TABLE " + quoteId(tableName)).catch(() => null),
+    runQuery("DESCRIBE " + quoteId(tableName)),
+    runQuery("SHOW INDEX FROM " + quoteId(tableName)),
+    runQuery("SELECT TABLE_COMMENT FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '" + escaped + "'"),
+    runQuery("SELECT COLUMN_NAME, COLUMN_COMMENT FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '" + escaped + "' ORDER BY ORDINAL_POSITION"),
+    runQuery("SELECT CONSTRAINT_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '" + escaped + "' AND REFERENCED_TABLE_NAME IS NOT NULL"),
+    runQuery("SELECT TABLE_NAME, COLUMN_NAME, CONSTRAINT_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = DATABASE() AND REFERENCED_TABLE_NAME = '" + escaped + "'"),
+  ]);
+
+  // Build lookup maps
+  const colComments = {};
+  if (colCommentRes && colCommentRes.rows) {
+    for (const row of colCommentRes.rows) colComments[row[0]] = row[1] || "";
+  }
+
+  // FK parents: column -> [{table, column, constraint}]
+  const fkParents = {};
+  if (fkParentRes && fkParentRes.rows) {
+    for (const row of fkParentRes.rows) {
+      const col = row[1];
+      if (!fkParents[col]) fkParents[col] = [];
+      fkParents[col].push({ table: row[2], column: row[3], constraint: row[0] });
+    }
+  }
+
+  // FK children: column -> [{table, column, constraint}]
+  const fkChildren = {};
+  if (fkChildRes && fkChildRes.rows) {
+    for (const row of fkChildRes.rows) {
+      const col = row[1];
+      if (!fkChildren[col]) fkChildren[col] = [];
+      fkChildren[col].push({ table: row[0], column: col, constraint: row[2] });
+    }
+  }
+
+  // Index grouping: keyName -> { nonUnique, indexType, columns: [{col, seqInIndex}] }
+  const indexMap = {};
+  if (indexRes && indexRes.rows) {
+    const ci = {};
+    for (let i = 0; i < indexRes.columns.length; i++) ci[indexRes.columns[i]] = i;
+    for (const row of indexRes.rows) {
+      const keyName = row[ci["Key_name"]];
+      const nonUnique = Number(row[ci["Non_unique"]]);
+      const seqInIndex = Number(row[ci["Seq_in_index"]]);
+      const colName = row[ci["Column_name"]];
+      const indexType = row[ci["Index_type"]] || "BTREE";
+      if (!indexMap[keyName]) indexMap[keyName] = { nonUnique, indexType, columns: [] };
+      indexMap[keyName].columns.push({ col: colName, seq: seqInIndex });
+    }
+    for (const key of Object.keys(indexMap)) {
+      indexMap[key].columns.sort((a, b) => a.seq - b.seq);
+    }
+  }
+
+  // FK constraint map: constraintName -> { columns, refTable, refColumns }
+  const fkConstraints = {};
+  if (fkParentRes && fkParentRes.rows) {
+    for (const row of fkParentRes.rows) {
+      const name = row[0];
+      if (!fkConstraints[name]) fkConstraints[name] = { columns: [], refTable: row[2], refColumns: [] };
+      fkConstraints[name].columns.push(row[1]);
+      fkConstraints[name].refColumns.push(row[3]);
+    }
+  }
+
+  const lines = [];
+
+  // Title
+  lines.push("# " + tableName);
+  lines.push("");
+
+  // Description
+  const tableComment = (commentRes && commentRes.rows && commentRes.rows.length > 0) ? (commentRes.rows[0][0] || "") : "";
+  if (tableComment) {
+    lines.push("## Description");
+    lines.push("");
+    lines.push(tableComment);
+    lines.push("");
+  }
+
+  // Table Definition
+  if (createRes && createRes.rows && createRes.rows.length > 0) {
+    const createSql = createRes.rows[0][1] || "";
+    if (createSql) {
+      lines.push("<details>");
+      lines.push("<summary><strong>Table Definition</strong></summary>");
+      lines.push("");
+      lines.push("```sql");
+      lines.push(createSql);
+      lines.push("```");
+      lines.push("");
+      lines.push("</details>");
+      lines.push("");
+    }
+  }
+
+  // Columns
+  if (descRes && descRes.rows && descRes.rows.length > 0) {
+    const ci = {};
+    for (let i = 0; i < descRes.columns.length; i++) ci[descRes.columns[i]] = i;
+
+    lines.push("## Columns");
+    lines.push("");
+    lines.push("| Name | Type | Default | Nullable | Extra Definition | Children | Parents | Comment |");
+    lines.push("| ---- | ---- | ------- | -------- | ---------------- | -------- | ------- | ------- |");
+
+    for (const row of descRes.rows) {
+      const field = row[ci["Field"]] || "";
+      const type = row[ci["Type"]] || "";
+      const nullable = (row[ci["Null"]] === "YES") ? "true" : "false";
+      const defVal = row[ci["Default"]];
+      const defaultStr = (defVal === null || defVal === undefined) ? "" : String(defVal);
+      const extra = row[ci["Extra"]] || "";
+      const comment = (colComments[field] || "").replace(/\|/g, "\\|");
+
+      const children = (fkChildren[field] || []).map(c => "[" + c.table + "](" + c.table + ".md)").join(" ");
+      const parents = (fkParents[field] || []).map(p => "[" + p.table + "](" + p.table + ".md)").join(" ");
+
+      lines.push("| " + field + " | " + type + " | " + defaultStr + " | " + nullable + " | " + extra + " | " + children + " | " + parents + " | " + comment + " |");
+    }
+    lines.push("");
+  }
+
+  // Constraints
+  const constraints = [];
+  for (const [keyName, idx] of Object.entries(indexMap)) {
+    const cols = idx.columns.map(c => c.col).join(", ");
+    if (keyName === "PRIMARY") {
+      constraints.push({ name: "PRIMARY", type: "PRIMARY KEY", definition: "PRIMARY KEY (" + cols + ")" });
+    } else if (idx.nonUnique === 0) {
+      constraints.push({ name: keyName, type: "UNIQUE", definition: "UNIQUE KEY " + keyName + " (" + cols + ")" });
+    }
+  }
+  for (const [name, fk] of Object.entries(fkConstraints)) {
+    constraints.push({
+      name: name,
+      type: "FOREIGN KEY",
+      definition: "FOREIGN KEY (" + fk.columns.join(", ") + ") REFERENCES " + fk.refTable + " (" + fk.refColumns.join(", ") + ")",
+    });
+  }
+
+  if (constraints.length > 0) {
+    lines.push("## Constraints");
+    lines.push("");
+    lines.push("| Name | Type | Definition |");
+    lines.push("| ---- | ---- | ---------- |");
+    for (const c of constraints) {
+      lines.push("| " + c.name + " | " + c.type + " | " + c.definition + " |");
+    }
+    lines.push("");
+  }
+
+  // Indexes
+  const indexEntries = Object.entries(indexMap);
+  if (indexEntries.length > 0) {
+    lines.push("## Indexes");
+    lines.push("");
+    lines.push("| Name | Definition |");
+    lines.push("| ---- | ---------- |");
+    for (const [keyName, idx] of indexEntries) {
+      const cols = idx.columns.map(c => c.col).join(", ");
+      let prefix;
+      if (idx.nonUnique === 0 && keyName === "PRIMARY") prefix = "PRIMARY KEY";
+      else if (idx.nonUnique === 0) prefix = "UNIQUE KEY";
+      else prefix = "KEY";
+      lines.push("| " + keyName + " | " + prefix + " (" + cols + ") USING " + idx.indexType + " |");
+    }
+    lines.push("");
+  }
+
+  // Footer
+  lines.push("---");
+  lines.push("");
+  lines.push("> Generated by [muSQL](https://github.com/nicoyou/musql) ([tbls](https://github.com/k1LoW/tbls) compatible)");
+
+  return lines.join("\n");
+}
+
+async function doExportMarkdownSchema(tableName) {
+  const content = await generateMarkdownSchema(tableName);
+  await saveFile(content, tableName + ".md", "Markdown", ["md"]);
+}
+
 async function saveFile(content, defaultName, filterName, extensions) {
   return safeInvoke("export_file", { content, defaultName, filterName, extensions });
 }
@@ -736,6 +922,8 @@ function showExportMenu(e, columns, rows, tableName) {
     items.push({ label: t('csv_all'), icon: "download", action: () => doExportAll(tableName, ",", "csv") });
     items.push({ label: t('tsv_all'), icon: "download", action: () => doExportAll(tableName, "\t", "tsv") });
     items.push({ label: t('sql_all'), icon: "download", action: () => doExportSql(tableName) });
+    items.push({ separator: true });
+    items.push({ label: t('markdown_schema'), icon: "download", action: () => doExportMarkdownSchema(tableName) });
   }
   showContextMenu(e, items);
 }
@@ -1488,6 +1676,19 @@ function openTableTab(tableName, initialView) {
           renderTable(idxCols, idxRows, indexContainer);
           tableContainer.appendChild(indexContainer);
         }
+
+        // Markdown export button in footer
+        const actions = document.createElement("div");
+        actions.className = "footer-actions";
+        const mdExportBtn = document.createElement("button");
+        mdExportBtn.className = "ghost paging-btn";
+        mdExportBtn.innerHTML = icon('download') + t("markdown_schema");
+        mdExportBtn.addEventListener("click", async () => {
+          const content = await generateMarkdownSchema(tableName);
+          await saveFile(content, tableName + ".md", "Markdown", ["md"]);
+        });
+        actions.appendChild(mdExportBtn);
+        footerBar.appendChild(actions);
       } catch (error) {
         info.textContent = String(error);
       }
