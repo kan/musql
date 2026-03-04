@@ -2730,7 +2730,7 @@ dependencies = [
 
 [[package]]
 name = "musql"
-version = "0.4.5"
+version = "0.5.0"
 dependencies = [
  "bollard",
  "futures-util",

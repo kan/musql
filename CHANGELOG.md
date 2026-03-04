@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.0] - 2026-03-04
+
+### Added
+- Docker MySQL コンテナ自動検出・ワンクリック接続
+  - Docker 上の running MySQL コンテナを自動検出（exposed port 3306 or `musql.enable=true` ラベル）
+  - ports バインドなしのコンテナに `alpine/socat` 一時コンテナで TCP トンネルを自動作成
+  - Docker Desktop / WSL2 dockerd 対応（名前付きパイプ + TCP フォールバック）
+  - 接続時の SSL モード選択（DISABLED / REQUIRED / VERIFY_CA / VERIFY_IDENTITY）
+  - 資格情報（user / password / SSL モード）をコンテナ毎に保持
+  - `musql.*` ラベルによるカスタマイズ（表示名・user・password・port）
+  - アプリ起動時・終了時・切断時にトンネルコンテナを自動クリーンアップ
+- Cargo feature `docker`（デフォルト有効）で Docker 関連依存を分離
+
 ## [0.4.5] - 2026-03-04
 
 ### Added
@@ -86,6 +99,7 @@
 - アプリ内自動更新（NSIS インストーラー + Ed25519 署名）
 - GitHub Actions CI/CD（cargo check + リリースビルド）
 
+[0.5.0]: https://github.com/kan/musql/compare/v0.4.5...v0.5.0
 [0.4.5]: https://github.com/kan/musql/compare/v0.4.1...v0.4.5
 [0.4.1]: https://github.com/kan/musql/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/kan/musql/compare/v0.3.0...v0.4.0
