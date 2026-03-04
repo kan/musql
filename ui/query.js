@@ -55,6 +55,7 @@ let currentDb = null;
 let currentTables = [];
 let currentProfileId = null;
 let currentProfileName = null;
+let dockerTunnelContainerId = null;
 const sqlTabActions = {}; // tabId → { runLine, runAll, format, history, cancel }
 const closedDrafts = {}; // tabNumber → content (in-session restore for closed tabs)
 
@@ -2042,6 +2043,10 @@ function resetExplorer() {
   sidebarDbName.textContent = "";
   updateWindowTitle();
   safeInvoke("disconnect_pool").catch(() => {});
+  if (dockerTunnelContainerId) {
+    safeInvoke("docker_stop_tunnel", { containerId: dockerTunnelContainerId }).catch(() => {});
+    dockerTunnelContainerId = null;
+  }
 }
 
 // ── Event wiring ──
@@ -2087,6 +2092,42 @@ if (eventApi && eventApi.listen) {
       dbModal.classList.remove("hidden");
       dbModalStatus.textContent = String(error);
     }
+  });
+
+  eventApi.listen("query:docker-open", async (event) => {
+    const info = event.payload;
+    if (!info) return;
+
+    resetExplorer();
+    dockerTunnelContainerId = info.tunnel_container_id || null;
+    currentProfileId = "docker:" + info.name;
+    currentProfileName = info.name;
+
+    // Build a synthetic requestCache matching ConnectionRequest shape
+    requestCache = {
+      mysql: {
+        host: info.host,
+        port: info.port,
+        database: null,
+        username: info.user,
+        password: info.password,
+        ssl_mode: info.ssl_mode || "DISABLED",
+        tls_ca_cert_path: null,
+        save_password: true,
+      },
+      ssh: null,
+    };
+
+    try {
+      await showDbModal();
+    } catch (error) {
+      dbModal.classList.remove("hidden");
+      dbModalStatus.textContent = String(error);
+    }
+  });
+
+  eventApi.listen("query:reset", () => {
+    resetExplorer();
   });
 
   eventApi.listen("menu:action", (event) => {

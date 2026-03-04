@@ -22,10 +22,13 @@ russh = { version = "0.57", default-features = false, features = ["ring", "flate
 tokio = { version = "1", features = ["net", "io-util", "time"] }
 tauri-plugin-updater = { version = "2", optional = true }
 reqwest = { version = "0.13", default-features = false, features = ["json", "native-tls"] }
+bollard = { version = "0.18", optional = true }
+futures-util = { version = "0.3", optional = true }
 
 [features]
-default = ["self-updater"]
+default = ["self-updater", "docker"]
 self-updater = ["tauri-plugin-updater"]
+docker = ["bollard", "futures-util"]
 
 [profile.release]
 codegen-units = 1

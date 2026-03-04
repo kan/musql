@@ -59,7 +59,7 @@ jobs:
         run: cargo install tauri-cli --locked
 
       - name: Build Store variant
-        run: cargo tauri build --config tauri.store.conf.json -- --no-default-features
+        run: cargo tauri build --config tauri.store.conf.json -- --no-default-features --features docker
         working-directory: src-tauri
 
       - name: Rename Store EXE

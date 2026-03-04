@@ -11,6 +11,9 @@ use std::time::Duration;
 use tauri::menu::{CheckMenuItemBuilder, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter, EventTarget, Manager, Window, Wry};
 
+#[cfg(feature = "docker")]
+mod docker;
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 struct MySqlConfig {
     host: String,
@@ -2693,6 +2696,144 @@ async fn install_update(_app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+// ── Docker commands ──
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+struct DockerConnectionInfo {
+    host: String,
+    port: u16,
+    user: String,
+    password: String,
+    name: String,
+    ssl_mode: Option<String>,
+    tunnel_container_id: Option<String>,
+}
+
+#[cfg(feature = "docker")]
+async fn connect_docker() -> Result<bollard::Docker, String> {
+    // 1. DOCKER_HOST env var / platform default (named pipe on Windows)
+    if let Ok(docker) = bollard::Docker::connect_with_local_defaults() {
+        if docker.ping().await.is_ok() {
+            return Ok(docker);
+        }
+    }
+    // 2. TCP fallback — covers WSL2 dockerd with tcp://127.0.0.1:2375
+    for port in [2375, 2376] {
+        let url = format!("tcp://127.0.0.1:{port}");
+        if let Ok(docker) = bollard::Docker::connect_with_http_defaults() {
+            // connect_with_http_defaults uses DOCKER_HOST; try explicit URL
+            drop(docker);
+        }
+        if let Ok(docker) =
+            bollard::Docker::connect_with_http(&url, 4, bollard::API_DEFAULT_VERSION)
+        {
+            if docker.ping().await.is_ok() {
+                return Ok(docker);
+            }
+        }
+    }
+    Err("Docker is not reachable".to_string())
+}
+
+#[cfg(feature = "docker")]
+#[tauri::command]
+async fn docker_available() -> Result<bool, String> {
+    Ok(connect_docker().await.is_ok())
+}
+
+#[cfg(feature = "docker")]
+#[tauri::command]
+async fn docker_list_containers() -> Result<Vec<docker::discovery::DockerContainer>, String> {
+    let docker = connect_docker().await?;
+    docker::discovery::discover_mysql_containers(&docker).await
+}
+
+#[cfg(feature = "docker")]
+#[tauri::command]
+async fn docker_create_tunnel(
+    container_id: String,
+    port: u16,
+) -> Result<docker::tunnel::TunnelInfo, String> {
+    let docker = connect_docker().await?;
+    docker::tunnel::ensure_socat_image(&docker).await?;
+    docker::tunnel::create_tunnel(&docker, &container_id, port).await
+}
+
+#[cfg(feature = "docker")]
+#[tauri::command]
+async fn docker_stop_tunnel(container_id: String) -> Result<(), String> {
+    let docker = connect_docker().await?;
+    docker::tunnel::stop_tunnel(&docker, &container_id).await
+}
+
+#[cfg(feature = "docker")]
+#[tauri::command]
+async fn docker_cleanup_tunnels() -> Result<(), String> {
+    let docker = connect_docker().await?;
+    docker::tunnel::cleanup_all_tunnels(&docker).await
+}
+
+#[cfg(feature = "docker")]
+#[tauri::command]
+fn open_docker_query_window(app: AppHandle, info: DockerConnectionInfo) -> Result<(), String> {
+    let window = app
+        .get_webview_window("query")
+        .ok_or("Query window not found")?;
+    window
+        .emit("query:docker-open", &info)
+        .map_err(|e| format!("Failed to send docker query event: {e}"))?;
+    window
+        .show()
+        .map_err(|e| format!("Failed to show query window: {e}"))?;
+    window
+        .set_focus()
+        .map_err(|e| format!("Failed to focus query window: {e}"))?;
+    if let Some(main_win) = app.get_webview_window("main") {
+        let _ = main_win.hide();
+    }
+    Ok(())
+}
+
+// Stubs when docker feature is disabled
+#[cfg(not(feature = "docker"))]
+#[tauri::command]
+async fn docker_available() -> Result<bool, String> {
+    Ok(false)
+}
+
+#[cfg(not(feature = "docker"))]
+#[tauri::command]
+async fn docker_list_containers() -> Result<Vec<()>, String> {
+    Ok(vec![])
+}
+
+#[cfg(not(feature = "docker"))]
+#[tauri::command]
+async fn docker_create_tunnel(
+    _container_id: String,
+    _port: u16,
+) -> Result<serde_json::Value, String> {
+    Ok(serde_json::json!({}))
+}
+
+#[cfg(not(feature = "docker"))]
+#[tauri::command]
+async fn docker_stop_tunnel(_container_id: String) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(not(feature = "docker"))]
+#[tauri::command]
+async fn docker_cleanup_tunnels() -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(not(feature = "docker"))]
+#[tauri::command]
+fn open_docker_query_window(_app: AppHandle, _info: DockerConnectionInfo) -> Result<(), String> {
+    Ok(())
+}
+
 fn main() {
     #[allow(unused_mut)]
     let mut builder = tauri::Builder::default();
@@ -2703,12 +2844,32 @@ fn main() {
     builder
         .setup(|app| {
             setup_menus(app.handle())?;
+            #[cfg(feature = "docker")]
+            {
+                tauri::async_runtime::spawn(async {
+                    if let Ok(docker) = connect_docker().await {
+                        let _ = crate::docker::tunnel::cleanup_all_tunnels(&docker).await;
+                    }
+                });
+            }
             Ok(())
         })
         .on_menu_event(|app, event| {
             let id = event.id().0.as_str();
             match id {
-                "main:exit" => std::process::exit(0),
+                "main:exit" => {
+                    #[cfg(feature = "docker")]
+                    {
+                        tauri::async_runtime::spawn(async {
+                            if let Ok(docker) = connect_docker().await {
+                                let _ = crate::docker::tunnel::cleanup_all_tunnels(&docker).await;
+                            }
+                            std::process::exit(0);
+                        });
+                    }
+                    #[cfg(not(feature = "docker"))]
+                    std::process::exit(0);
+                }
                 "main:github" => {
                     let _ = std::process::Command::new("cmd")
                         .args(["/c", "start", "", "https://github.com/kan/musql"])
@@ -2756,6 +2917,7 @@ fn main() {
                 }
                 "query:close" => {
                     if let Some(w) = app.get_webview_window("query") {
+                        let _ = w.emit("query:reset", ());
                         let _ = w.hide();
                     }
                     if let Some(w) = app.get_webview_window("main") {
@@ -2779,8 +2941,10 @@ fn main() {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() != "main" {
                     api.prevent_close();
+                    if window.label() == "query" {
+                        let _ = window.emit("query:reset", ());
+                    }
                     let _ = window.hide();
-                    // When query window is closed, show main (connections) window
                     if window.label() == "query" {
                         if let Some(main_win) = window.app_handle().get_webview_window("main") {
                             let _ = main_win.show();
@@ -2821,7 +2985,13 @@ fn main() {
             ai_assist,
             save_ai_api_key,
             has_ai_api_key,
-            clear_schema_cache
+            clear_schema_cache,
+            docker_available,
+            docker_list_containers,
+            docker_create_tunnel,
+            docker_stop_tunnel,
+            docker_cleanup_tunnels,
+            open_docker_query_window
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {

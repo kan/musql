@@ -143,6 +143,14 @@
       ai_assist_clear: "Clear chat",
       ai_assist_empty: "Ask AI to generate SQL queries based on your database schema. Describe what you need in natural language.",
 
+      // ── Docker ──
+      docker_btn_title: "Docker containers",
+      docker_modal_heading: "Docker Containers",
+      docker_no_containers: "No MySQL containers found.",
+      docker_creating_tunnel: "Creating tunnel...",
+      docker_connect_credentials: "Connect to Container",
+      docker_close: "Close",
+
       // ── Common ──
       toggle_dark_mode: "Toggle dark mode",
       toggle_language: "Switch language",
@@ -287,6 +295,14 @@
       ai_assist_insert: "挿入",
       ai_assist_clear: "チャットをクリア",
       ai_assist_empty: "データベースのスキーマに基づいて、AIがSQLクエリを生成します。必要なことを自然言語で記述してください。",
+
+      // ── Docker ──
+      docker_btn_title: "Docker コンテナ",
+      docker_modal_heading: "Docker コンテナ",
+      docker_no_containers: "MySQL コンテナが見つかりません。",
+      docker_creating_tunnel: "トンネルを作成中...",
+      docker_connect_credentials: "コンテナに接続",
+      docker_close: "閉じる",
 
       // ── 共通 ──
       toggle_dark_mode: "ダークモード切替",

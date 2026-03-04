@@ -18,6 +18,7 @@
 
       <div class="panel-header">
         <div class="panel-header-buttons">
+          <button id="docker-btn" class="ghost" style="display:none;" data-i18n-title="docker_btn_title"></button>
           <button id="group-new" class="ghost"></button>
           <button id="profile-new"></button>
         </div>
@@ -31,6 +32,48 @@
       </section>
 
       <div id="context-menu" class="context-menu hidden"></div>
+
+      <!-- Docker container list modal -->
+      <div id="docker-modal" class="modal-overlay hidden">
+        <div class="modal-box">
+          <h2 id="docker-modal-heading"></h2>
+          <div id="docker-list" class="db-list"></div>
+          <p id="docker-modal-status" class="modal-status"></p>
+          <div style="margin-top:12px;text-align:right;">
+            <button id="docker-modal-close" class="ghost" data-i18n="docker_close">Close</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Docker credentials modal -->
+      <div id="docker-cred-modal" class="modal-overlay hidden">
+        <div class="modal-box">
+          <h2 id="docker-cred-heading" data-i18n="docker_connect_credentials"></h2>
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            <label>
+              <span data-i18n="user">User</span>
+              <input id="docker-cred-user" type="text" value="root" autocomplete="off" />
+            </label>
+            <label>
+              <span data-i18n="password">Password</span>
+              <input id="docker-cred-password" type="password" autocomplete="off" />
+            </label>
+            <label>
+              <span data-i18n="ssl_mode">SSL Mode</span>
+              <select id="docker-cred-ssl">
+                <option value="DISABLED">DISABLED</option>
+                <option value="REQUIRED">REQUIRED</option>
+                <option value="VERIFY_CA">VERIFY_CA</option>
+                <option value="VERIFY_IDENTITY">VERIFY_IDENTITY</option>
+              </select>
+            </label>
+          </div>
+          <div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end;">
+            <button id="docker-cred-cancel" class="ghost" data-i18n="cancel">Cancel</button>
+            <button id="docker-cred-ok" data-i18n="connect">Connect</button>
+          </div>
+        </div>
+      </div>
 
     </main>
 

@@ -9,10 +9,23 @@ const contextMenuEl = document.getElementById("context-menu");
 const filterInput = document.getElementById("filter-input");
 const tagFilterBarEl = document.getElementById("tag-filter-bar");
 const menuBtn = document.getElementById("menu-btn");
+const dockerBtn = document.getElementById("docker-btn");
+const dockerModal = document.getElementById("docker-modal");
+const dockerList = document.getElementById("docker-list");
+const dockerModalStatus = document.getElementById("docker-modal-status");
+const dockerModalClose = document.getElementById("docker-modal-close");
+const dockerCredModal = document.getElementById("docker-cred-modal");
+const dockerCredUser = document.getElementById("docker-cred-user");
+const dockerCredPassword = document.getElementById("docker-cred-password");
+const dockerCredSsl = document.getElementById("docker-cred-ssl");
+const dockerCredOk = document.getElementById("docker-cred-ok");
+const dockerCredCancel = document.getElementById("docker-cred-cancel");
 
 // Apply icons to header buttons
 function applyAppLabels() {
   menuBtn.innerHTML = icon('menu');
+  dockerBtn.innerHTML = icon('container');
+  dockerBtn.title = t('docker_btn_title');
   groupNewBtn.innerHTML = icon('folder-plus');
   groupNewBtn.title = t('new_group');
   profileNewBtn.innerHTML = icon('plus');
@@ -723,6 +736,167 @@ async function importProfiles() {
     alert(String(error));
   }
 }
+
+// ── Docker ──
+
+let dockerCredResolve = null;
+
+async function checkDockerAvailable() {
+  try {
+    const available = await safeInvoke("docker_available");
+    console.log("[Docker] docker_available =", available);
+    dockerBtn.style.display = available ? "" : "none";
+  } catch (e) {
+    console.warn("[Docker] docker_available error:", e);
+    dockerBtn.style.display = "none";
+  }
+}
+
+async function showDockerModal() {
+  dockerModal.classList.remove("hidden");
+  dockerList.innerHTML = "";
+  dockerModalStatus.textContent = t('loading');
+  document.getElementById("docker-modal-heading").innerHTML = icon('container', 20) + ' ' + t('docker_modal_heading');
+
+  try {
+    const containers = await safeInvoke("docker_list_containers");
+    if (containers.length === 0) {
+      dockerModalStatus.textContent = t('docker_no_containers');
+      return;
+    }
+    dockerModalStatus.textContent = "";
+
+    containers.forEach(function(c) {
+      var el = document.createElement("div");
+      el.className = "db-list-item";
+      el.innerHTML = icon('container', 14) +
+        '<div class="docker-item-meta">' +
+          '<div>' + c.name + '</div>' +
+          '<div class="docker-item-sub">' + c.image + '</div>' +
+        '</div>';
+      el.addEventListener("click", function() { connectToDockerContainer(c); });
+      dockerList.appendChild(el);
+    });
+  } catch (error) {
+    dockerModalStatus.textContent = String(error);
+  }
+}
+
+// Docker credential persistence per container (localStorage)
+var DOCKER_CRED_KEY = "musql:docker-creds";
+var DOCKER_LAST_KEY = "musql:docker-last-cred";
+
+function loadDockerCreds() {
+  try { return JSON.parse(localStorage.getItem(DOCKER_CRED_KEY) || "{}"); } catch (_) { return {}; }
+}
+function saveDockerCred(containerId, cred) {
+  var all = loadDockerCreds();
+  all[containerId] = cred;
+  localStorage.setItem(DOCKER_CRED_KEY, JSON.stringify(all));
+  localStorage.setItem(DOCKER_LAST_KEY, JSON.stringify(cred));
+}
+function getDockerCred(containerId) {
+  var all = loadDockerCreds();
+  if (all[containerId]) return all[containerId];
+  try { return JSON.parse(localStorage.getItem(DOCKER_LAST_KEY)); } catch (_) { return null; }
+}
+
+function showDockerCredPrompt(container) {
+  return new Promise(function(resolve) {
+    // Restore saved values: per-container > last-used > label > defaults
+    var saved = getDockerCred(container.id);
+    dockerCredUser.value = container.label_user || (saved && saved.user) || "root";
+    dockerCredPassword.value = container.label_password || (saved && saved.password) || "";
+    dockerCredSsl.value = (saved && saved.ssl_mode) || "DISABLED";
+    dockerCredModal.classList.remove("hidden");
+    dockerCredResolve = resolve;
+  });
+}
+
+dockerCredOk.addEventListener("click", function() {
+  if (dockerCredResolve) {
+    dockerCredResolve({ user: dockerCredUser.value, password: dockerCredPassword.value, ssl_mode: dockerCredSsl.value });
+    dockerCredResolve = null;
+  }
+  dockerCredModal.classList.add("hidden");
+});
+
+dockerCredCancel.addEventListener("click", function() {
+  if (dockerCredResolve) {
+    dockerCredResolve(null);
+    dockerCredResolve = null;
+  }
+  dockerCredModal.classList.add("hidden");
+});
+
+async function connectToDockerContainer(container) {
+  var user, password, sslMode;
+
+  if (container.label_user && container.label_password) {
+    user = container.label_user;
+    password = container.label_password;
+    // Use saved ssl_mode if available, otherwise default
+    var saved = getDockerCred(container.id);
+    sslMode = (saved && saved.ssl_mode) || "DISABLED";
+  } else {
+    var creds = await showDockerCredPrompt(container);
+    if (!creds) return;
+    user = creds.user;
+    password = creds.password;
+    sslMode = creds.ssl_mode;
+  }
+
+  // Persist credentials for this container
+  saveDockerCred(container.id, { user: user, password: password, ssl_mode: sslMode });
+
+  var host, port;
+  var tunnelContainerId = null;
+
+  if (container.host_port) {
+    host = "127.0.0.1";
+    port = container.host_port;
+  } else {
+    dockerModalStatus.textContent = t('docker_creating_tunnel');
+    try {
+      var tunnel = await safeInvoke("docker_create_tunnel", {
+        containerId: container.id,
+        port: container.port
+      });
+      host = tunnel.local_host;
+      port = tunnel.local_port;
+      tunnelContainerId = tunnel.container_id;
+    } catch (error) {
+      dockerModalStatus.textContent = String(error);
+      return;
+    }
+  }
+
+  dockerModal.classList.add("hidden");
+
+  try {
+    await safeInvoke("open_docker_query_window", {
+      info: {
+        host: host,
+        port: port,
+        user: user,
+        password: password,
+        name: container.name,
+        ssl_mode: sslMode,
+        tunnel_container_id: tunnelContainerId
+      }
+    });
+  } catch (error) {
+    alert(String(error));
+  }
+}
+
+dockerBtn.addEventListener("click", showDockerModal);
+dockerModalClose.addEventListener("click", function() {
+  dockerModal.classList.add("hidden");
+});
+
+// Check Docker availability on startup
+checkDockerAvailable();
 
 // ── Event handlers ──
 
