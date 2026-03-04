@@ -1,6 +1,6 @@
 [package]
 name = "musql"
-version = "0.4.1"
+version = "0.4.5"
 description = "MySQL client with optional SSH bastion"
 authors = ["you"]
 license = "MIT"

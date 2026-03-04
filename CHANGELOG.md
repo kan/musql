@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.5] - 2026-03-04
+
+### Added
+- SSH パスワード認証サポート（公開鍵認証に加え、パスワード認証を選択可能に）
+- パスワード都度入力オプション（MySQL パスワード・SSH パスフレーズ・SSH パスワードそれぞれに「キーリングに保存」チェックボックスを追加）
+- 接続時のクレデンシャル入力モーダル（keyring 未保存のパスワードを接続前にプロンプト）
+
+### Changed
+- SSH 設定画面に認証方式プルダウン（公開鍵 / パスワード）を追加
+- ssh config 参照時は認証方式を公開鍵に固定
+- ラベル変更: IdentityFile → 秘密鍵、鍵 → 公開鍵
+
 ## [0.4.1] - 2026-03-04
 
 ### Changed
@@ -74,6 +86,7 @@
 - アプリ内自動更新（NSIS インストーラー + Ed25519 署名）
 - GitHub Actions CI/CD（cargo check + リリースビルド）
 
+[0.4.5]: https://github.com/kan/musql/compare/v0.4.1...v0.4.5
 [0.4.1]: https://github.com/kan/musql/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/kan/musql/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/kan/musql/compare/v0.2.0...v0.3.0
