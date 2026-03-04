@@ -15,10 +15,10 @@ Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`
 - ウィンドウは `tauri.conf.json` で事前定義、show/hide パターンで管理。
 
 ## Key behaviors
-- **パスワード / API キー**: `keyring`（Windows Credential Manager）で保存。
+- **パスワード / API キー**: `keyring`（Windows Credential Manager）で保存。各パスワード（MySQL / SSH パスフレーズ / SSH パスワード）は `save_*` フラグで keyring 保存 or 都度入力を選択可能。都度入力の場合、query 画面で接続前にモーダルプロンプトを表示。
 - **接続プール**: `ConnectionCache`（`Arc<Mutex>`）で Pool + SshTunnel をキャッシュ。fingerprint 一致で再利用。
 - **クエリキャンセル**: `RUNNING_QUERIES` でタブ単位に `KILL QUERY`。
-- **SSH**: `russh` v0.50。認証: 指定鍵 → agent → デフォルト鍵。タイムアウト 8 秒。
+- **SSH**: `russh` v0.57。認証方式は公開鍵（`key`）またはパスワード（`password`）を選択可能。公開鍵: 指定鍵 → agent → デフォルト鍵。パスワード: `session.authenticate_password()`。タイムアウト 8 秒。ssh config 参照時は認証方式を公開鍵に固定。
 - **AI アシスト**: チャット形式モーダル。ユーザーが自然言語でプロンプト → `ai_assist` コマンドで SQL 生成。スキーマは `SCHEMA_CACHE` でキャッシュ。Claude / OpenAI / Gemini 対応。チャット履歴は DB 毎に localStorage で保持（最大 50 件）。生成 SQL はコピー / エディタ挿入可。
 - **メニュー**: ハンバーガーボタン → `popup_menu()`。アクセラレータは非表示メニューバーで保持。
 - **アップデート**: `tauri-plugin-updater` + Ed25519 署名。手動チェック。Cargo feature `self-updater`（デフォルト有効）で分離。`--no-default-features` で Store ビルド（アップデータ無効）。
@@ -41,9 +41,9 @@ Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`
 
 ## Roadmap
 
-### Phase 4.5: Store リリース前の優先改修
-- SSHサーバーへのパスワード認証サポート（現在は鍵認証のみ）
-- パスワード・パスフレーズの接続時都度入力サポート（keyring 保存だけでなく、接続のたびに入力する選択肢を追加）
+### Phase 4.5: Store リリース前の優先改修（完了）
+- ✅ SSHサーバーへのパスワード認証サポート（`SshConfig.auth_method`: `key` | `password`）
+- ✅ パスワード・パスフレーズの接続時都度入力サポート（`save_password` / `save_ssh_passphrase` / `save_ssh_password` フラグ + query 画面のプロンプトモーダル）
 
 ### Phase 5: Windows Store 配布
 - MSIX パッケージング: `store/AppxManifest.xml` + `store/build-msix.ps1` で未署名 MSIX を生成。CI (`release.yml` の `build-store`) がタグ push 時に EXE + MSIX をリリースにアップロード。

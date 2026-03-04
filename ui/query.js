@@ -541,6 +541,86 @@ async function safeInvoke(command, payload) {
   return invoke(command, payload);
 }
 
+// ── Credential prompt modal ──
+const pwPromptModal = document.getElementById("pw-prompt-modal");
+const pwPromptFields = document.getElementById("pw-prompt-fields");
+const pwPromptError = document.getElementById("pw-prompt-error");
+const pwPromptOk = document.getElementById("pw-prompt-ok");
+const pwPromptCancel = document.getElementById("pw-prompt-cancel");
+
+function promptForCredentials(request) {
+  return new Promise((resolve) => {
+    const fields = [];
+    if (request.mysql.save_password === false) {
+      fields.push({ key: "mysql_password", label: t("password"), type: "password" });
+    }
+    if (request.ssh && request.ssh.enabled) {
+      if (request.ssh.auth_method === "password" && request.ssh.save_ssh_password === false) {
+        fields.push({ key: "ssh_password", label: t("ssh_password_label"), type: "password" });
+      }
+      if (request.ssh.auth_method === "key" && request.ssh.save_ssh_passphrase === false) {
+        fields.push({ key: "ssh_passphrase", label: t("ssh_passphrase"), type: "password" });
+      }
+    }
+    if (fields.length === 0) {
+      resolve(true);
+      return;
+    }
+
+    pwPromptFields.innerHTML = "";
+    pwPromptError.textContent = "";
+    const inputs = {};
+    fields.forEach((f) => {
+      const lbl = document.createElement("label");
+      lbl.style.marginBottom = "10px";
+      const span = document.createElement("span");
+      span.textContent = f.label;
+      const inp = document.createElement("input");
+      inp.type = f.type;
+      inp.style.width = "100%";
+      lbl.appendChild(span);
+      lbl.appendChild(inp);
+      pwPromptFields.appendChild(lbl);
+      inputs[f.key] = inp;
+    });
+
+    pwPromptModal.classList.remove("hidden");
+    const firstInput = Object.values(inputs)[0];
+    if (firstInput) firstInput.focus();
+
+    function cleanup() {
+      pwPromptModal.classList.add("hidden");
+      pwPromptOk.removeEventListener("click", onOk);
+      pwPromptCancel.removeEventListener("click", onCancel);
+      document.removeEventListener("keydown", onKey);
+    }
+    function onOk() {
+      if (inputs.mysql_password) {
+        request.mysql.password = inputs.mysql_password.value;
+      }
+      if (inputs.ssh_password && request.ssh) {
+        request.ssh.ssh_password = inputs.ssh_password.value;
+      }
+      if (inputs.ssh_passphrase && request.ssh) {
+        request.ssh.passphrase = inputs.ssh_passphrase.value;
+      }
+      cleanup();
+      resolve(true);
+    }
+    function onCancel() {
+      cleanup();
+      resolve(false);
+    }
+    function onKey(e) {
+      if (e.key === "Escape") onCancel();
+      if (e.key === "Enter") onOk();
+    }
+    pwPromptOk.addEventListener("click", onOk);
+    pwPromptCancel.addEventListener("click", onCancel);
+    document.addEventListener("keydown", onKey);
+  });
+}
+
 async function loadProfile(id) {
   const data = await safeInvoke("list_profiles");
   const profile = data.items.find((item) => item.id === id);
@@ -1988,6 +2068,13 @@ if (eventApi && eventApi.listen) {
     currentProfileId = id;
     try {
       await loadProfile(id);
+
+      // Prompt for credentials if any save_* flags are false
+      const ok = await promptForCredentials(requestCache);
+      if (!ok) {
+        resetExplorer();
+        return;
+      }
 
       // If profile already has a database set, auto-select it
       if (requestCache.mysql.database) {

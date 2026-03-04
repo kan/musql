@@ -974,6 +974,17 @@ pre {
   border-top: 1px solid var(--line);
   margin: 16px 0;
 }
+.save-toggle {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  margin-top: 4px;
+  cursor: pointer;
+}
+.save-toggle input[type="checkbox"] {
+  margin: 0;
+}
 
 /* ── SSH config row ── */
 .ssh-config-row {

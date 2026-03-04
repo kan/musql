@@ -29,7 +29,7 @@
 
 ## 特徴
 
-- **SSH 踏み台対応** — SSH bastion 経由の MySQL 接続（純 Rust `russh` 実装、ssh.exe 不要）
+- **SSH 踏み台対応** — SSH bastion 経由の MySQL 接続（純 Rust `russh` 実装、ssh.exe 不要）。公開鍵認証・パスワード認証の両方に対応
 - **SSH Agent / Config** — SSH Agent（1Password 対応）、`~/.ssh/config` 自動読み込み
 - **SSL 接続** — DISABLED / REQUIRED / VERIFY_CA / VERIFY_IDENTITY を選択可能
 - **接続プール** — 同一設定の接続を自動再利用
@@ -41,7 +41,7 @@
 - **カラムソート** — ヘッダークリックで ASC / DESC / なし の 3 ステートソート
 - **BLOB/TEXT 切り詰め** — 大きなカラムを自動切り詰め表示（トグル可能）
 - **データエクスポート** — CSV / TSV / SQL 形式で保存
-- **パスワード安全保存** — Windows Credential Manager で管理
+- **パスワード安全保存** — Windows Credential Manager で管理（keyring 保存 or 接続時に都度入力を選択可能）
 - **プロファイル管理** — グループ・色・タグ・ドラッグ＆ドロップで接続先を整理
 - **インポート/エクスポート** — 接続設定の JSON エクスポート・インポート（重複検出付き）
 - **ダークモード** — システム設定に追従 + 手動切替

@@ -10,6 +10,19 @@
     <link rel="stylesheet" href="./lib/codemirror/show-hint.css" />
   </head>
   <body>
+    <!-- Credential prompt modal -->
+    <div id="pw-prompt-modal" class="modal-overlay hidden">
+      <div class="modal-box" style="max-width:400px;">
+        <h2 data-i18n="enter_credentials">Enter Credentials</h2>
+        <div id="pw-prompt-fields"></div>
+        <p id="pw-prompt-error" class="modal-status"></p>
+        <div class="actions actions-right" style="margin-top:16px;">
+          <button id="pw-prompt-ok" class="success" data-i18n="connect">Connect</button>
+          <button id="pw-prompt-cancel" class="ghost" data-i18n="cancel">Cancel</button>
+        </div>
+      </div>
+    </div>
+
     <!-- DB selection modal -->
     <div id="db-modal" class="modal-overlay hidden">
       <div class="modal-box">

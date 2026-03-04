@@ -62,6 +62,7 @@
               <input id="mysql-pass" type="password" />
               <button type="button" id="mysql-pass-clear" class="browse-btn clear-pw-btn hidden" data-i18n-title="clear_password">&times;</button>
             </div>
+            <label class="save-toggle"><input id="mysql-save-password" type="checkbox" checked /><span data-i18n="save_to_keyring">Save to keyring</span></label>
           </label>
           <label><span data-i18n="ssl_mode">SSL Mode</span>
             <select id="mysql-ssl-mode">
@@ -89,20 +90,34 @@
           <span data-i18n="ssh_via">SSH</span>
         </label>
         <div id="ssh-fields" class="grid" style="margin-top:10px">
+          <label><span data-i18n="ssh_auth_method">Auth Method</span>
+            <select id="ssh-auth-method">
+              <option value="key" data-i18n="ssh_auth_key">Public Key</option>
+              <option value="password" data-i18n="ssh_auth_password">Password</option>
+            </select>
+          </label>
           <label><span data-i18n="host">Host</span> <input id="ssh-host" placeholder="bastion.example.com" /></label>
           <label><span data-i18n="port">Port</span> <input id="ssh-port" type="number" value="22" /></label>
           <label><span data-i18n="user">User</span> <input id="ssh-user" placeholder="ec2-user" /></label>
-          <label><span data-i18n="identity_file">IdentityFile</span>
+          <label id="ssh-key-row"><span data-i18n="identity_file">Private Key</span>
             <div class="input-with-btn">
               <input id="ssh-key" placeholder="~/.ssh/id_ed25519.pub" />
               <button type="button" id="ssh-key-browse" class="browse-btn">Browse...</button>
             </div>
           </label>
-          <label><span data-i18n="ssh_passphrase">Passphrase</span>
+          <label id="ssh-passphrase-row"><span data-i18n="ssh_passphrase">Passphrase</span>
             <div class="input-with-btn">
               <input id="ssh-passphrase" type="password" />
               <button type="button" id="ssh-passphrase-clear" class="browse-btn clear-pw-btn hidden" data-i18n-title="clear_ssh_passphrase">&times;</button>
             </div>
+            <label class="save-toggle"><input id="ssh-save-passphrase" type="checkbox" checked /><span data-i18n="save_to_keyring">Save to keyring</span></label>
+          </label>
+          <label id="ssh-password-row" class="hidden"><span data-i18n="ssh_password_label">Password</span>
+            <div class="input-with-btn">
+              <input id="ssh-password" type="password" />
+              <button type="button" id="ssh-password-clear" class="browse-btn clear-pw-btn hidden" data-i18n-title="clear_ssh_password">&times;</button>
+            </div>
+            <label class="save-toggle"><input id="ssh-save-password" type="checkbox" checked /><span data-i18n="save_to_keyring">Save to keyring</span></label>
           </label>
           <div id="ssh-config-row" class="ssh-config-row"></div>
         </div>

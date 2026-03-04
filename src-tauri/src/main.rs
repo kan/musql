@@ -23,6 +23,8 @@ struct MySqlConfig {
     ssl_mode: String, // "DISABLED" | "REQUIRED" | "VERIFY_CA" | "VERIFY_IDENTITY"
     #[serde(default)]
     tls_ca_cert_path: Option<String>,
+    #[serde(default = "default_true")]
+    save_password: bool, // false = don't persist to keyring (prompt each time)
     // Legacy (read-only, never re-saved)
     #[serde(default, skip_serializing)]
     tls_enabled: bool,
@@ -32,6 +34,14 @@ struct MySqlConfig {
 
 fn default_ssl_mode() -> String {
     "DISABLED".to_string()
+}
+
+fn default_ssh_auth_method() -> String {
+    "key".to_string()
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -45,6 +55,14 @@ struct SshConfig {
     config_host: Option<String>,
     #[serde(default, skip_serializing)]
     passphrase: String,
+    #[serde(default = "default_ssh_auth_method")]
+    auth_method: String, // "key" | "password"
+    #[serde(default, skip_serializing)]
+    ssh_password: String, // password auth (transient)
+    #[serde(default = "default_true")]
+    save_ssh_password: bool, // false = don't persist to keyring
+    #[serde(default = "default_true")]
+    save_ssh_passphrase: bool, // false = don't persist to keyring
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -77,6 +95,8 @@ struct ConnectionProfile {
     clear_password: bool,
     #[serde(default, skip_serializing)]
     clear_ssh_passphrase: bool,
+    #[serde(default, skip_serializing)]
+    clear_ssh_password: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -263,11 +283,12 @@ fn connection_fingerprint(request: &ConnectionRequest) -> String {
         Some(ssh) if ssh.enabled => match &ssh.config_host {
             Some(alias) if !alias.trim().is_empty() => format!("ssh-config:{alias}"),
             _ => format!(
-                "ssh:{}:{}:{}:{}",
+                "ssh:{}:{}:{}:{}:{}",
                 ssh.host,
                 ssh.port,
                 ssh.username,
-                ssh.private_key_path.as_deref().unwrap_or("")
+                ssh.private_key_path.as_deref().unwrap_or(""),
+                ssh.auth_method
             ),
         },
         _ => String::new(),
@@ -308,12 +329,7 @@ async fn get_or_create_pool_async(
     // Set up SSH tunnel if needed (async)
     let (target_host, target_port, tunnel) = match &request.ssh {
         Some(ssh) if ssh.enabled => {
-            let pp = if ssh.passphrase.is_empty() {
-                None
-            } else {
-                Some(ssh.passphrase.as_str())
-            };
-            let tunnel = start_ssh_tunnel(ssh, &request.mysql.host, request.mysql.port, pp).await?;
+            let tunnel = start_ssh_tunnel(ssh, &request.mysql.host, request.mysql.port).await?;
             ("127.0.0.1".to_string(), tunnel.local_port, Some(tunnel))
         }
         _ => (request.mysql.host.clone(), request.mysql.port, None),
@@ -551,6 +567,54 @@ fn delete_ssh_passphrase(profile_id: &str) {
 #[tauri::command]
 fn has_ssh_passphrase(profile_id: String) -> bool {
     !get_ssh_passphrase(&profile_id).is_empty()
+}
+
+fn get_ssh_password(profile_id: &str) -> String {
+    let key = format!("{profile_id}:ssh_password");
+    let entry = match keyring::Entry::new(KEYRING_SERVICE, &key) {
+        Ok(e) => e,
+        Err(_) => return String::new(),
+    };
+    entry.get_password().unwrap_or_default()
+}
+
+fn set_ssh_password(profile_id: &str, password: &str) -> Result<(), String> {
+    let key = format!("{profile_id}:ssh_password");
+    let entry =
+        keyring::Entry::new(KEYRING_SERVICE, &key).map_err(|e| format!("Keyring error: {e}"))?;
+    if password.is_empty() {
+        let _ = entry.delete_credential();
+    } else {
+        entry
+            .set_password(password)
+            .map_err(|e| format!("Failed to save SSH password: {e}"))?;
+    }
+    Ok(())
+}
+
+fn delete_ssh_password(profile_id: &str) {
+    let key = format!("{profile_id}:ssh_password");
+    if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, &key) {
+        let _ = entry.delete_credential();
+    }
+}
+
+#[tauri::command]
+fn has_ssh_password(profile_id: String) -> bool {
+    !get_ssh_password(&profile_id).is_empty()
+}
+
+fn resolve_ssh_password(request: &mut ConnectionRequest, profile_id: Option<&str>) {
+    if let Some(ref mut ssh) = request.ssh {
+        if !ssh.ssh_password.is_empty() {
+            return;
+        }
+        if let Some(id) = profile_id {
+            if !id.is_empty() {
+                ssh.ssh_password = get_ssh_password(id);
+            }
+        }
+    }
 }
 
 // ── AI keyring ──
@@ -1110,7 +1174,22 @@ async fn authenticate_ssh(
     username: &str,
     identity_file: Option<&str>,
     passphrase: Option<&str>,
+    auth_method: &str,
+    ssh_password: Option<&str>,
 ) -> Result<bool, String> {
+    // Password authentication
+    if auth_method == "password" {
+        if let Some(pw) = ssh_password.filter(|s| !s.is_empty()) {
+            match session.authenticate_password(username, pw).await {
+                Ok(res) if res.success() => return Ok(true),
+                Ok(_) => return Err("SSH password authentication rejected.".into()),
+                Err(e) => return Err(format!("SSH password auth failed: {e}")),
+            }
+        }
+        return Err("SSH password is required.".into());
+    }
+
+    // Key-based authentication
     let key_path = identity_file.map(|s| s.trim()).filter(|s| !s.is_empty());
 
     // 1. Try explicit private key file (skip .pub files)
@@ -1294,7 +1373,6 @@ async fn start_ssh_tunnel(
     ssh: &SshConfig,
     mysql_host: &str,
     mysql_port: u16,
-    passphrase: Option<&str>,
 ) -> Result<SshTunnel, String> {
     // Resolve SSH config host if specified
     let (host, port, config_user, config_identity) = match &ssh.config_host {
@@ -1327,11 +1405,23 @@ async fn start_ssh_tunnel(
     .map_err(|e| format!("SSH connection failed ({host}:{port}): {e}"))?;
 
     // Authenticate
+    let passphrase = if ssh.passphrase.is_empty() {
+        None
+    } else {
+        Some(ssh.passphrase.as_str())
+    };
+    let ssh_password = if ssh.ssh_password.is_empty() {
+        None
+    } else {
+        Some(ssh.ssh_password.as_str())
+    };
     let authenticated = authenticate_ssh(
         &mut session,
         &username,
         identity_file.as_deref(),
         passphrase,
+        &ssh.auth_method,
+        ssh_password,
     )
     .await?;
     if !authenticated {
@@ -1434,16 +1524,12 @@ async fn test_connection(
 ) -> Result<String, String> {
     resolve_password(&mut request, profile_id.as_deref());
     resolve_ssh_passphrase(&mut request, profile_id.as_deref());
+    resolve_ssh_password(&mut request, profile_id.as_deref());
 
     // Set up SSH tunnel if needed (async)
     let (target_host, target_port, _tunnel) = match &request.ssh {
         Some(ssh) if ssh.enabled => {
-            let pp = if ssh.passphrase.is_empty() {
-                None
-            } else {
-                Some(ssh.passphrase.as_str())
-            };
-            let tunnel = start_ssh_tunnel(ssh, &request.mysql.host, request.mysql.port, pp).await?;
+            let tunnel = start_ssh_tunnel(ssh, &request.mysql.host, request.mysql.port).await?;
             ("127.0.0.1".to_string(), tunnel.local_port, Some(tunnel))
         }
         _ => (request.mysql.host.clone(), request.mysql.port, None),
@@ -1480,6 +1566,7 @@ async fn run_query(
 
     resolve_password(&mut request, profile_id.as_deref());
     resolve_ssh_passphrase(&mut request, profile_id.as_deref());
+    resolve_ssh_password(&mut request, profile_id.as_deref());
     let limit = max_rows.unwrap_or(500);
 
     // Get or create pool (async — SSH tunnel creation is async)
@@ -1847,6 +1934,7 @@ async fn import_profiles(
             request: item.request.clone(),
             clear_password: false,
             clear_ssh_passphrase: false,
+            clear_ssh_password: false,
         });
         next_order += 1000;
         imported_count += 1;
@@ -1912,20 +2000,40 @@ fn save_profile(
             .unwrap_or(0);
         profile.order = max_order + 1000;
     }
-    // Extract password: clear flag → delete; non-empty → save; empty → keep existing
+    // Extract password: clear flag → delete; non-empty → save (if save_password); empty → keep existing
     let password = std::mem::take(&mut profile.request.mysql.password);
     if profile.clear_password {
         delete_password(&profile.id);
     } else if !password.is_empty() {
-        set_password(&profile.id, &password)?;
+        if profile.request.mysql.save_password {
+            set_password(&profile.id, &password)?;
+        }
+    } else if !profile.request.mysql.save_password {
+        // save_password toggled off → remove existing keyring entry
+        delete_password(&profile.id);
     }
-    // Extract SSH passphrase: same pattern as MySQL password
+    // Extract SSH passphrase
     if let Some(ref mut ssh) = profile.request.ssh {
         let passphrase = std::mem::take(&mut ssh.passphrase);
         if profile.clear_ssh_passphrase {
             delete_ssh_passphrase(&profile.id);
         } else if !passphrase.is_empty() {
-            set_ssh_passphrase(&profile.id, &passphrase)?;
+            if ssh.save_ssh_passphrase {
+                set_ssh_passphrase(&profile.id, &passphrase)?;
+            }
+        } else if !ssh.save_ssh_passphrase {
+            delete_ssh_passphrase(&profile.id);
+        }
+        // Extract SSH password
+        let ssh_pw = std::mem::take(&mut ssh.ssh_password);
+        if profile.clear_ssh_password {
+            delete_ssh_password(&profile.id);
+        } else if !ssh_pw.is_empty() {
+            if ssh.save_ssh_password {
+                set_ssh_password(&profile.id, &ssh_pw)?;
+            }
+        } else if !ssh.save_ssh_password {
+            delete_ssh_password(&profile.id);
         }
     }
     let saved_id = profile.id.clone();
@@ -1955,6 +2063,7 @@ fn delete_profile(app: AppHandle, id: String) -> Result<ProfileListResponse, Str
     store.items.retain(|item| item.id != id);
     delete_password(&id);
     delete_ssh_passphrase(&id);
+    delete_ssh_password(&id);
     save_profiles(&app, &store)?;
     Ok(ProfileListResponse {
         groups: store.groups,
@@ -2050,6 +2159,11 @@ fn duplicate_profile(app: AppHandle, id: String) -> Result<ProfileListResponse, 
     if !source_pp.is_empty() {
         let _ = set_ssh_passphrase(&new_id, &source_pp);
     }
+    // Copy SSH password
+    let source_ssh_pw = get_ssh_password(&id);
+    if !source_ssh_pw.is_empty() {
+        let _ = set_ssh_password(&new_id, &source_ssh_pw);
+    }
     let new_profile = ConnectionProfile {
         id: new_id,
         name: format!("{} (copy)", source.name),
@@ -2060,6 +2174,7 @@ fn duplicate_profile(app: AppHandle, id: String) -> Result<ProfileListResponse, 
         request: source.request,
         clear_password: false,
         clear_ssh_passphrase: false,
+        clear_ssh_password: false,
     };
     store.items.push(new_profile);
     save_profiles(&app, &store)?;
@@ -2696,6 +2811,7 @@ fn main() {
             resolve_ssh_config,
             has_password,
             has_ssh_passphrase,
+            has_ssh_password,
             export_profiles,
             import_profiles,
             show_popup_menu,
@@ -2840,6 +2956,7 @@ Host myserver
                 password: String::new(),
                 ssl_mode: "DISABLED".to_string(),
                 tls_ca_cert_path: None,
+                save_password: true,
                 tls_enabled: false,
                 tls_skip_verify: false,
             },
@@ -2865,10 +2982,14 @@ Host myserver
             private_key_path: Some("/keys/id_rsa".to_string()),
             config_host: None,
             passphrase: String::new(),
+            auth_method: "key".to_string(),
+            ssh_password: String::new(),
+            save_ssh_password: true,
+            save_ssh_passphrase: true,
         };
         let req = make_request("127.0.0.1", 3306, "root", Some(ssh));
         let fp = connection_fingerprint(&req);
-        assert!(fp.contains("ssh:bastion.example.com:22:deploy:/keys/id_rsa"));
+        assert!(fp.contains("ssh:bastion.example.com:22:deploy:/keys/id_rsa:key"));
     }
 
     #[test]

@@ -12,13 +12,22 @@ const connectBtn = document.getElementById("connect-btn");
 const sshConfigRow = document.getElementById("ssh-config-row");
 const sshEnabledCheck = document.getElementById("ssh-enabled");
 const sshFieldsDiv = document.getElementById("ssh-fields");
-const sshManualFieldIds = ["ssh-host", "ssh-port", "ssh-user", "ssh-key"];
+const sshManualFieldIds = ["ssh-host", "ssh-port", "ssh-user", "ssh-key", "ssh-password"];
 let sshConfigHostValue = ""; // current config host alias (empty = manual)
 const sslModeSelect = document.getElementById("mysql-ssl-mode");
 const caCertRow = document.getElementById("ca-cert-row");
 const caCertInput = document.getElementById("mysql-ca-cert");
 const caCertBrowseBtn = document.getElementById("mysql-ca-cert-browse");
 const sshKeyBrowseBtn = document.getElementById("ssh-key-browse");
+const sshAuthMethodSelect = document.getElementById("ssh-auth-method");
+const sshKeyRow = document.getElementById("ssh-key-row");
+const sshPassphraseRow = document.getElementById("ssh-passphrase-row");
+const sshPasswordRow = document.getElementById("ssh-password-row");
+const sshPasswordInput = document.getElementById("ssh-password");
+const sshPasswordClearBtn = document.getElementById("ssh-password-clear");
+const mysqlSavePasswordCheck = document.getElementById("mysql-save-password");
+const sshSavePassphraseCheck = document.getElementById("ssh-save-passphrase");
+const sshSavePasswordCheck = document.getElementById("ssh-save-password");
 
 const menuBtn = document.getElementById("menu-btn");
 menuBtn.innerHTML = icon('menu');
@@ -307,15 +316,18 @@ function updateSshFieldVisibility() {
   sshFieldsDiv.querySelectorAll("input, select, button").forEach((el) => {
     el.disabled = !enabled;
   });
-  // When config host is set, also disable manual fields + their buttons
-  sshManualFieldIds.forEach((id) => {
-    const el = document.getElementById(id);
-    const label = el.closest("label");
-    if (useConfig && enabled) {
+  // When config host is set: force auth_method to "key", disable manual fields + auth method
+  if (useConfig && enabled) {
+    sshAuthMethodSelect.value = "key";
+    sshAuthMethodSelect.disabled = true;
+    updateSshAuthMethodVisibility();
+    sshManualFieldIds.forEach((id) => {
+      const el = document.getElementById(id);
+      const label = el.closest("label");
       el.disabled = true;
       label.querySelectorAll("button").forEach((btn) => { btn.disabled = true; });
-    }
-  });
+    });
+  }
   // Also update the config row buttons
   renderSshConfigRow();
 }
@@ -356,6 +368,7 @@ function collectRequest() {
       password: document.getElementById("mysql-pass").value,
       ssl_mode: sslModeSelect.value,
       tls_ca_cert_path: caCertInput.value.trim() || null,
+      save_password: mysqlSavePasswordCheck.checked,
     },
     ssh: {
       enabled: sshEnabled,
@@ -365,6 +378,10 @@ function collectRequest() {
       private_key_path: document.getElementById("ssh-key").value.trim() || null,
       config_host: sshConfigHostValue || null,
       passphrase: document.getElementById("ssh-passphrase").value,
+      auth_method: sshAuthMethodSelect.value,
+      ssh_password: sshPasswordInput.value,
+      save_ssh_password: sshSavePasswordCheck.checked,
+      save_ssh_passphrase: sshSavePassphraseCheck.checked,
     },
   };
 }
@@ -377,6 +394,7 @@ function applyRequest(request) {
   document.getElementById("mysql-pass").value = request.mysql.password || "";
   sslModeSelect.value = request.mysql.ssl_mode || "DISABLED";
   caCertInput.value = request.mysql.tls_ca_cert_path || "";
+  mysqlSavePasswordCheck.checked = request.mysql.save_password !== false;
   updateCaCertVisibility();
 
   const ssh = request.ssh || {
@@ -393,8 +411,13 @@ function applyRequest(request) {
   document.getElementById("ssh-user").value = ssh.username || "";
   document.getElementById("ssh-key").value = ssh.private_key_path || "";
   document.getElementById("ssh-passphrase").value = ssh.passphrase || "";
+  sshAuthMethodSelect.value = ssh.auth_method || "key";
+  sshPasswordInput.value = ssh.ssh_password || "";
+  sshSavePasswordCheck.checked = ssh.save_ssh_password !== false;
+  sshSavePassphraseCheck.checked = ssh.save_ssh_passphrase !== false;
   renderSshConfigRow();
   updateSshFieldVisibility();
+  updateSshAuthMethodVisibility();
 
   // If config_host is set, resolve and populate SSH fields
   if (ssh.config_host) {
@@ -422,6 +445,7 @@ const sshPassphraseInput = document.getElementById("ssh-passphrase");
 const sshPassphraseClearBtn = document.getElementById("ssh-passphrase-clear");
 let clearPasswordFlag = false;
 let clearSshPassphraseFlag = false;
+let clearSshPasswordFlag = false;
 
 mysqlPassClearBtn.addEventListener("click", () => {
   clearPasswordFlag = true;
@@ -449,6 +473,28 @@ sshPassphraseInput.addEventListener("input", () => {
   }
 });
 
+sshPasswordClearBtn.addEventListener("click", () => {
+  clearSshPasswordFlag = true;
+  sshPasswordInput.value = "";
+  sshPasswordInput.placeholder = t('ssh_password_cleared');
+  sshPasswordClearBtn.classList.add("hidden");
+});
+
+sshPasswordInput.addEventListener("input", () => {
+  if (clearSshPasswordFlag) {
+    clearSshPasswordFlag = false;
+  }
+});
+
+function updateSshAuthMethodVisibility() {
+  const method = sshAuthMethodSelect.value;
+  const isKey = method === "key";
+  sshKeyRow.classList.toggle("hidden", !isKey);
+  sshPassphraseRow.classList.toggle("hidden", !isKey);
+  sshPasswordRow.classList.toggle("hidden", isKey);
+}
+sshAuthMethodSelect.addEventListener("change", updateSshAuthMethodVisibility);
+
 async function loadProfile(id) {
   const data = await safeInvoke("list_profiles");
   const profile = data.items.find((item) => item.id === id);
@@ -467,6 +513,7 @@ async function loadProfile(id) {
   // Show placeholder and clear button if password is stored in keyring
   clearPasswordFlag = false;
   clearSshPassphraseFlag = false;
+  clearSshPasswordFlag = false;
   try {
     const stored = await safeInvoke("has_password", { profileId: id });
     mysqlPassInput.placeholder = stored ? t('password_saved_placeholder') : "";
@@ -484,6 +531,15 @@ async function loadProfile(id) {
     sshPassphraseInput.placeholder = "";
     sshPassphraseClearBtn.classList.add("hidden");
   }
+  // Show placeholder and clear button if SSH password is stored in keyring
+  try {
+    const sshPwStored = await safeInvoke("has_ssh_password", { profileId: id });
+    sshPasswordInput.placeholder = sshPwStored ? t('ssh_password_saved_placeholder') : "";
+    sshPasswordClearBtn.classList.toggle("hidden", !sshPwStored);
+  } catch (_) {
+    sshPasswordInput.placeholder = "";
+    sshPasswordClearBtn.classList.add("hidden");
+  }
   return profile;
 }
 
@@ -495,6 +551,9 @@ function clearForm() {
   sshPassphraseInput.placeholder = "";
   sshPassphraseClearBtn.classList.add("hidden");
   clearSshPassphraseFlag = false;
+  sshPasswordInput.placeholder = "";
+  sshPasswordClearBtn.classList.add("hidden");
+  clearSshPasswordFlag = false;
   selectedColor = null;
   selectedTags = [];
   renderColorPalette();
@@ -508,6 +567,7 @@ function clearForm() {
       password: "",
       ssl_mode: "DISABLED",
       tls_ca_cert_path: null,
+      save_password: true,
     },
     ssh: {
       enabled: false,
@@ -517,6 +577,10 @@ function clearForm() {
       private_key_path: null,
       config_host: null,
       passphrase: "",
+      auth_method: "key",
+      ssh_password: "",
+      save_ssh_password: true,
+      save_ssh_passphrase: true,
     },
   });
 }
@@ -549,6 +613,7 @@ saveBtn.addEventListener("click", async () => {
       request: collectRequest(),
       clear_password: clearPasswordFlag,
       clear_ssh_passphrase: clearSshPassphraseFlag,
+      clear_ssh_password: clearSshPasswordFlag,
     };
     await safeInvoke("save_profile", { profile });
     if (eventApi && eventApi.emit) {
@@ -593,6 +658,7 @@ connectBtn.addEventListener("click", async () => {
       request: collectRequest(),
       clear_password: clearPasswordFlag,
       clear_ssh_passphrase: clearSshPassphraseFlag,
+      clear_ssh_password: clearSshPasswordFlag,
     };
     const result = await safeInvoke("save_profile", { profile });
     if (eventApi && eventApi.emit) {
