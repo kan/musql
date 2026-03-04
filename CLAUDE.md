@@ -133,6 +133,7 @@ SQL ではない KVS だが、既存 UI 部品の流用で実用的な GUI を�
 ### Phase 9: その他機能拡充
 - TablePlus の設定引き継ぎ
 - クロスプラットフォーム対応（macOS/Linux ビルド・CI マトリクス化）
+- tbls 互換スキーマ Markdown 出力（スキーマタブに追加。https://github.com/k1LoW/tbls 互換のテーブル定義 Markdown をエクスポート）
 
 ### Phase X: 優先改修事項
 - 全項目完了済み
