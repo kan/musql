@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.5.1] - 2026-03-06
+
+### Changed
+- 設定画面の色選択をカラードットからカスタムドロップダウンに変更（色付き■スウォッチ付き、プロファイル名と横並び配置）
+
 ## [0.5.0] - 2026-03-04
 
 ### Added
@@ -99,6 +104,7 @@
 - アプリ内自動更新（NSIS インストーラー + Ed25519 署名）
 - GitHub Actions CI/CD（cargo check + リリースビルド）
 
+[0.5.1]: https://github.com/kan/musql/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/kan/musql/compare/v0.4.5...v0.5.0
 [0.4.5]: https://github.com/kan/musql/compare/v0.4.1...v0.4.5
 [0.4.1]: https://github.com/kan/musql/compare/v0.4.0...v0.4.1
