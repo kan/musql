@@ -69,6 +69,12 @@
 - メイン画面の空状態ナビ・マージン調整
 - アプリ identifier を `jp.co.communitylinks.musql` に変更
 
+## [0.3.1] - 2026-03-02
+
+### Added
+- Windows Store ビルドバリアント（`self-updater` feature gate で分離）
+- MSIX パッケージングパイプライン（Microsoft Store 提出用）
+
 ## [0.3.0] - 2026-02-28
 
 ### Added
@@ -120,7 +126,8 @@
 [0.5.0]: https://github.com/kan/musql/compare/v0.4.5...v0.5.0
 [0.4.5]: https://github.com/kan/musql/compare/v0.4.1...v0.4.5
 [0.4.1]: https://github.com/kan/musql/compare/v0.4.0...v0.4.1
-[0.4.0]: https://github.com/kan/musql/compare/v0.3.0...v0.4.0
+[0.4.0]: https://github.com/kan/musql/compare/v0.3.1...v0.4.0
+[0.3.1]: https://github.com/kan/musql/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/kan/musql/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/kan/musql/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/kan/musql/releases/tag/v0.1.0
