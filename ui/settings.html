@@ -28,10 +28,12 @@
         <h3 class="settings-section-heading" data-i18n="general">General</h3>
         <div class="grid">
           <label><span data-i18n="profile_name">Profile name</span> <input id="profile-name" data-i18n-placeholder="profile_name_placeholder" placeholder="e.g. prod/analytics" /></label>
-        </div>
-        <div class="color-picker-row" style="margin-top: 12px">
-          <label data-i18n="color">Color</label>
-          <div id="color-palette" class="color-palette"></div>
+          <label><span data-i18n="color">Color</span>
+            <div class="color-select" id="color-select">
+              <div class="color-select-btn" id="color-select-btn"></div>
+              <div class="color-select-dropdown hidden" id="color-select-dropdown"></div>
+            </div>
+          </label>
         </div>
         <div class="tag-input-row" style="margin-top: 12px">
           <label><span data-i18n="tags">Tags</span>

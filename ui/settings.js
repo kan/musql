@@ -64,33 +64,67 @@ let selectedColor = null;
 let selectedTags = [];
 let allExistingTags = [];
 
-const colorPaletteEl = document.getElementById("color-palette");
+const colorSelectBtn = document.getElementById("color-select-btn");
+const colorSelectDropdown = document.getElementById("color-select-dropdown");
 const tagChipsEl = document.getElementById("tag-chips");
 const tagInputEl = document.getElementById("tag-input");
 const tagSuggestionsEl = document.getElementById("tag-suggestions");
 
-function renderColorPalette() {
-  colorPaletteEl.innerHTML = "";
-  // None button
-  const none = document.createElement("span");
-  none.className = "color-dot-none" + (selectedColor == null ? " active" : "");
-  none.textContent = "\u00D7";
-  none.title = t('color_none');
-  none.addEventListener("click", () => { selectedColor = null; renderColorPalette(); });
-  colorPaletteEl.appendChild(none);
-  // Color dots
+function renderColorSelect() {
+  // Update button label
+  updateColorBtn();
+  // Build dropdown items
+  colorSelectDropdown.innerHTML = "";
+  // None item
+  const noneItem = document.createElement("div");
+  noneItem.className = "color-select-item" + (selectedColor == null ? " active" : "");
+  noneItem.textContent = t('color_none');
+  noneItem.addEventListener("click", () => { selectedColor = null; closeColorSelect(); renderColorSelect(); });
+  colorSelectDropdown.appendChild(noneItem);
+  // Color items
   COLOR_PALETTE.forEach((c) => {
-    const dot = document.createElement("span");
-    dot.className = "color-dot" + (selectedColor === c.value ? " active" : "");
-    dot.style.backgroundColor = c.value;
-    dot.title = c.name;
-    dot.addEventListener("click", () => {
-      selectedColor = c.value;
-      renderColorPalette();
-    });
-    colorPaletteEl.appendChild(dot);
+    const item = document.createElement("div");
+    item.className = "color-select-item" + (selectedColor === c.value ? " active" : "");
+    const swatch = document.createElement("span");
+    swatch.className = "color-swatch";
+    swatch.style.backgroundColor = c.value;
+    item.appendChild(swatch);
+    item.appendChild(document.createTextNode(c.name));
+    item.addEventListener("click", () => { selectedColor = c.value; closeColorSelect(); renderColorSelect(); });
+    colorSelectDropdown.appendChild(item);
   });
 }
+
+function updateColorBtn() {
+  colorSelectBtn.innerHTML = "";
+  if (selectedColor) {
+    const swatch = document.createElement("span");
+    swatch.className = "color-swatch";
+    swatch.style.backgroundColor = selectedColor;
+    colorSelectBtn.appendChild(swatch);
+    const entry = COLOR_PALETTE.find((c) => c.value === selectedColor);
+    colorSelectBtn.appendChild(document.createTextNode(entry ? entry.name : selectedColor));
+  } else {
+    colorSelectBtn.appendChild(document.createTextNode(t('color_none')));
+  }
+}
+
+function closeColorSelect() {
+  colorSelectDropdown.classList.add("hidden");
+}
+
+colorSelectBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  colorSelectDropdown.classList.toggle("hidden");
+});
+
+document.addEventListener("click", (e) => {
+  if (!e.target.closest("#color-select")) closeColorSelect();
+});
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeColorSelect();
+});
 
 function renderTagChips() {
   tagChipsEl.innerHTML = "";
@@ -197,7 +231,7 @@ async function loadAllExistingTags() {
   } catch (_) {}
 }
 
-renderColorPalette();
+renderColorSelect();
 renderTagChips();
 
 function show(value) {
@@ -507,7 +541,7 @@ async function loadProfile(id) {
   selectedOrder = profile.order || 0;
   selectedColor = profile.color || null;
   selectedTags = Array.isArray(profile.tags) ? [...profile.tags] : [];
-  renderColorPalette();
+  renderColorSelect();
   renderTagChips();
   applyRequest(profile.request);
   // Show placeholder and clear button if password is stored in keyring
@@ -556,7 +590,7 @@ function clearForm() {
   clearSshPasswordFlag = false;
   selectedColor = null;
   selectedTags = [];
-  renderColorPalette();
+  renderColorSelect();
   renderTagChips();
   applyRequest({
     mysql: {
