@@ -1,4 +1,4 @@
-use bollard::container::ListContainersOptions;
+use bollard::query_parameters::ListContainersOptions;
 use bollard::Docker;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -19,10 +19,10 @@ pub struct DockerContainer {
 
 pub async fn discover_mysql_containers(docker: &Docker) -> Result<Vec<DockerContainer>, String> {
     let mut filters = HashMap::new();
-    filters.insert("status", vec!["running"]);
+    filters.insert("status".to_string(), vec!["running".to_string()]);
 
     let options = ListContainersOptions {
-        filters,
+        filters: Some(filters),
         ..Default::default()
     };
 

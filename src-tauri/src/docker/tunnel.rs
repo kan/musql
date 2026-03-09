@@ -1,9 +1,7 @@
-use bollard::container::{
-    Config, CreateContainerOptions, ListContainersOptions, StartContainerOptions,
-    StopContainerOptions,
+use bollard::models::{ContainerCreateBody, HostConfig, PortBinding};
+use bollard::query_parameters::{
+    CreateContainerOptions, CreateImageOptions, ListContainersOptions, StopContainerOptions,
 };
-use bollard::image::CreateImageOptions;
-use bollard::models::HostConfig;
 use bollard::Docker;
 use futures_util::TryStreamExt;
 use serde::Serialize;
@@ -30,7 +28,7 @@ pub async fn ensure_socat_image(docker: &Docker) -> Result<(), String> {
 
     // Pull the image
     let options = CreateImageOptions {
-        from_image: SOCAT_IMAGE,
+        from_image: Some(SOCAT_IMAGE.to_string()),
         ..Default::default()
     };
 
@@ -86,16 +84,13 @@ pub async fn create_tunnel(
     let mut labels = HashMap::new();
     labels.insert("musql.tunnel".to_string(), "true".to_string());
 
-    let port_binding = bollard::models::PortBinding {
+    let port_binding = PortBinding {
         host_ip: Some("127.0.0.1".to_string()),
         host_port: Some(local_port.to_string()),
     };
 
     let mut port_bindings = HashMap::new();
     port_bindings.insert(format!("{target_port}/tcp"), Some(vec![port_binding]));
-
-    let mut exposed_ports = HashMap::new();
-    exposed_ports.insert(format!("{target_port}/tcp"), HashMap::new());
 
     let host_config = HostConfig {
         auto_remove: Some(true),
@@ -104,17 +99,17 @@ pub async fn create_tunnel(
         ..Default::default()
     };
 
-    let config = Config {
+    let config = ContainerCreateBody {
         image: Some(SOCAT_IMAGE.to_string()),
         cmd: Some(socat_cmd.split_whitespace().map(String::from).collect()),
         labels: Some(labels),
-        exposed_ports: Some(exposed_ports),
+        exposed_ports: Some(vec![format!("{target_port}/tcp")]),
         host_config: Some(host_config),
         ..Default::default()
     };
 
     let options = CreateContainerOptions {
-        name: tunnel_name.as_str(),
+        name: Some(tunnel_name),
         ..Default::default()
     };
 
@@ -124,7 +119,7 @@ pub async fn create_tunnel(
         .map_err(|e| format!("Failed to create tunnel container: {e}"))?;
 
     docker
-        .start_container(&created.id, None::<StartContainerOptions<String>>)
+        .start_container(&created.id, None)
         .await
         .map_err(|e| format!("Failed to start tunnel container: {e}"))?;
 
@@ -145,7 +140,13 @@ pub async fn create_tunnel(
 
 pub async fn stop_tunnel(docker: &Docker, tunnel_container_id: &str) -> Result<(), String> {
     let _ = docker
-        .stop_container(tunnel_container_id, Some(StopContainerOptions { t: 2 }))
+        .stop_container(
+            tunnel_container_id,
+            Some(StopContainerOptions {
+                t: Some(2),
+                ..Default::default()
+            }),
+        )
         .await;
 
     // Remove from registry
@@ -158,10 +159,10 @@ pub async fn stop_tunnel(docker: &Docker, tunnel_container_id: &str) -> Result<(
 
 pub async fn cleanup_all_tunnels(docker: &Docker) -> Result<(), String> {
     let mut filters = HashMap::new();
-    filters.insert("label", vec!["musql.tunnel=true"]);
+    filters.insert("label".to_string(), vec!["musql.tunnel=true".to_string()]);
 
     let options = ListContainersOptions {
-        filters,
+        filters: Some(filters),
         ..Default::default()
     };
 
@@ -173,7 +174,13 @@ pub async fn cleanup_all_tunnels(docker: &Docker) -> Result<(), String> {
     for c in containers {
         if let Some(id) = c.id {
             let _ = docker
-                .stop_container(&id, Some(StopContainerOptions { t: 2 }))
+                .stop_container(
+                    &id,
+                    Some(StopContainerOptions {
+                        t: Some(2),
+                        ..Default::default()
+                    }),
+                )
                 .await;
         }
     }
