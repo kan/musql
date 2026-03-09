@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.5.2] - 2026-03-09
+
+### Added
+- 起動時にバックグラウンドでアップデートチェックを実行（3秒遅延、更新がある場合はバナーで通知） (#12)
+- SQL エディタで `;` 区切りのステートメント単位ハイライト（カーソル位置のステートメント全行を薄青背景で表示） (#11)
+
+### Changed
+- bollard 0.18 → 0.20（Docker API クレート、`query_parameters` / `ContainerCreateBody` への移行含む）
+- tauri 2.10.2 → 2.10.3
+- tokio 1.49.0 → 1.50.0
+
 ## [0.5.1] - 2026-03-06
 
 ### Changed
@@ -104,6 +115,7 @@
 - アプリ内自動更新（NSIS インストーラー + Ed25519 署名）
 - GitHub Actions CI/CD（cargo check + リリースビルド）
 
+[0.5.2]: https://github.com/kan/musql/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/kan/musql/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/kan/musql/compare/v0.4.5...v0.5.0
 [0.4.5]: https://github.com/kan/musql/compare/v0.4.1...v0.4.5

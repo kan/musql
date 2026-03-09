@@ -22,7 +22,7 @@ Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`
 - **SSH**: `russh` v0.57。認証方式は公開鍵（`key`）またはパスワード（`password`）を選択可能。公開鍵: 指定鍵 → agent → デフォルト鍵。パスワード: `session.authenticate_password()`。タイムアウト 8 秒。ssh config 参照時は認証方式を公開鍵に固定。
 - **AI アシスト**: チャット形式モーダル。ユーザーが自然言語でプロンプト → `ai_assist` コマンドで SQL 生成。スキーマは `SCHEMA_CACHE` でキャッシュ。Claude / OpenAI / Gemini 対応。チャット履歴は DB 毎に localStorage で保持（最大 50 件）。生成 SQL はコピー / エディタ挿入可。
 - **メニュー**: ハンバーガーボタン → `popup_menu()`。アクセラレータは非表示メニューバーで保持。
-- **アップデート**: `tauri-plugin-updater` + Ed25519 署名。手動チェック。Cargo feature `self-updater`（デフォルト有効）で分離。`--no-default-features` で Store ビルド（アップデータ無効）。
+- **アップデート**: `tauri-plugin-updater` + Ed25519 署名。起動3秒後に自動チェック + Help メニューから手動チェック。Cargo feature `self-updater`（デフォルト有効）で分離。`--no-default-features` で Store ビルド（アップデータ無効）。
 - **Docker 連携**: `bollard` クレートで Docker API に接続（名前付きパイプ → TCP `127.0.0.1:2375/2376` フォールバック、WSL2 dockerd 対応）。running コンテナから MySQL コンテナを自動検出（exposed port 3306 or `musql.enable=true` ラベル）。ports バインドなしのコンテナには `alpine/socat` 一時コンテナで TCP トンネルを作成（`auto_remove: true`、ラベル `musql.tunnel=true`）。トンネルコンテナは検出一覧から除外。アプリ起動時・終了時・query ウィンドウ close 時にトンネルをクリーンアップ。資格情報（user/password/ssl_mode）はコンテナ毎に localStorage で保持。Cargo feature `docker`（デフォルト有効）で `bollard`/`futures-util` 依存を分離。
 - **SQL 識別子**: JS `quoteId()` / Rust `escape_identifier()` でバッククォートエスケープ。
 
@@ -42,6 +42,16 @@ Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`
 - **Store dev 確認**: `cargo tauri dev --config src-tauri/tauri.store.conf.json -- --no-default-features --features docker`（要 Developer Command Prompt / RC.EXE in PATH）。
 - Store 用アイコン: `src-tauri/icons/Square44x44Logo.png`, `Square150x150Logo.png`, `StoreLogo.png`。
 - CI: `release.yml` の `build-store` ジョブが Store EXE をリリースにアップロード。
+
+## Release procedure
+1. `CHANGELOG.md` に新バージョンのエントリを追加（日付・Added/Changed/Fixed セクション・比較リンク）
+2. `src-tauri/Cargo.toml` の `version` を更新
+3. `src-tauri/tauri.conf.json` の `version` を更新
+4. `cargo check` で `Cargo.lock` を更新（バージョン番号が反映される）
+5. 上記ファイルをコミット: `Bump version to X.Y.Z`
+6. タグ作成 & プッシュ: `git tag vX.Y.Z && git push origin main && git push origin vX.Y.Z`
+7. CI (`release.yml`) が自動でビルド・GitHub Release 作成・アセットアップロードを実行
+8. GitHub Release のリリースノートを確認・必要に応じて編集
 
 ## Roadmap
 
