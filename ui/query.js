@@ -1852,6 +1852,36 @@ function addSqlTab(initialContent, tabNum) {
     editor.on("focus", function () { editorTouched = true; });
     editor.on("mousedown", function () { editorTouched = true; });
 
+    // Highlight the current SQL statement (delimited by ;)
+    let stmtHighlightLines = [];
+    function highlightCurrentStatement() {
+      // Clear previous highlights
+      stmtHighlightLines.forEach(function (lh) {
+        editor.removeLineClass(lh, "background", "cm-statement-highlight");
+      });
+      stmtHighlightLines = [];
+
+      const text = editor.getValue();
+      if (!text.trim()) return;
+      const cursor = editor.indexFromPos(editor.getCursor());
+      let start = 0;
+      const parts = text.split(";");
+      for (let i = 0; i < parts.length; i++) {
+        const end = start + parts[i].length;
+        if (cursor <= end) {
+          // Found the statement containing the cursor
+          const fromLine = editor.posFromIndex(start).line;
+          const toLine = editor.posFromIndex(end).line;
+          for (let ln = fromLine; ln <= toLine; ln++) {
+            stmtHighlightLines.push(editor.addLineClass(ln, "background", "cm-statement-highlight"));
+          }
+          break;
+        }
+        start = end + 1; // skip the ;
+      }
+    }
+    editor.on("cursorActivity", highlightCurrentStatement);
+
     editor.on("change", function () {
       scheduleDraftSave();
     });

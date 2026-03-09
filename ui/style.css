@@ -1415,6 +1415,11 @@ pre {
   color: var(--ink);
 }
 
+/* ── CodeMirror active statement highlight ── */
+.cm-statement-highlight {
+  background: rgba(59, 130, 246, 0.07);
+}
+
 /* ── CodeMirror active line ── */
 .CodeMirror-activeline-background {
   background: var(--hover-bg);
@@ -1438,6 +1443,9 @@ html.dark .CodeMirror-cursor {
 html.dark .CodeMirror-selected,
 html.dark .CodeMirror-focused .CodeMirror-selected {
   background: #2a3a5a;
+}
+html.dark .cm-statement-highlight {
+  background: rgba(59, 130, 246, 0.12);
 }
 html.dark .CodeMirror-activeline-background {
   background: #293754;

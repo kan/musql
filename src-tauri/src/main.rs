@@ -2852,6 +2852,23 @@ fn main() {
                     }
                 });
             }
+            #[cfg(feature = "self-updater")]
+            {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    // Delay to avoid slowing down app startup
+                    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                    use tauri_plugin_updater::UpdaterExt;
+                    if let Ok(updater) = handle.updater() {
+                        if let Ok(Some(update)) = updater.check().await {
+                            let _ = handle.emit(
+                                "update-available",
+                                serde_json::json!({ "version": update.version }),
+                            );
+                        }
+                    }
+                });
+            }
             Ok(())
         })
         .on_menu_event(|app, event| {
