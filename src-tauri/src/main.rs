@@ -514,32 +514,47 @@ fn generate_profile_id() -> String {
 
 const KEYRING_SERVICE: &str = "musql";
 
-fn get_password(profile_id: &str) -> String {
-    let entry = match keyring::Entry::new(KEYRING_SERVICE, profile_id) {
+// ── Generic keyring helpers ──
+
+fn keyring_get(key: &str) -> String {
+    let entry = match keyring::Entry::new(KEYRING_SERVICE, key) {
         Ok(e) => e,
         Err(_) => return String::new(),
     };
     entry.get_password().unwrap_or_default()
 }
 
-fn set_password(profile_id: &str, password: &str) -> Result<(), String> {
-    let entry = keyring::Entry::new(KEYRING_SERVICE, profile_id)
-        .map_err(|e| format!("Keyring error: {e}"))?;
-    if password.is_empty() {
-        // Empty means delete
+fn keyring_set(key: &str, value: &str) -> Result<(), String> {
+    let entry =
+        keyring::Entry::new(KEYRING_SERVICE, key).map_err(|e| format!("Keyring error: {e}"))?;
+    if value.is_empty() {
         let _ = entry.delete_credential();
     } else {
         entry
-            .set_password(password)
-            .map_err(|e| format!("Failed to save password: {e}"))?;
+            .set_password(value)
+            .map_err(|e| format!("Keyring save error: {e}"))?;
     }
     Ok(())
 }
 
-fn delete_password(profile_id: &str) {
-    if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, profile_id) {
+fn keyring_delete(key: &str) {
+    if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, key) {
         let _ = entry.delete_credential();
     }
+}
+
+// ── MySQL password ──
+
+fn get_password(profile_id: &str) -> String {
+    keyring_get(profile_id)
+}
+
+fn set_password(profile_id: &str, password: &str) -> Result<(), String> {
+    keyring_set(profile_id, password)
+}
+
+fn delete_password(profile_id: &str) {
+    keyring_delete(profile_id);
 }
 
 #[tauri::command]
@@ -547,34 +562,18 @@ fn has_password(profile_id: String) -> bool {
     !get_password(&profile_id).is_empty()
 }
 
+// ── SSH passphrase ──
+
 fn get_ssh_passphrase(profile_id: &str) -> String {
-    let key = format!("{profile_id}:ssh_passphrase");
-    let entry = match keyring::Entry::new(KEYRING_SERVICE, &key) {
-        Ok(e) => e,
-        Err(_) => return String::new(),
-    };
-    entry.get_password().unwrap_or_default()
+    keyring_get(&format!("{profile_id}:ssh_passphrase"))
 }
 
 fn set_ssh_passphrase(profile_id: &str, passphrase: &str) -> Result<(), String> {
-    let key = format!("{profile_id}:ssh_passphrase");
-    let entry =
-        keyring::Entry::new(KEYRING_SERVICE, &key).map_err(|e| format!("Keyring error: {e}"))?;
-    if passphrase.is_empty() {
-        let _ = entry.delete_credential();
-    } else {
-        entry
-            .set_password(passphrase)
-            .map_err(|e| format!("Failed to save SSH passphrase: {e}"))?;
-    }
-    Ok(())
+    keyring_set(&format!("{profile_id}:ssh_passphrase"), passphrase)
 }
 
 fn delete_ssh_passphrase(profile_id: &str) {
-    let key = format!("{profile_id}:ssh_passphrase");
-    if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, &key) {
-        let _ = entry.delete_credential();
-    }
+    keyring_delete(&format!("{profile_id}:ssh_passphrase"));
 }
 
 #[tauri::command]
@@ -582,34 +581,18 @@ fn has_ssh_passphrase(profile_id: String) -> bool {
     !get_ssh_passphrase(&profile_id).is_empty()
 }
 
+// ── SSH password ──
+
 fn get_ssh_password(profile_id: &str) -> String {
-    let key = format!("{profile_id}:ssh_password");
-    let entry = match keyring::Entry::new(KEYRING_SERVICE, &key) {
-        Ok(e) => e,
-        Err(_) => return String::new(),
-    };
-    entry.get_password().unwrap_or_default()
+    keyring_get(&format!("{profile_id}:ssh_password"))
 }
 
 fn set_ssh_password(profile_id: &str, password: &str) -> Result<(), String> {
-    let key = format!("{profile_id}:ssh_password");
-    let entry =
-        keyring::Entry::new(KEYRING_SERVICE, &key).map_err(|e| format!("Keyring error: {e}"))?;
-    if password.is_empty() {
-        let _ = entry.delete_credential();
-    } else {
-        entry
-            .set_password(password)
-            .map_err(|e| format!("Failed to save SSH password: {e}"))?;
-    }
-    Ok(())
+    keyring_set(&format!("{profile_id}:ssh_password"), password)
 }
 
 fn delete_ssh_password(profile_id: &str) {
-    let key = format!("{profile_id}:ssh_password");
-    if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, &key) {
-        let _ = entry.delete_credential();
-    }
+    keyring_delete(&format!("{profile_id}:ssh_password"));
 }
 
 #[tauri::command]
@@ -641,26 +624,11 @@ fn ai_keyring_key(provider: &AiProvider) -> String {
 }
 
 fn get_ai_api_key(provider: &AiProvider) -> String {
-    let key = ai_keyring_key(provider);
-    let entry = match keyring::Entry::new(KEYRING_SERVICE, &key) {
-        Ok(e) => e,
-        Err(_) => return String::new(),
-    };
-    entry.get_password().unwrap_or_default()
+    keyring_get(&ai_keyring_key(provider))
 }
 
 fn set_ai_api_key(provider: &AiProvider, api_key: &str) -> Result<(), String> {
-    let key = ai_keyring_key(provider);
-    let entry =
-        keyring::Entry::new(KEYRING_SERVICE, &key).map_err(|e| format!("Keyring error: {e}"))?;
-    if api_key.is_empty() {
-        let _ = entry.delete_credential();
-    } else {
-        entry
-            .set_password(api_key)
-            .map_err(|e| format!("Failed to save AI API key: {e}"))?;
-    }
-    Ok(())
+    keyring_set(&ai_keyring_key(provider), api_key)
 }
 
 // ── Docker keyring ──
@@ -671,27 +639,12 @@ fn docker_keyring_key(container_id: &str) -> String {
 
 #[tauri::command]
 fn get_docker_password(container_id: String) -> String {
-    let key = docker_keyring_key(&container_id);
-    let entry = match keyring::Entry::new(KEYRING_SERVICE, &key) {
-        Ok(e) => e,
-        Err(_) => return String::new(),
-    };
-    entry.get_password().unwrap_or_default()
+    keyring_get(&docker_keyring_key(&container_id))
 }
 
 #[tauri::command]
 fn save_docker_password(container_id: String, password: String) -> Result<(), String> {
-    let key = docker_keyring_key(&container_id);
-    let entry =
-        keyring::Entry::new(KEYRING_SERVICE, &key).map_err(|e| format!("Keyring error: {e}"))?;
-    if password.is_empty() {
-        let _ = entry.delete_credential();
-    } else {
-        entry
-            .set_password(&password)
-            .map_err(|e| format!("Failed to save Docker password: {e}"))?;
-    }
-    Ok(())
+    keyring_set(&docker_keyring_key(&container_id), &password)
 }
 
 // ── Schema fetching ──
