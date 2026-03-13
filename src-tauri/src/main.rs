@@ -663,6 +663,37 @@ fn set_ai_api_key(provider: &AiProvider, api_key: &str) -> Result<(), String> {
     Ok(())
 }
 
+// ── Docker keyring ──
+
+fn docker_keyring_key(container_id: &str) -> String {
+    format!("docker:{container_id}")
+}
+
+#[tauri::command]
+fn get_docker_password(container_id: String) -> String {
+    let key = docker_keyring_key(&container_id);
+    let entry = match keyring::Entry::new(KEYRING_SERVICE, &key) {
+        Ok(e) => e,
+        Err(_) => return String::new(),
+    };
+    entry.get_password().unwrap_or_default()
+}
+
+#[tauri::command]
+fn save_docker_password(container_id: String, password: String) -> Result<(), String> {
+    let key = docker_keyring_key(&container_id);
+    let entry =
+        keyring::Entry::new(KEYRING_SERVICE, &key).map_err(|e| format!("Keyring error: {e}"))?;
+    if password.is_empty() {
+        let _ = entry.delete_credential();
+    } else {
+        entry
+            .set_password(&password)
+            .map_err(|e| format!("Failed to save Docker password: {e}"))?;
+    }
+    Ok(())
+}
+
 // ── Schema fetching ──
 
 fn fetch_schema(pool: &Pool, database: &str) -> Result<SchemaInfo, String> {
@@ -3039,7 +3070,9 @@ fn main() {
             docker_create_tunnel,
             docker_stop_tunnel,
             docker_cleanup_tunnels,
-            open_docker_query_window
+            open_docker_query_window,
+            get_docker_password,
+            save_docker_password
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {

@@ -746,6 +746,7 @@ async function checkDockerAvailable() {
     const available = await safeInvoke("docker_available");
     console.log("[Docker] docker_available =", available);
     dockerBtn.style.display = available ? "" : "none";
+    if (available) await migrateDockerCreds();
   } catch (e) {
     console.warn("[Docker] docker_available error:", e);
     dockerBtn.style.display = "none";
@@ -790,33 +791,69 @@ async function showDockerModal() {
   }
 }
 
-// Docker credential persistence per container (localStorage)
+// Docker credential persistence: password in OS keyring, user/ssl_mode in localStorage
 var DOCKER_CRED_KEY = "musql:docker-creds";
 var DOCKER_LAST_KEY = "musql:docker-last-cred";
+var DOCKER_LAST_ID = "_last";
 
 function loadDockerCreds() {
   try { return JSON.parse(localStorage.getItem(DOCKER_CRED_KEY) || "{}"); } catch (_) { return {}; }
 }
-function saveDockerCred(containerId, cred) {
+// Migrate legacy plaintext passwords from localStorage to keyring (one-time)
+async function migrateDockerCreds() {
   var all = loadDockerCreds();
-  all[containerId] = cred;
-  localStorage.setItem(DOCKER_CRED_KEY, JSON.stringify(all));
-  localStorage.setItem(DOCKER_LAST_KEY, JSON.stringify(cred));
+  var migrated = false;
+  for (var id in all) {
+    if (all[id] && all[id].password) {
+      await safeInvoke("save_docker_password", { containerId: id, password: all[id].password });
+      delete all[id].password;
+      migrated = true;
+    }
+  }
+  if (migrated) {
+    localStorage.setItem(DOCKER_CRED_KEY, JSON.stringify(all));
+  }
+  // Also migrate last-used cred
+  try {
+    var last = JSON.parse(localStorage.getItem(DOCKER_LAST_KEY));
+    if (last && last.password) {
+      await safeInvoke("save_docker_password", { containerId: DOCKER_LAST_ID, password: last.password });
+      delete last.password;
+      localStorage.setItem(DOCKER_LAST_KEY, JSON.stringify(last));
+    }
+  } catch (_) { /* ignore */ }
 }
-function getDockerCred(containerId) {
+async function saveDockerCred(containerId, cred) {
+  // Save password to OS keyring (never localStorage)
+  await safeInvoke("save_docker_password", { containerId: containerId, password: cred.password || "" });
+  await safeInvoke("save_docker_password", { containerId: DOCKER_LAST_ID, password: cred.password || "" });
+  // Save non-secret fields to localStorage
+  var meta = { user: cred.user, ssl_mode: cred.ssl_mode };
   var all = loadDockerCreds();
-  if (all[containerId]) return all[containerId];
-  try { return JSON.parse(localStorage.getItem(DOCKER_LAST_KEY)); } catch (_) { return null; }
+  all[containerId] = meta;
+  localStorage.setItem(DOCKER_CRED_KEY, JSON.stringify(all));
+  localStorage.setItem(DOCKER_LAST_KEY, JSON.stringify(meta));
+}
+async function getDockerCred(containerId) {
+  var all = loadDockerCreds();
+  var meta = all[containerId] || null;
+  var keyId = meta ? containerId : DOCKER_LAST_ID;
+  if (!meta) {
+    try { meta = JSON.parse(localStorage.getItem(DOCKER_LAST_KEY)); } catch (_) { /* ignore */ }
+  }
+  if (!meta) return null;
+  var pw = await safeInvoke("get_docker_password", { containerId: keyId });
+  return { user: meta.user, password: pw || "", ssl_mode: meta.ssl_mode };
 }
 
-function showDockerCredPrompt(container) {
+async function showDockerCredPrompt(container) {
+  // Restore saved values: per-container > last-used > label > defaults
+  var saved = await getDockerCred(container.id);
+  dockerCredUser.value = container.label_user || (saved && saved.user) || "root";
+  dockerCredPassword.value = container.label_password || (saved && saved.password) || "";
+  dockerCredSsl.value = (saved && saved.ssl_mode) || "DISABLED";
+  dockerCredModal.classList.remove("hidden");
   return new Promise(function(resolve) {
-    // Restore saved values: per-container > last-used > label > defaults
-    var saved = getDockerCred(container.id);
-    dockerCredUser.value = container.label_user || (saved && saved.user) || "root";
-    dockerCredPassword.value = container.label_password || (saved && saved.password) || "";
-    dockerCredSsl.value = (saved && saved.ssl_mode) || "DISABLED";
-    dockerCredModal.classList.remove("hidden");
     dockerCredResolve = resolve;
   });
 }
@@ -844,7 +881,7 @@ async function connectToDockerContainer(container) {
     user = container.label_user;
     password = container.label_password;
     // Use saved ssl_mode if available, otherwise default
-    var saved = getDockerCred(container.id);
+    var saved = await getDockerCred(container.id);
     sslMode = (saved && saved.ssl_mode) || "DISABLED";
   } else {
     var creds = await showDockerCredPrompt(container);
@@ -855,7 +892,7 @@ async function connectToDockerContainer(container) {
   }
 
   // Persist credentials for this container
-  saveDockerCred(container.id, { user: user, password: password, ssl_mode: sslMode });
+  await saveDockerCred(container.id, { user: user, password: password, ssl_mode: sslMode });
 
   var host, port;
   var tunnelContainerId = null;

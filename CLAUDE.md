@@ -23,7 +23,7 @@ Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`
 - **AI アシスト**: チャット形式モーダル。ユーザーが自然言語でプロンプト → `ai_assist` コマンドで SQL 生成。スキーマは `SCHEMA_CACHE` でキャッシュ。Claude / OpenAI / Gemini 対応。チャット履歴は DB 毎に localStorage で保持（最大 50 件）。生成 SQL はコピー / エディタ挿入可。
 - **メニュー**: ハンバーガーボタン → `popup_menu()`。アクセラレータは非表示メニューバーで保持。
 - **アップデート**: `tauri-plugin-updater` + Ed25519 署名。起動3秒後に自動チェック + Help メニューから手動チェック。Cargo feature `self-updater`（デフォルト有効）で分離。`--no-default-features` で Store ビルド（アップデータ無効）。
-- **Docker 連携**: `bollard` クレートで Docker API に接続（名前付きパイプ → TCP `127.0.0.1:2375/2376` フォールバック、WSL2 dockerd 対応）。running コンテナから MySQL コンテナを自動検出（exposed port 3306 or `musql.enable=true` ラベル）。ports バインドなしのコンテナには `alpine/socat` 一時コンテナで TCP トンネルを作成（`auto_remove: true`、ラベル `musql.tunnel=true`）。トンネルコンテナは検出一覧から除外。アプリ起動時・終了時・query ウィンドウ close 時にトンネルをクリーンアップ。資格情報（user/password/ssl_mode）はコンテナ毎に localStorage で保持。Cargo feature `docker`（デフォルト有効）で `bollard`/`futures-util` 依存を分離。
+- **Docker 連携**: `bollard` クレートで Docker API に接続（名前付きパイプ → TCP `127.0.0.1:2375/2376` フォールバック、WSL2 dockerd 対応）。running コンテナから MySQL コンテナを自動検出（exposed port 3306 or `musql.enable=true` ラベル）。ports バインドなしのコンテナには `alpine/socat` 一時コンテナで TCP トンネルを作成（`auto_remove: true`、ラベル `musql.tunnel=true`）。トンネルコンテナは検出一覧から除外。アプリ起動時・終了時・query ウィンドウ close 時にトンネルをクリーンアップ。資格情報はコンテナ毎に保持（user/ssl_mode は localStorage、パスワードは keyring）。Cargo feature `docker`（デフォルト有効）で `bollard`/`futures-util` 依存を分離。
 - **SQL 識別子**: JS `quoteId()` / Rust `escape_identifier()` でバッククォートエスケープ。
 - **ウィンドウ管理**: show/hide パターン採用。main 以外のウィンドウ（query, settings）は `on_window_event` で `CloseRequested` を `api.prevent_close()` + `window.hide()` に差し替え、ウィンドウ破棄を防止。query 閉じ時は `query:reset` イベントを emit してから main を show。main ウィンドウの close はそのままアプリ終了。参考知見（[zenn.dev/sttk3/articles/69cb3bd6331325](https://zenn.dev/sttk3/articles/69cb3bd6331325)）:
   - `close()` はウィンドウを完全破棄、`hide()` はメモリ保持で非表示、`destroy()` はイベント発火なしで破棄。macOS では最後のウィンドウを `close()` するとアプリ自動終了するため main は `hide()` が安全（musql は Windows 専用だが将来のクロスプラットフォーム対応時に重要）。
@@ -36,8 +36,8 @@ Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`
 - `musql:collapsed`, `musql:drafts:<profileId>`, `musql:history:<profileId>`, `musql:theme`, `musql:lang`
 - `musql:ai:provider`, `musql:ai:model`
 - `musql:ai-chat:<profileId>:<database>` — AI アシストのチャット履歴
-- `musql:docker-creds` — Docker コンテナ毎の資格情報（user/password/ssl_mode）
-- `musql:docker-last-cred` — 最後に使った Docker 資格情報（新規コンテナのデフォルト値）
+- `musql:docker-creds` — Docker コンテナ毎の資格情報（user/ssl_mode のみ。パスワードは keyring `docker:{containerId}` に保存）
+- `musql:docker-last-cred` — 最後に使った Docker 資格情報（user/ssl_mode のみ。パスワードは keyring `docker:_last` に保存）
 
 ## Limits
 - 結果行 500 件、ページング 100 件/ページ、SSH タイムアウト 8 秒。
