@@ -769,11 +769,19 @@ async function showDockerModal() {
     containers.forEach(function(c) {
       var el = document.createElement("div");
       el.className = "db-list-item";
-      el.innerHTML = icon('container', 14) +
-        '<div class="docker-item-meta">' +
-          '<div>' + c.name + '</div>' +
-          '<div class="docker-item-sub">' + c.image + '</div>' +
-        '</div>';
+      var iconSpan = document.createElement("span");
+      iconSpan.innerHTML = icon('container', 14);
+      el.appendChild(iconSpan);
+      var meta = document.createElement("div");
+      meta.className = "docker-item-meta";
+      var nameDiv = document.createElement("div");
+      nameDiv.textContent = c.name;
+      meta.appendChild(nameDiv);
+      var subDiv = document.createElement("div");
+      subDiv.className = "docker-item-sub";
+      subDiv.textContent = c.image;
+      meta.appendChild(subDiv);
+      el.appendChild(meta);
       el.addEventListener("click", function() { connectToDockerContainer(c); });
       dockerList.appendChild(el);
     });

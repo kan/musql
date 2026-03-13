@@ -1534,8 +1534,8 @@ function openTableTab(tableName, initialView) {
       if (columnsDetected) return;
       const sql = "SELECT COLUMN_NAME, DATA_TYPE, COLUMN_KEY " +
         "FROM INFORMATION_SCHEMA.COLUMNS " +
-        "WHERE TABLE_SCHEMA = '" + currentDb.replace(/'/g, "\\'") + "' " +
-        "AND TABLE_NAME = '" + tableName.replace(/'/g, "\\'") + "' " +
+        "WHERE TABLE_SCHEMA = '" + currentDb.replace(/'/g, "''") + "' " +
+        "AND TABLE_NAME = '" + tableName.replace(/'/g, "''") + "' " +
         "ORDER BY ORDINAL_POSITION";
       const res = await runQuery(sql);
       allColumns = res.rows.map((r) => ({ name: r[0], dataType: (r[1] || "").toLowerCase(), columnKey: r[2] || "" }));
@@ -1571,7 +1571,7 @@ function openTableTab(tableName, initialView) {
           const val = row[idx];
           if (val === null || val === undefined) return quoteId(pk) + " IS NULL";
           if (typeof val === "number") return quoteId(pk) + " = " + val;
-          return quoteId(pk) + " = '" + String(val).replace(/'/g, "\\'") + "'";
+          return quoteId(pk) + " = '" + String(val).replace(/'/g, "''") + "'";
         }).filter(Boolean);
         if (whereParts.length > 0) {
           const detailCols = allColumns.map((c) => {

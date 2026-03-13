@@ -752,7 +752,10 @@ async fn call_ai_api(
     api_key: &str,
     prompt: &str,
 ) -> Result<String, String> {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
 
     match provider {
         AiProvider::Claude => {
@@ -826,7 +829,15 @@ async fn call_ai_api(
                 .json(&body)
                 .send()
                 .await
-                .map_err(|e| format!("Gemini API request failed: {e}"))?;
+                .map_err(|e| {
+                    // Sanitise: reqwest errors may include the full URL containing the API key.
+                    let msg = e.to_string();
+                    if msg.contains("key=") {
+                        "Gemini API request failed: network error".to_string()
+                    } else {
+                        format!("Gemini API request failed: {msg}")
+                    }
+                })?;
             let status = resp.status();
             let json: serde_json::Value = resp
                 .json()
@@ -2965,35 +2976,31 @@ fn main() {
         })
         .manage(Arc::new(Mutex::new(None::<ConnectionCache>)))
         .manage(ActiveWindow(Mutex::new(WIN_MAIN.to_string())))
-        .on_window_event(|window, event| {
-            match event {
-                tauri::WindowEvent::Focused(true) => {
-                    if let Some(state) = window.try_state::<ActiveWindow>() {
-                        if let Ok(mut label) = state.0.lock() {
-                            *label = window.label().to_string();
-                        }
+        .on_window_event(|window, event| match event {
+            tauri::WindowEvent::Focused(true) => {
+                if let Some(state) = window.try_state::<ActiveWindow>() {
+                    if let Ok(mut label) = state.0.lock() {
+                        *label = window.label().to_string();
                     }
                 }
-                tauri::WindowEvent::CloseRequested { api, .. } => {
-                    if window.label() != WIN_MAIN {
-                        api.prevent_close();
-                        let is_query = window.label() == WIN_QUERY;
-                        if is_query {
-                            let _ = window.emit("query:reset", ());
-                        }
-                        let _ = window.hide();
-                        if is_query {
-                            if let Some(main_win) =
-                                window.app_handle().get_webview_window(WIN_MAIN)
-                            {
-                                let _ = main_win.show();
-                                let _ = main_win.set_focus();
-                            }
-                        }
-                    }
-                }
-                _ => {}
             }
+            tauri::WindowEvent::CloseRequested { api, .. } => {
+                if window.label() != WIN_MAIN {
+                    api.prevent_close();
+                    let is_query = window.label() == WIN_QUERY;
+                    if is_query {
+                        let _ = window.emit("query:reset", ());
+                    }
+                    let _ = window.hide();
+                    if is_query {
+                        if let Some(main_win) = window.app_handle().get_webview_window(WIN_MAIN) {
+                            let _ = main_win.show();
+                            let _ = main_win.set_focus();
+                        }
+                    }
+                }
+            }
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             test_connection,
