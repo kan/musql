@@ -277,6 +277,11 @@ static RUNNING_QUERIES: std::sync::LazyLock<Mutex<HashMap<String, RunningQueryEn
 static SCHEMA_CACHE: std::sync::LazyLock<Mutex<HashMap<String, SchemaInfo>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
+// Window label constants — must match the labels in tauri.conf.json.
+const WIN_MAIN: &str = "main";
+const WIN_QUERY: &str = "query";
+const WIN_SETTINGS: &str = "settings";
+
 /// Tracks the label of the currently focused window.
 /// `is_focused()` can be unreliable on Windows right after window creation,
 /// so we explicitly track via `WindowEvent::Focused`.
@@ -2239,7 +2244,7 @@ fn open_settings_window(
     group_id: Option<String>,
 ) -> Result<(), String> {
     let window = app
-        .get_webview_window("settings")
+        .get_webview_window(WIN_SETTINGS)
         .ok_or("Settings window not found")?;
     window
         .emit("settings:open", json!({ "id": id, "group_id": group_id }))
@@ -2256,7 +2261,7 @@ fn open_settings_window(
 #[tauri::command]
 fn open_query_window(app: AppHandle, id: String) -> Result<(), String> {
     let window = app
-        .get_webview_window("query")
+        .get_webview_window(WIN_QUERY)
         .ok_or("Query window not found")?;
     window
         .emit("query:open", id)
@@ -2268,7 +2273,7 @@ fn open_query_window(app: AppHandle, id: String) -> Result<(), String> {
         .set_focus()
         .map_err(|e| format!("Failed to focus query window: {e}"))?;
     // Hide main (connections) window
-    if let Some(main_win) = app.get_webview_window("main") {
+    if let Some(main_win) = app.get_webview_window(WIN_MAIN) {
         let _ = main_win.hide();
     }
     Ok(())
@@ -2287,9 +2292,9 @@ fn hide_window(window: Window) -> Result<(), String> {
 fn show_popup_menu(window: Window, lang: String, theme: String) -> Result<(), String> {
     let handle = window.app_handle();
     let menu = match window.label() {
-        "main" => build_main_menu(handle, &lang, &theme),
-        "query" => build_query_menu(handle, &lang, &theme),
-        "settings" => build_settings_menu(handle, &lang, &theme),
+        WIN_MAIN => build_main_menu(handle, &lang, &theme),
+        WIN_QUERY => build_query_menu(handle, &lang, &theme),
+        WIN_SETTINGS => build_settings_menu(handle, &lang, &theme),
         _ => return Ok(()),
     }
     .map_err(|e| format!("{e}"))?;
@@ -2464,7 +2469,7 @@ fn build_main_menu(handle: &AppHandle<Wry>, lang: &str, theme: &str) -> tauri::R
         ],
     )?;
     let edit_menu = build_edit_submenu(handle, lang)?;
-    let view_menu = build_view_submenu(handle, lang, theme, "main")?;
+    let view_menu = build_view_submenu(handle, lang, theme, WIN_MAIN)?;
     let github_item = MenuItem::with_id(
         handle,
         "main:github",
@@ -2519,7 +2524,7 @@ fn build_query_menu(handle: &AppHandle<Wry>, lang: &str, theme: &str) -> tauri::
     )?;
     let edit_menu = build_edit_submenu(handle, lang)?;
     // Query view menu: Switch DB + shared theme/lang items
-    let view_items = build_view_items(handle, lang, theme, "query")?;
+    let view_items = build_view_items(handle, lang, theme, WIN_QUERY)?;
     let switch_db = MenuItem::with_id(
         handle,
         "query:switch-db",
@@ -2586,7 +2591,7 @@ fn build_settings_menu(
     theme: &str,
 ) -> tauri::Result<Menu<Wry>> {
     let edit_menu = build_edit_submenu(handle, lang)?;
-    let view_menu = build_view_submenu(handle, lang, theme, "settings")?;
+    let view_menu = build_view_submenu(handle, lang, theme, WIN_SETTINGS)?;
     let settings_menu = Submenu::with_items(
         handle,
         ml(lang, "settings"),
@@ -2631,15 +2636,15 @@ fn setup_menus(handle: &AppHandle<Wry>) -> tauri::Result<()> {
     let main_menu = build_main_menu(handle, "en", "light")?;
     let query_menu = build_query_menu(handle, "en", "light")?;
     let settings_menu = build_settings_menu(handle, "en", "light")?;
-    if let Some(w) = handle.get_webview_window("main") {
+    if let Some(w) = handle.get_webview_window(WIN_MAIN) {
         let _ = w.set_menu(main_menu);
         let _ = w.hide_menu();
     }
-    if let Some(w) = handle.get_webview_window("query") {
+    if let Some(w) = handle.get_webview_window(WIN_QUERY) {
         let _ = w.set_menu(query_menu);
         let _ = w.hide_menu();
     }
-    if let Some(w) = handle.get_webview_window("settings") {
+    if let Some(w) = handle.get_webview_window(WIN_SETTINGS) {
         let _ = w.set_menu(settings_menu);
         let _ = w.hide_menu();
     }
@@ -2782,7 +2787,7 @@ async fn docker_cleanup_tunnels() -> Result<(), String> {
 #[tauri::command]
 fn open_docker_query_window(app: AppHandle, info: DockerConnectionInfo) -> Result<(), String> {
     let window = app
-        .get_webview_window("query")
+        .get_webview_window(WIN_QUERY)
         .ok_or("Query window not found")?;
     window
         .emit("query:docker-open", &info)
@@ -2793,7 +2798,7 @@ fn open_docker_query_window(app: AppHandle, info: DockerConnectionInfo) -> Resul
     window
         .set_focus()
         .map_err(|e| format!("Failed to focus query window: {e}"))?;
-    if let Some(main_win) = app.get_webview_window("main") {
+    if let Some(main_win) = app.get_webview_window(WIN_MAIN) {
         let _ = main_win.hide();
     }
     Ok(())
@@ -2914,14 +2919,14 @@ fn main() {
                                 }
                                 Ok(None) => {
                                     let _ = handle.emit_to(
-                                        EventTarget::webview_window("main"),
+                                        EventTarget::webview_window(WIN_MAIN),
                                         "menu:action",
                                         "no-update",
                                     );
                                 }
                                 Err(_) => {
                                     let _ = handle.emit_to(
-                                        EventTarget::webview_window("main"),
+                                        EventTarget::webview_window(WIN_MAIN),
                                         "menu:action",
                                         "no-update",
                                     );
@@ -2929,7 +2934,7 @@ fn main() {
                             },
                             Err(_) => {
                                 let _ = handle.emit_to(
-                                    EventTarget::webview_window("main"),
+                                    EventTarget::webview_window(WIN_MAIN),
                                     "menu:action",
                                     "no-update",
                                 );
@@ -2938,11 +2943,11 @@ fn main() {
                     });
                 }
                 "query:close" => {
-                    if let Some(w) = app.get_webview_window("query") {
+                    if let Some(w) = app.get_webview_window(WIN_QUERY) {
                         let _ = w.emit("query:reset", ());
                         let _ = w.hide();
                     }
-                    if let Some(w) = app.get_webview_window("main") {
+                    if let Some(w) = app.get_webview_window(WIN_MAIN) {
                         let _ = w.show();
                         let _ = w.set_focus();
                     }
@@ -2959,7 +2964,7 @@ fn main() {
             }
         })
         .manage(Arc::new(Mutex::new(None::<ConnectionCache>)))
-        .manage(ActiveWindow(Mutex::new("main".to_string())))
+        .manage(ActiveWindow(Mutex::new(WIN_MAIN.to_string())))
         .on_window_event(|window, event| {
             match event {
                 tauri::WindowEvent::Focused(true) => {
@@ -2970,15 +2975,16 @@ fn main() {
                     }
                 }
                 tauri::WindowEvent::CloseRequested { api, .. } => {
-                    if window.label() != "main" {
+                    if window.label() != WIN_MAIN {
                         api.prevent_close();
-                        if window.label() == "query" {
+                        let is_query = window.label() == WIN_QUERY;
+                        if is_query {
                             let _ = window.emit("query:reset", ());
                         }
                         let _ = window.hide();
-                        if window.label() == "query" {
+                        if is_query {
                             if let Some(main_win) =
-                                window.app_handle().get_webview_window("main")
+                                window.app_handle().get_webview_window(WIN_MAIN)
                             {
                                 let _ = main_win.show();
                                 let _ = main_win.set_focus();
