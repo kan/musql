@@ -2292,6 +2292,7 @@ tabAddBtn.addEventListener("click", () => addSqlTab());
 
 // ── Tauri event ──
 
+// Note: unlisten is not needed — windows use show/hide pattern, so listeners register once.
 if (eventApi && eventApi.listen) {
   eventApi.listen("query:open", async (event) => {
     const id = event.payload || "";

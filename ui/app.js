@@ -916,6 +916,8 @@ refreshProfiles().catch((error) => alert(String(error)));
 window.addEventListener("focus", () => refreshProfiles());
 
 // Listen for profile changes from settings window
+// Note: unlisten is not needed here — windows use show/hide (never destroyed),
+// so JS context persists for the app lifetime and listeners are registered exactly once.
 const eventApi = window.__TAURI__ && window.__TAURI__.event ? window.__TAURI__.event : null;
 if (eventApi && eventApi.listen) {
   eventApi.listen("profiles:changed", () => refreshProfiles());

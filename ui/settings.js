@@ -722,6 +722,7 @@ saveBtn.disabled = true;
 deleteBtn.disabled = true;
 connectBtn.disabled = true; // enabled when profile name is entered
 
+// Note: unlisten is not needed — windows use show/hide pattern, so listeners register once.
 if (eventApi && eventApi.listen) {
   eventApi.listen("menu:action", (event) => {
     switch (event.payload) {

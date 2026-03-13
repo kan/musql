@@ -277,6 +277,11 @@ static RUNNING_QUERIES: std::sync::LazyLock<Mutex<HashMap<String, RunningQueryEn
 static SCHEMA_CACHE: std::sync::LazyLock<Mutex<HashMap<String, SchemaInfo>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// Tracks the label of the currently focused window.
+/// `is_focused()` can be unreliable on Windows right after window creation,
+/// so we explicitly track via `WindowEvent::Focused`.
+struct ActiveWindow(Mutex<String>);
+
 fn escape_identifier(name: &str) -> String {
     format!("`{}`", name.replace('`', "``"))
 }
@@ -2954,21 +2959,34 @@ fn main() {
             }
         })
         .manage(Arc::new(Mutex::new(None::<ConnectionCache>)))
+        .manage(ActiveWindow(Mutex::new("main".to_string())))
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                if window.label() != "main" {
-                    api.prevent_close();
-                    if window.label() == "query" {
-                        let _ = window.emit("query:reset", ());
-                    }
-                    let _ = window.hide();
-                    if window.label() == "query" {
-                        if let Some(main_win) = window.app_handle().get_webview_window("main") {
-                            let _ = main_win.show();
-                            let _ = main_win.set_focus();
+            match event {
+                tauri::WindowEvent::Focused(true) => {
+                    if let Some(state) = window.try_state::<ActiveWindow>() {
+                        if let Ok(mut label) = state.0.lock() {
+                            *label = window.label().to_string();
                         }
                     }
                 }
+                tauri::WindowEvent::CloseRequested { api, .. } => {
+                    if window.label() != "main" {
+                        api.prevent_close();
+                        if window.label() == "query" {
+                            let _ = window.emit("query:reset", ());
+                        }
+                        let _ = window.hide();
+                        if window.label() == "query" {
+                            if let Some(main_win) =
+                                window.app_handle().get_webview_window("main")
+                            {
+                                let _ = main_win.show();
+                                let _ = main_win.set_focus();
+                            }
+                        }
+                    }
+                }
+                _ => {}
             }
         })
         .invoke_handler(tauri::generate_handler![
