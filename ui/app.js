@@ -794,7 +794,7 @@ async function showDockerModal() {
 // Docker credential persistence: password in OS keyring, user/ssl_mode in localStorage
 var DOCKER_CRED_KEY = "musql:docker-creds";
 var DOCKER_LAST_KEY = "musql:docker-last-cred";
-var DOCKER_LAST_ID = "_last";
+var DOCKER_LAST_ID = "__last__";
 
 function loadDockerCreds() {
   try { return JSON.parse(localStorage.getItem(DOCKER_CRED_KEY) || "{}"); } catch (_) { return {}; }
@@ -804,10 +804,13 @@ async function migrateDockerCreds() {
   var all = loadDockerCreds();
   var migrated = false;
   for (var id in all) {
+    if (!all.hasOwnProperty(id)) continue;
     if (all[id] && all[id].password) {
-      await safeInvoke("save_docker_password", { containerId: id, password: all[id].password });
-      delete all[id].password;
-      migrated = true;
+      try {
+        await safeInvoke("save_docker_password", { containerId: id, password: all[id].password });
+        delete all[id].password;
+        migrated = true;
+      } catch (_) { /* keep password in localStorage if keyring save fails */ }
     }
   }
   if (migrated) {
@@ -825,8 +828,11 @@ async function migrateDockerCreds() {
 }
 async function saveDockerCred(containerId, cred) {
   // Save password to OS keyring (never localStorage)
-  await safeInvoke("save_docker_password", { containerId: containerId, password: cred.password || "" });
-  await safeInvoke("save_docker_password", { containerId: DOCKER_LAST_ID, password: cred.password || "" });
+  var pw = cred.password || "";
+  await Promise.all([
+    safeInvoke("save_docker_password", { containerId: containerId, password: pw }),
+    safeInvoke("save_docker_password", { containerId: DOCKER_LAST_ID, password: pw })
+  ]);
   // Save non-secret fields to localStorage
   var meta = { user: cred.user, ssl_mode: cred.ssl_mode };
   var all = loadDockerCreds();
