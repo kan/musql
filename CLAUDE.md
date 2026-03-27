@@ -77,7 +77,7 @@ Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`
 
 ### Phase 5: Windows Store 配布
 - MSIX パッケージング: `store/AppxManifest.xml` + `store/build-msix.ps1` で未署名 MSIX を生成。CI (`release.yml` の `build-store`) がタグ push 時に EXE + MSIX をリリースにアップロード。
-- Partner Center Identity: `CommunitylinksInc.muSQL` / `CN=38A0E012-12F7-45AE-8FAA-50937924F823`。
+- Partner Center Identity: `58967CommunitylinksInc.muSQL` / `CN=46BBEF28-6777-4EF5-AD2C-F9AD9123AA82`。
 - 残タスク: Partner Center へ MSIX を提出 → Microsoft 自動署名 → Store 公開。
 
 ### Phase 6: マルチDB 抽象化 + PostgreSQL / MariaDB

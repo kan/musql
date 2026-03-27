@@ -6,14 +6,14 @@
   IgnorableNamespaces="uap rescap">
 
   <Identity
-    Name="CommunitylinksInc.muSQL"
-    Publisher="CN=38A0E012-12F7-45AE-8FAA-50937924F823"
+    Name="58967CommunitylinksInc.muSQL"
+    Publisher="CN=46BBEF28-6777-4EF5-AD2C-F9AD9123AA82"
     Version="{{VERSION}}"
     ProcessorArchitecture="x64" />
 
   <Properties>
     <DisplayName>muSQL</DisplayName>
-    <PublisherDisplayName>Communitylinks Inc.</PublisherDisplayName>
+    <PublisherDisplayName>Communitylinks Inc</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
 
