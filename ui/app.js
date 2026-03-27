@@ -61,9 +61,11 @@ async function safeInvoke(command, payload) {
 function getItemHint(item) {
   const ssh = item.request.ssh;
   const mysqlHost = item.request.mysql.host || t('host_not_set');
-  return ssh && ssh.enabled && ssh.host
-    ? ssh.host + " \u2192 " + mysqlHost
-    : mysqlHost;
+  if (!ssh || !ssh.enabled) return mysqlHost;
+  const sshLabel = ssh.config_host || ssh.host;
+  if (!sshLabel) return mysqlHost;
+  const isLocal = /^(localhost|127\.0\.0\.1|::1)$/.test(mysqlHost);
+  return isLocal ? "SSH: " + sshLabel : sshLabel + " \u2192 " + mysqlHost;
 }
 
 function saveCollapsed() {
