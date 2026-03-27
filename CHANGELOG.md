@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.5.3] - 2026-03-27
+
+### Changed
+- 接続一覧のタグ表示をプロファイル名の右に移動し、3行→2行のコンパクト表示に変更
+
 ## [0.5.2] - 2026-03-09
 
 ### Added
@@ -121,6 +126,7 @@
 - アプリ内自動更新（NSIS インストーラー + Ed25519 署名）
 - GitHub Actions CI/CD（cargo check + リリースビルド）
 
+[0.5.3]: https://github.com/kan/musql/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/kan/musql/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/kan/musql/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/kan/musql/compare/v0.4.5...v0.5.0
