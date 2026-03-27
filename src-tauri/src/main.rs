@@ -1253,12 +1253,13 @@ async fn authenticate_ssh(
                 // If hint provided, try matching identity first
                 if let Some(ref hint) = pub_key_hint {
                     for id in &identities {
-                        if id.key_data() == hint.key_data() {
-                            let hash_alg = rsa_hash_alg(id);
+                        let pk = id.public_key();
+                        if pk.key_data() == hint.key_data() {
+                            let hash_alg = rsa_hash_alg(&pk);
                             if let Ok(res) = session
                                 .authenticate_publickey_with(
                                     username,
-                                    id.clone(),
+                                    pk.into_owned(),
                                     hash_alg,
                                     &mut agent,
                                 )
@@ -1273,9 +1274,10 @@ async fn authenticate_ssh(
                 }
                 // Try all identities
                 for id in &identities {
-                    let hash_alg = rsa_hash_alg(id);
+                    let pk = id.public_key();
+                    let hash_alg = rsa_hash_alg(&pk);
                     if let Ok(res) = session
-                        .authenticate_publickey_with(username, id.clone(), hash_alg, &mut agent)
+                        .authenticate_publickey_with(username, pk.into_owned(), hash_alg, &mut agent)
                         .await
                     {
                         if res.success() {
@@ -1295,8 +1297,9 @@ async fn authenticate_ssh(
                 if let Ok(identities) = agent.request_identities().await {
                     if let Some(ref hint) = pub_key_hint {
                         for id in &identities {
-                            if id.key_data() == hint.key_data() {
-                                let hash_alg = if id.algorithm().is_rsa() {
+                            let pk = id.public_key();
+                            if pk.key_data() == hint.key_data() {
+                                let hash_alg = if pk.algorithm().is_rsa() {
                                     Some(russh::keys::HashAlg::Sha256)
                                 } else {
                                     None
@@ -1304,7 +1307,7 @@ async fn authenticate_ssh(
                                 if let Ok(res) = session
                                     .authenticate_publickey_with(
                                         username,
-                                        id.clone(),
+                                        pk.into_owned(),
                                         hash_alg,
                                         &mut agent,
                                     )
@@ -1318,13 +1321,14 @@ async fn authenticate_ssh(
                         }
                     }
                     for id in &identities {
-                        let hash_alg = if id.algorithm().is_rsa() {
+                        let pk = id.public_key();
+                        let hash_alg = if pk.algorithm().is_rsa() {
                             Some(russh::keys::HashAlg::Sha256)
                         } else {
                             None
                         };
                         if let Ok(res) = session
-                            .authenticate_publickey_with(username, id.clone(), hash_alg, &mut agent)
+                            .authenticate_publickey_with(username, pk.into_owned(), hash_alg, &mut agent)
                             .await
                         {
                             if res.success() {
