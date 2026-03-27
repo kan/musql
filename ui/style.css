@@ -379,11 +379,19 @@ pre {
   flex: 1;
   min-width: 0;
 }
+.tree-item .name-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
 .tree-item .name {
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex-shrink: 1;
+  min-width: 0;
 }
 .tree-item .hint {
   color: var(--sub);
@@ -1182,8 +1190,8 @@ pre {
 .tree-item-tags {
   display: flex;
   gap: 4px;
-  margin-top: 2px;
-  flex-wrap: wrap;
+  flex-shrink: 0;
+  flex-wrap: nowrap;
 }
 .tree-item-tag {
   font-size: 11px;

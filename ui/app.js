@@ -95,16 +95,14 @@ function buildItemNode(item) {
 
   const meta = document.createElement("div");
   meta.className = "meta";
+  const nameRow = document.createElement("div");
+  nameRow.className = "name-row";
   const nameEl = document.createElement("div");
   nameEl.className = "name";
   nameEl.textContent = item.name;
-  const hintEl = document.createElement("div");
-  hintEl.className = "hint";
-  hintEl.textContent = getItemHint(item);
-  meta.appendChild(nameEl);
-  meta.appendChild(hintEl);
+  nameRow.appendChild(nameEl);
 
-  // Tag badges
+  // Tag badges (inline with name)
   if (item.tags && item.tags.length > 0) {
     const tagsEl = document.createElement("div");
     tagsEl.className = "tree-item-tags";
@@ -114,8 +112,14 @@ function buildItemNode(item) {
       badge.textContent = tag;
       tagsEl.appendChild(badge);
     });
-    meta.appendChild(tagsEl);
+    nameRow.appendChild(tagsEl);
   }
+
+  const hintEl = document.createElement("div");
+  hintEl.className = "hint";
+  hintEl.textContent = getItemHint(item);
+  meta.appendChild(nameRow);
+  meta.appendChild(hintEl);
 
   el.appendChild(meta);
 
