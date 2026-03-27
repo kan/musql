@@ -5,7 +5,7 @@
 ### Changed
 - 接続一覧のタグ表示をプロファイル名の右に移動し、3行→2行のコンパクト表示に変更
 - mysql 27 → 28（MariaDB Parsec プラグイン認証サポート追加）
-- russh 0.57.1 → 0.58.0（スループット約21%改善、Windows メモリロック修正）
+- russh 0.57.1 → 0.58.1（スループット約21%改善、Windows メモリロック修正、libcrux-sha3 脆弱性修正）
 - bollard 0.20.1 → 0.20.2
 - CI: tauri-action 0.6.1 → 0.6.2、rust-cache 2.8.2 → 2.9.1、action-gh-release 2.5.0 → 2.6.1
 
