@@ -1485,6 +1485,12 @@ function openTableTab(tableName, initialView) {
     toggleLabel.style.cssText = "font-size:13px;font-weight:600;";
     toggleLabel.textContent = tableName;
     toggleBar.appendChild(toggleLabel);
+    const reloadBtn = document.createElement("button");
+    reloadBtn.className = "ghost reload-btn";
+    reloadBtn.innerHTML = icon('rotate-cw', 14);
+    reloadBtn.title = t('reload');
+    toggleBar.appendChild(reloadBtn);
+
     const toggleGroup = document.createElement("div");
     toggleGroup.className = "view-toggle-group";
     const dataToggle = document.createElement("button");
@@ -1780,6 +1786,15 @@ function openTableTab(tableName, initialView) {
 
     dataToggle.addEventListener("click", () => switchView("data"));
     structToggle.addEventListener("click", () => switchView("structure"));
+    reloadBtn.addEventListener("click", () => {
+      currentPage = 0;
+      totalRows = 0;
+      sortState.colIndex = -1;
+      sortState.dir = null;
+      sortState.column = null;
+      columnsDetected = false;
+      if (currentView === "data") loadDataView(); else loadStructureView();
+    });
 
     // Initial load
     switchView(currentView);

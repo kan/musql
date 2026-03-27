@@ -847,10 +847,18 @@ pre {
 .view-toggle-bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   padding: 6px 12px;
   border-bottom: 1px solid var(--line);
   flex-shrink: 0;
+}
+.reload-btn {
+  margin-left: auto;
+  padding: 4px;
+  color: var(--sub);
+}
+.reload-btn:hover {
+  color: var(--fg);
 }
 .view-toggle-group {
   display: flex;
