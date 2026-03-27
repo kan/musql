@@ -1277,7 +1277,12 @@ async fn authenticate_ssh(
                     let pk = id.public_key();
                     let hash_alg = rsa_hash_alg(&pk);
                     if let Ok(res) = session
-                        .authenticate_publickey_with(username, pk.into_owned(), hash_alg, &mut agent)
+                        .authenticate_publickey_with(
+                            username,
+                            pk.into_owned(),
+                            hash_alg,
+                            &mut agent,
+                        )
                         .await
                     {
                         if res.success() {
@@ -1328,7 +1333,12 @@ async fn authenticate_ssh(
                             None
                         };
                         if let Ok(res) = session
-                            .authenticate_publickey_with(username, pk.into_owned(), hash_alg, &mut agent)
+                            .authenticate_publickey_with(
+                                username,
+                                pk.into_owned(),
+                                hash_alg,
+                                &mut agent,
+                            )
                             .await
                         {
                             if res.success() {
