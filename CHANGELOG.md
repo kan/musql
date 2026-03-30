@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.5.4] - 2026-03-30
+
+### Added
+- テーブルタブにリロードボタンを追加（ページング・ソートリセット付き）
+- プライバシーポリシーを追加
+
+### Changed
+- 接続一覧のホスト表示を改善（SSH config alias 対応・localhost 省略）
+- Partner Center の新アカウントに合わせて MSIX Identity を更新
+- CI: dtolnay/rust-toolchain を更新（Rust 1.94.1 パッチリリース対応）
+
 ## [0.5.3] - 2026-03-27
 
 ### Changed
@@ -130,6 +141,7 @@
 - アプリ内自動更新（NSIS インストーラー + Ed25519 署名）
 - GitHub Actions CI/CD（cargo check + リリースビルド）
 
+[0.5.4]: https://github.com/kan/musql/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/kan/musql/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/kan/musql/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/kan/musql/compare/v0.5.0...v0.5.1
