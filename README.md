@@ -23,9 +23,15 @@
 
 ## ダウンロード
 
-[GitHub Releases](https://github.com/kan/musql/releases/latest) から最新版の `.exe` インストーラーをダウンロードしてください。
+<a href="https://apps.microsoft.com/detail/9mvgmmcf47gj?hl=ja-JP&gl=JP">
+  <img src="https://get.microsoft.com/images/ja-jp%20dark.svg" width="200" alt="Microsoft Store から入手" />
+</a>
 
-> **Note:** Windows SmartScreen の警告が表示される場合があります。「詳細情報」→「実行」で起動できます。これはコード署名証明書を使用していないためです。
+**[Microsoft Store](https://apps.microsoft.com/detail/9mvgmmcf47gj?hl=ja-JP&gl=JP) からのインストールを推奨します。** Microsoft による署名・自動更新・クリーンアンインストールに対応しています。
+
+代替手段として [GitHub Releases](https://github.com/kan/musql/releases/latest) から `.exe` インストーラーを直接ダウンロードすることも可能です（こちらはアプリ内自動更新機能付き）。
+
+> **Note:** GitHub Releases 版は未署名のため Windows SmartScreen の警告が表示されます。「詳細情報」→「実行」で起動できます。Store 版ではこの警告は表示されません。
 
 ## 特徴
 
