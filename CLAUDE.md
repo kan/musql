@@ -49,6 +49,12 @@ Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`
 - Store 用アイコン: `src-tauri/icons/Square44x44Logo.png`, `Square150x150Logo.png`, `StoreLogo.png`。
 - CI: `release.yml` の `build-store` ジョブが Store EXE をリリースにアップロード。
 
+## Git workflow
+- PR 運用はしていない。修正は **main に直接コミット** する。
+- ただしエージェント（Claude Code 等）は **push しない**。コミットまでに留め、push の判断はユーザーに委ねる。
+- ユーザーが内容を確認後、自身で `git push origin main` を実行する。
+- ブランチを切って PR を作る運用は不要。
+
 ## Release procedure
 1. `CHANGELOG.md` に新バージョンのエントリを追加（日付・Added/Changed/Fixed セクション・比較リンク）
 2. `src-tauri/Cargo.toml` の `version` を更新
