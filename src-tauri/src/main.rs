@@ -2982,19 +2982,17 @@ fn main() {
                     }
                 }
             }
-            tauri::WindowEvent::CloseRequested { api, .. } => {
-                if window.label() != WIN_MAIN {
-                    api.prevent_close();
-                    let is_query = window.label() == WIN_QUERY;
-                    if is_query {
-                        let _ = window.emit("query:reset", ());
-                    }
-                    let _ = window.hide();
-                    if is_query {
-                        if let Some(main_win) = window.app_handle().get_webview_window(WIN_MAIN) {
-                            let _ = main_win.show();
-                            let _ = main_win.set_focus();
-                        }
+            tauri::WindowEvent::CloseRequested { api, .. } if window.label() != WIN_MAIN => {
+                api.prevent_close();
+                let is_query = window.label() == WIN_QUERY;
+                if is_query {
+                    let _ = window.emit("query:reset", ());
+                }
+                let _ = window.hide();
+                if is_query {
+                    if let Some(main_win) = window.app_handle().get_webview_window(WIN_MAIN) {
+                        let _ = main_win.show();
+                        let _ = main_win.set_focus();
                     }
                 }
             }
