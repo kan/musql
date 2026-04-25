@@ -24,7 +24,7 @@
 ## ダウンロード
 
 <a href="https://apps.microsoft.com/detail/9mvgmmcf47gj?hl=ja-JP&gl=JP">
-  <img src="https://get.microsoft.com/images/ja-jp%20dark.svg" width="200" alt="Microsoft Store から入手" />
+  <img src="https://get.microsoft.com/images/ja%20dark.svg" width="200" alt="Microsoft Store から入手" />
 </a>
 
 **[Microsoft Store](https://apps.microsoft.com/detail/9mvgmmcf47gj?hl=ja-JP&gl=JP) からのインストールを推奨します。** Microsoft による署名・自動更新・クリーンアンインストールに対応しています。
