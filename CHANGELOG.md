@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.5.5] - 2026-04-25
+
+### Changed
+- tokio 1.50.0 → 1.51.1
+- russh 0.58.1 → 0.60.0（aws-lc-rs 脆弱性修正・rekey 後のチャネル EOF/CLOSE replay 修正含む）
+- tauri-plugin-updater 2.10.0 → 2.10.1（updater パッケージのファイル拡張子保持）
+- CI: softprops/action-gh-release 2.6.1 → 3.0.0（Node 24 対応）
+
+### Fixed
+- セキュリティ: openssl 0.10.75 → 0.10.78（`Deriver::derive` バッファオーバーフロー / `digest_final` OOB write / AES key wrap 境界チェック / PSK・cookie トランポリンの未チェックコールバック長 / PEM パスワードコールバックの OOB read）
+- セキュリティ: rustls-webpki 0.103.10 → 0.103.13（不正な CRL BIT STRING での DoS panic / name constraint 検証）
+- セキュリティ: rand 0.8.5 → 0.8.6、0.10.0 → 0.10.1（カスタムロガー使用時の unsoundness）
+- clippy `collapsible_match` 警告を解消（Rust 1.95 で強化された lint）
+
 ## [0.5.4] - 2026-03-30
 
 ### Added
@@ -141,6 +155,7 @@
 - アプリ内自動更新（NSIS インストーラー + Ed25519 署名）
 - GitHub Actions CI/CD（cargo check + リリースビルド）
 
+[0.5.5]: https://github.com/kan/musql/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/kan/musql/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/kan/musql/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/kan/musql/compare/v0.5.1...v0.5.2
