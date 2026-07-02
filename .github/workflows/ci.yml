@@ -48,7 +48,5 @@ jobs:
           # RUSTSEC-2026-0194 / -0195: quick-xml <0.41 DoS. 推移依存 plist(<=1.9.0)→quick-xml
           # がまだ >=0.41 に対応しておらず、更新経路なし。ビルド/plist 経由でランタイムに
           # 信頼できない XML を渡さないため実リスクは低い。上流が quick-xml >=0.41 を採用したら削除。
-          ignore: |
-            RUSTSEC-2023-0071
-            RUSTSEC-2026-0194
-            RUSTSEC-2026-0195
+          # 形式はカンマ区切り (actions-rust-lang/audit の仕様)。
+          ignore: RUSTSEC-2023-0071,RUSTSEC-2026-0194,RUSTSEC-2026-0195
