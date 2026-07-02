@@ -514,7 +514,10 @@ fn sync_path_file(app: &AppHandle) -> Result<PathBuf, String> {
 
 fn read_sync_path(app: &AppHandle) -> String {
     match sync_path_file(app) {
-        Ok(p) => std::fs::read_to_string(p).unwrap_or_default().trim().to_string(),
+        Ok(p) => std::fs::read_to_string(p)
+            .unwrap_or_default()
+            .trim()
+            .to_string(),
         Err(_) => String::new(),
     }
 }
@@ -541,7 +544,8 @@ fn write_sync_file(path: &str, store: &ConnectionProfileStore) -> Result<(), Str
         sanitized_store_json(store).map_err(|e| format!("Failed to serialize sync data: {e}"))?;
     if let Some(parent) = std::path::Path::new(path).parent() {
         if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create sync dir: {e}"))?;
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create sync dir: {e}"))?;
         }
     }
     std::fs::write(path, data).map_err(|e| format!("Failed to write sync file: {e}"))
