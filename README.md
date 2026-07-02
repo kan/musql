@@ -17,9 +17,14 @@
   <a href="LICENSE"><img src="https://img.shields.io/github/license/kan/musql?style=flat-square" alt="License" /></a>
 </p>
 
+<p align="center">
+  <img src="docs/manual/img/overview.png" alt="muSQL の画面" width="820" />
+</p>
+<!-- 撮影: query 画面。左にテーブル一覧、中央に Data タブ（結果テーブルが数十行）、上部にタブが 2〜3 枚。ライトテーマ。docs/manual/img/overview.png と共用。 -->
+
 ---
 
-<!-- TODO: スクリーンショットを追加 -->
+**muSQL** は、SSH 踏み台・Docker コンテナ接続・AI アシスト・エクスポートをシンプルな 1 画面にまとめた、軽量な MySQL クライアントです。使い方は **[ユーザーマニュアル](docs/manual/README.md)** を参照してください。
 
 ## ダウンロード
 
@@ -33,69 +38,42 @@
 
 > **Note:** GitHub Releases 版は未署名のため Windows SmartScreen の警告が表示されます。「詳細情報」→「実行」で起動できます。Store 版ではこの警告は表示されません。
 
-## 特徴
+## 主な機能
 
-- **SSH 踏み台対応** — SSH bastion 経由の MySQL 接続（純 Rust `russh` 実装、ssh.exe 不要）。公開鍵認証・パスワード認証の両方に対応
-- **SSH Agent / Config** — SSH Agent（1Password 対応）、`~/.ssh/config` 自動読み込み
-- **SSL 接続** — DISABLED / REQUIRED / VERIFY_CA / VERIFY_IDENTITY を選択可能
-- **接続プール** — 同一設定の接続を自動再利用
-- **SQL エディタ** — CodeMirror 5 ベース（シンタックスハイライト、キーワード・テーブル名補完、エラー箇所ハイライト）
-- **マルチ SQL タブ** — 複数の SQL タブを同時に開いて作業（タブ内容・順序を自動保存、ドラッグで並び替え）
-- **SQL 整形** — sql-formatter による MySQL 方言整形
-- **クエリキャンセル** — 実行中クエリを `KILL QUERY` でキャンセル
-- **行詳細モーダル** — テーブル行クリックで全カラムの詳細表示（JSON 自動整形）
-- **カラムソート** — ヘッダークリックで ASC / DESC / なし の 3 ステートソート
-- **BLOB/TEXT 切り詰め** — 大きなカラムを自動切り詰め表示（トグル可能）
-- **データエクスポート** — CSV / TSV / SQL / Markdown（[tbls](https://github.com/k1LoW/tbls) 互換）形式で保存
-- **パスワード安全保存** — Windows Credential Manager で管理（keyring 保存 or 接続時に都度入力を選択可能）
-- **プロファイル管理** — グループ・色・タグ・ドラッグ＆ドロップで接続先を整理
-- **インポート/エクスポート** — 接続設定の JSON エクスポート・インポート（重複検出付き）
-- **ダークモード** — システム設定に追従 + 手動切替
-- **日英切替 (i18n)** — 日本語 / English をワンクリックで切替
-- **AI アシスト** — Claude / ChatGPT / Gemini によるチャット形式 SQL 生成（自然言語で依頼 → SQL をコピー/エディタ挿入）
-- **Docker コンテナ自動検出** — Docker 上の MySQL コンテナを自動検出・ワンクリック接続。ports バインドなしのコンテナにも socat トンネル経由で接続可能。Docker Desktop / WSL2 dockerd 対応
-- **ネイティブメニュー** — ハンバーガーメニュー + キーボードショートカット
-- **アプリ内更新** — メニューから更新チェック・ワンクリック更新
-- **Node.js 不要** — UI は素朴な HTML/JS/CSS
+- **SSH 踏み台接続** — 純 Rust `russh` 実装（`ssh.exe` 不要）。公開鍵 / パスワード認証、SSH Agent（1Password 対応）、`~/.ssh/config` 参照
+- **SSL 接続** — DISABLED / REQUIRED / VERIFY_CA / VERIFY_IDENTITY
+- **Docker 連携** — 起動中コンテナの MySQL を自動検出してワンクリック接続（ポート未公開でも socat トンネル、WSL2 dockerd 対応）
+- **SQL エディタ** — シンタックスハイライト・補完・整形、複数タブ、実行中クエリのキャンセル、履歴、`Ctrl+P` の QuickOpen
+- **データ閲覧** — ページング・ソート・行詳細（JSON 自動整形）
+- **エクスポート** — CSV / TSV / SQL / Markdown（[tbls](https://github.com/k1LoW/tbls) 互換）。文字コード・改行コード選択、クリップボードコピー
+- **AI アシスト** — Claude / ChatGPT / Gemini による自然言語からの SQL 生成
+- **プロファイル管理** — グループ・色・タグで整理。外部 JSON 同期で複数マシン間共有
+- **安全なパスワード保存** — Windows 資格情報マネージャー（都度入力も選択可）
+- **その他** — ダーク / ライト、日英切替、長時間クエリの完了通知、Node.js 不要の静的 UI
 
-## 開発環境セットアップ
+詳しい使い方・画面ごとの説明は [ユーザーマニュアル](docs/manual/README.md) にあります。
 
-### 前提条件
+## ドキュメント
 
-- Rust toolchain (`rustup`)
-- Visual Studio Build Tools (MSVC リンカー・Windows SDK)
+- **[ユーザーマニュアル](docs/manual/README.md)** — 接続設定・SSH・Docker・クエリ・AI アシスト・エクスポート・同期などの使い方
+- [CHANGELOG](CHANGELOG.md) — 変更履歴
+- [CLAUDE.md](CLAUDE.md) — 開発者 / エージェント向けの内部情報
 
-### インストール
+## ソースからビルド
 
 ```powershell
-# Rust toolchain
+# 前提: Rust toolchain (rustup) と Visual Studio Build Tools (MSVC)
 winget install Rustlang.Rustup
-
-# Visual Studio Build Tools
 winget install Microsoft.VisualStudio.2022.BuildTools `
   --override "--wait --passive --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
-
-# Tauri CLI
 cargo install tauri-cli
-```
 
-### 起動
-
-```powershell
+# 起動（初回はクレートのビルドに時間がかかります）
 cd src-tauri
-cargo tauri dev
+cargo tauri dev --config tauri.dev.conf.json
 ```
 
-初回ビルドはクレートのダウンロード・コンパイルに時間がかかります。
-
-## 使い方
-
-1. メイン画面で「新規」ボタンをクリックして接続プロファイルを作成
-2. MySQL 接続情報（ホスト・ポート・ユーザー・パスワード）を入力
-3. SSH 踏み台が必要な場合は「SSH Bastion」を有効にして bastion 情報を入力
-4. SSL Mode を選択（VERIFY_CA / VERIFY_IDENTITY では CA 証明書を指定可能）
-5. 「接続テスト」で接続確認、「接続」でクエリウィンドウを開く
-6. データベースを選択し、テーブル一覧からデータ閲覧・SQL 実行
+ビルド構成・アーキテクチャ・開発上の注意は [CLAUDE.md](CLAUDE.md) を参照してください。
 
 ## ライセンス
 
