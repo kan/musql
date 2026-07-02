@@ -46,7 +46,7 @@ aiAssistSettingsBtn.innerHTML = icon('settings');
 aiAssistSettingsBtn.title = t('ai_settings');
 aiAssistCloseBtn.innerHTML = icon('x');
 
-menuBtn.addEventListener("click", () => safeInvoke("show_popup_menu", { lang: getLang(), theme: getTheme() }));
+menuBtn.addEventListener("click", () => safeInvoke("show_popup_menu", { lang: getLang(), theme: getTheme(), notify: isNotifyEnabled() }));
 document.getElementById("db-modal-heading").innerHTML = icon('database', 20) + ' ' + t('select_database');
 
 // ── State ──
@@ -635,6 +635,64 @@ function runQuery(sql, maxRows, tabId) {
   if (maxRows != null) payload.maxRows = maxRows;
   if (tabId) payload.tabId = tabId;
   return safeInvoke("run_query", payload);
+}
+
+// ── Long-running query completion notification (#43) ──
+// Notify (desktop toast) when a query that ran longer than the threshold finishes
+// while the window is unfocused. Web Notification API first (supports click-to-focus),
+// tauri-plugin-notification as fallback (no click handling), matching pike.
+const NOTIFY_THRESHOLD_MS = 5000;
+
+function isNotifyEnabled() {
+  return localStorage.getItem("musql:notify-query") !== "0"; // default ON
+}
+function setNotifyEnabled(on) {
+  localStorage.setItem("musql:notify-query", on ? "1" : "0");
+}
+
+let _notifier; // NotifyFn | null | undefined (resolved once, then cached)
+function webNotifier() {
+  return (title, body) => { new Notification(title, { body }); };
+}
+// tauri-plugin-notification first: it uses the app's identity, so the title is correct on
+// the installed app (WebView2's Web Notification instead shows the launching process —
+// "powershell" in dev; installed builds show muSQL). Web Notification is only a fallback.
+// Click-to-focus is intentionally not wired: WebView2 does not deliver Web Notification
+// `onclick`, and notify_rust has no click callback on Windows desktop.
+async function resolveNotifier() {
+  if (_notifier) return _notifier; // only a successful notifier is cached; retry after failure
+  const resolved = await (async () => {
+    const np = window.__TAURI__ && window.__TAURI__.notification;
+    if (np) {
+      try {
+        let granted = await np.isPermissionGranted();
+        if (!granted) granted = (await np.requestPermission()) === "granted";
+        if (granted) return (title, body) => { np.sendNotification({ title, body }); };
+      } catch (_) { /* ignore */ }
+    }
+    if ("Notification" in window) {
+      if (Notification.permission === "granted") return webNotifier();
+      if (Notification.permission !== "denied") {
+        try { if ((await Notification.requestPermission()) === "granted") return webNotifier(); }
+        catch (_) { /* ignore */ }
+      }
+    }
+    return null;
+  })();
+  if (resolved) _notifier = resolved;
+  return resolved;
+}
+
+async function maybeNotifyQueryDone(elapsedMs, body) {
+  if (!isNotifyEnabled() || elapsedMs < NOTIFY_THRESHOLD_MS) return;
+  if (document.hasFocus()) return; // user is already looking at the window
+  const notify = await resolveNotifier();
+  if (!notify) return;
+  // Re-check focus: resolving may have shown a permission prompt that the user
+  // dismissed by refocusing the window.
+  if (document.hasFocus()) return;
+  try { notify(sidebarDbName.textContent || "muSQL", body); }
+  catch (_) { /* notification backend unavailable */ }
 }
 
 function setDatabase(dbName) {
@@ -2438,6 +2496,7 @@ function addSqlTab(initialContent, tabNum) {
       loadingEl.textContent = t('running');
       resultArea.appendChild(loadingEl);
       const execStart = performance.now();
+      let notifyBody = null;
 
       try {
         for (const sql of statements) {
@@ -2479,6 +2538,10 @@ function addSqlTab(initialContent, tabNum) {
             const prefix = multi ? (sql.length > 60 ? sql.substring(0, 60) + "\u2026" : sql) + " \u2192 " : "";
             resultArea.appendChild(makeResultInfo(prefix + t('affected_rows', { n: res.affected_rows != null ? res.affected_rows : 0 }), stmtElapsed));
           }
+          // Notification body reflects the last statement of the run.
+          notifyBody = (res.columns && res.columns.length > 0)
+            ? t('notify_query_rows', { n: res.rows.length })
+            : t('notify_query_ok');
         }
         loadingEl.remove();
         if (lastColumns.length > 0) {
@@ -2491,8 +2554,12 @@ function addSqlTab(initialContent, tabNum) {
         errInfo.style.color = "var(--danger)";
         resultArea.appendChild(errInfo);
         if (!cancelled) markSqlError(String(error));
+        notifyBody = t('notify_query_failed');
       } finally {
         setExecuting(false);
+        if (!cancelled && notifyBody) {
+          maybeNotifyQueryDone(performance.now() - execStart, notifyBody);
+        }
       }
     }
 
@@ -2720,6 +2787,7 @@ if (eventApi && eventApi.listen) {
       case "theme-dark": setTheme("dark"); break;
       case "lang-en": setLang("en"); break;
       case "lang-ja": setLang("ja"); break;
+      case "toggle-notify": setNotifyEnabled(!isNotifyEnabled()); break;
     }
   });
 }

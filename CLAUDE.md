@@ -26,6 +26,7 @@ Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`
 - **アップデート**: `tauri-plugin-updater` + Ed25519 署名。起動3秒後に自動チェック + Help メニューから手動チェック。Cargo feature `self-updater`（デフォルト有効）で分離。`--no-default-features` で Store ビルド（アップデータ無効）。
 - **Docker 連携**: `bollard` クレートで Docker API に接続（名前付きパイプ → TCP `127.0.0.1:2375/2376` フォールバック、WSL2 dockerd 対応）。running コンテナから MySQL コンテナを自動検出（exposed port 3306 or `musql.enable=true` ラベル）。ports バインドなしのコンテナには `alpine/socat` 一時コンテナで TCP トンネルを作成（`auto_remove: true`、ラベル `musql.tunnel=true`）。トンネルコンテナは検出一覧から除外。アプリ起動時・終了時・query ウィンドウ close 時にトンネルをクリーンアップ。資格情報はコンテナ毎に保持（user/ssl_mode は localStorage、パスワードは keyring）。Cargo feature `docker`（デフォルト有効）で `bollard`/`futures-util` 依存を分離。
 - **ウィンドウ状態永続化**: `tauri-plugin-window-state`（常時有効）で main / query のサイズ・位置・最大化を保存/復元。`StateFlags` は `SIZE | POSITION | MAXIMIZED` のみ（VISIBLE 等は除外＝show/hide パターンを上書きしない）。固定サイズの settings は `with_denylist(["settings"])` で除外。プラグインは `RunEvent::Exit` で自動保存するが、`main:exit` メニューは `std::process::exit(0)` で終了しフックを飛ばすため、その直前で `app.save_window_state(StateFlags::all())` を明示呼び出ししている（この save を消すと状態が保存されない）。dev 起動は `tauri.dev.conf.json` で identifier を `.debug` に分離しているため、インストール版とウィンドウ状態は混ざらない。
+- **クエリ完了通知**: 実行時間が閾値（5秒）超のクエリが**非フォーカス時**に完了（成功/失敗問わず）したら、デスクトップ通知（`query.js` の `maybeNotifyQueryDone`）。通知機構は 2 段構え: **`tauri-plugin-notification` 優先**（`window.__TAURI__.notification`、アプリ識別子でタイトル表示）→ Web Notification API フォールバック。ON/OFF は query の View メニュー「クエリ完了を通知」（Rust CheckMenuItem `query:toggle-notify`）で切替、`musql:notify-query` に保存（既定 ON）。capabilities は `notification:default`。**Windows の制約（実装済みの割り切り）**: ①dev では通知タイトルが起動元プロセス名（powershell 等）になる（`target/debug|release` 配下は AUMID 未登録。インストール版は identifier の AUMID で「muSQL」表示）。②WebView2 は Web Notification の `onclick` を配送せず、notify_rust も Windows デスクトップでクリックコールバックを持たないため、**通知クリックでのフォーカス/タブ切替は非対応**（通知表示のみ）。将来クロスプラットフォーム対応時に再検討。
 - **SQL 識別子**: JS `quoteId()` / Rust `escape_identifier()` でバッククォートエスケープ。
 - **ウィンドウ管理**: show/hide パターン採用。main 以外のウィンドウ（query, settings）は `on_window_event` で `CloseRequested` を `api.prevent_close()` + `window.hide()` に差し替え、ウィンドウ破棄を防止。query 閉じ時は `query:reset` イベントを emit してから main を show。main ウィンドウの close はそのままアプリ終了。多重起動は意図的に許容している（1 インスタンスで同時に開ける connection は 1 つのため、複数接続は複数インスタンスで行う設計）。`tauri-plugin-single-instance` は導入しないこと。参考知見（[zenn.dev/sttk3/articles/69cb3bd6331325](https://zenn.dev/sttk3/articles/69cb3bd6331325)）:
   - `close()` はウィンドウを完全破棄、`hide()` はメモリ保持で非表示、`destroy()` はイベント発火なしで破棄。macOS では最後のウィンドウを `close()` するとアプリ自動終了するため main は `hide()` が安全（musql は Windows 専用だが将来のクロスプラットフォーム対応時に重要）。
@@ -45,6 +46,7 @@ Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`
 - `musql:docker-creds` — Docker コンテナ毎の資格情報（user/ssl_mode のみ。パスワードは keyring `docker:{containerId}` に保存）
 - `musql:docker-last-cred` — 最後に使った Docker 資格情報（user/ssl_mode のみ。パスワードは keyring `docker:_last` に保存）
 - `musql:export:encoding`, `musql:export:newline` — エクスポートの文字コード / 改行コード設定（既定 utf-8 / lf）
+- `musql:notify-query` — 長時間クエリ完了のデスクトップ通知 ON/OFF（既定 ON、`"0"` で OFF）
 
 ## Limits
 - 結果行 500 件、ページング 100 件/ページ、SSH タイムアウト 8 秒。

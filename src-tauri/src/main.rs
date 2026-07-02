@@ -2316,11 +2316,16 @@ fn hide_window(window: Window) -> Result<(), String> {
 // ── Menu builders ──
 
 #[tauri::command]
-fn show_popup_menu(window: Window, lang: String, theme: String) -> Result<(), String> {
+fn show_popup_menu(
+    window: Window,
+    lang: String,
+    theme: String,
+    notify: Option<bool>,
+) -> Result<(), String> {
     let handle = window.app_handle();
     let menu = match window.label() {
         WIN_MAIN => build_main_menu(handle, &lang, &theme),
-        WIN_QUERY => build_query_menu(handle, &lang, &theme),
+        WIN_QUERY => build_query_menu(handle, &lang, &theme, notify.unwrap_or(true)),
         WIN_SETTINGS => build_settings_menu(handle, &lang, &theme),
         _ => return Ok(()),
     }
@@ -2356,6 +2361,7 @@ fn ml<'a>(lang: &str, key: &'a str) -> &'a str {
         ("ja", "theme_dark") => "ダーク",
         ("ja", "language") => "言語",
         ("ja", "ai_settings") => "AI 設定",
+        ("ja", "notify_query") => "クエリ完了を通知",
         ("ja", "test_connection") => "接続テスト",
         ("ja", "connect") => "接続",
         ("ja", "save") => "保存",
@@ -2366,6 +2372,7 @@ fn ml<'a>(lang: &str, key: &'a str) -> &'a str {
         (_, "query") => "Query",
         (_, "view") => "View",
         (_, "ai_settings") => "AI Settings",
+        (_, "notify_query") => "Notify on Query Completion",
         (_, "settings") => "Settings",
         (_, "new_profile") => "New Profile",
         (_, "new_group") => "New Group",
@@ -2526,7 +2533,12 @@ fn build_main_menu(handle: &AppHandle<Wry>, lang: &str, theme: &str) -> tauri::R
     Menu::with_items(handle, &[&file_menu, &edit_menu, &view_menu, &help_menu])
 }
 
-fn build_query_menu(handle: &AppHandle<Wry>, lang: &str, theme: &str) -> tauri::Result<Menu<Wry>> {
+fn build_query_menu(
+    handle: &AppHandle<Wry>,
+    lang: &str,
+    theme: &str,
+    notify: bool,
+) -> tauri::Result<Menu<Wry>> {
     let file_menu = Submenu::with_items(
         handle,
         ml(lang, "file"),
@@ -2567,8 +2579,13 @@ fn build_query_menu(handle: &AppHandle<Wry>, lang: &str, theme: &str) -> tauri::
         None::<&str>,
     )?;
     let ai_sep = PredefinedMenuItem::separator(handle)?;
+    let notify_item =
+        CheckMenuItemBuilder::with_id("query:toggle-notify", ml(lang, "notify_query"))
+            .checked(notify)
+            .build(handle)?;
+    let notify_sep = PredefinedMenuItem::separator(handle)?;
     let mut view_refs: Vec<&dyn tauri::menu::IsMenuItem<Wry>> =
-        vec![&switch_db, &ai_settings, &ai_sep];
+        vec![&switch_db, &ai_settings, &ai_sep, &notify_item, &notify_sep];
     for item in &view_items {
         view_refs.push(item.as_ref());
     }
@@ -2661,7 +2678,9 @@ fn build_settings_menu(
 /// Set menus once at startup to register accelerators, then hide menu bars.
 fn setup_menus(handle: &AppHandle<Wry>) -> tauri::Result<()> {
     let main_menu = build_main_menu(handle, "en", "light")?;
-    let query_menu = build_query_menu(handle, "en", "light")?;
+    // This hidden menu only registers accelerators; the notify checkmark is set
+    // for real when the popup menu is opened (show_popup_menu).
+    let query_menu = build_query_menu(handle, "en", "light", true)?;
     let settings_menu = build_settings_menu(handle, "en", "light")?;
     if let Some(w) = handle.get_webview_window(WIN_MAIN) {
         let _ = w.set_menu(main_menu);
@@ -2887,6 +2906,8 @@ fn main() {
             .with_denylist(&["settings"])
             .build(),
     );
+    // Desktop notifications for long-running query completion (#43).
+    builder = builder.plugin(tauri_plugin_notification::init());
     #[cfg(feature = "self-updater")]
     {
         builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
