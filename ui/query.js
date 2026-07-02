@@ -1813,6 +1813,7 @@ async function showExplorer() {
 }
 
 async function loadTableList() {
+  currentTables = []; // avoid QuickOpen showing the previous DB's tables during the round-trip
   tableListEl.innerHTML = "";
   const loadingEl = document.createElement("div");
   loadingEl.className = "result-info";
@@ -2659,6 +2660,216 @@ function hideContextMenu() {
   contextMenuEl.classList.add("hidden");
 }
 
+// ── QuickOpen command palette (Ctrl+P) (#44) ──
+// Subsequence fuzzy score: -1 if not all query chars appear in order, else higher-is-better
+// with bonuses for prefix and consecutive matches.
+function fuzzyScore(query, text) {
+  if (!query) return 0;
+  const q = query.toLowerCase();
+  const s = text.toLowerCase();
+  let qi = 0, score = 0, prev = -2;
+  for (let si = 0; si < s.length && qi < q.length; si++) {
+    if (s[si] === q[qi]) {
+      score += si === prev + 1 ? 2 : 1;
+      if (si === 0) score += 3;
+      prev = si;
+      qi++;
+    }
+  }
+  return qi === q.length ? score : -1;
+}
+
+function getActiveSqlEditor() {
+  const tab = tabManager.tabs.find((tb) => tb.id === tabManager.activeId);
+  if (!tab || tab.type !== "sql") return null;
+  const cmEl = tab.paneEl.querySelector(".CodeMirror");
+  return cmEl && cmEl.CodeMirror ? cmEl.CodeMirror : null;
+}
+
+function insertSqlFromHistory(sql) {
+  let ed = getActiveSqlEditor();
+  if (!ed) {
+    // Reuse an existing SQL tab if the active tab isn't one; only create a new tab
+    // when there is no SQL tab at all.
+    const sqlTab = tabManager.tabs.find((tb) => tb.type === "sql");
+    if (sqlTab) {
+      tabManager.activate(sqlTab.id);
+      const cmEl = sqlTab.paneEl.querySelector(".CodeMirror");
+      ed = cmEl && cmEl.CodeMirror ? cmEl.CodeMirror : null;
+    }
+  }
+  if (ed) {
+    ed.replaceRange(sql + "\n", ed.getCursor());
+    ed.focus();
+  } else {
+    addSqlTab(sql);
+  }
+}
+
+let quickOpenEl = null;
+let quickOpenClose = null;
+function openQuickOpen() {
+  if (quickOpenEl) return; // already open
+  if (explorerEl.classList.contains("hidden")) return;
+
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay quickopen-overlay";
+  const box = document.createElement("div");
+  box.className = "quickopen-box";
+  const input = document.createElement("input");
+  input.className = "quickopen-input";
+  input.type = "text";
+  input.placeholder = t('quickopen_placeholder');
+  box.appendChild(input);
+  const listEl = document.createElement("div");
+  listEl.className = "quickopen-list";
+  box.appendChild(listEl);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  quickOpenEl = overlay;
+
+  let items = [];
+  let selected = 0;
+  let lastPointerX = -1;
+  let lastPointerY = -1;
+
+  function close() {
+    overlay.remove();
+    document.removeEventListener("keydown", onKey, true);
+    quickOpenEl = null;
+    quickOpenClose = null;
+  }
+  quickOpenClose = close;
+
+  function byScore(query, arr, textOf) {
+    return arr
+      .map((v) => ({ v, score: fuzzyScore(query, textOf(v)) }))
+      .filter((x) => x.score >= 0)
+      .sort((a, b) => b.score - a.score);
+  }
+
+  function computeItems() {
+    const raw = input.value;
+    let mode = "table";
+    let query = raw;
+    if (raw.startsWith("@")) { mode = "tab"; query = raw.slice(1); }
+    else if (raw.startsWith(">")) { mode = "history"; query = raw.slice(1); }
+    else if (raw.startsWith("?")) { mode = "help"; query = raw.slice(1); }
+    query = query.trim();
+
+    if (mode === "help") {
+      items = [
+        { label: t('quickopen_help_tables'), sub: "", icon: "table", action: () => { input.value = ""; onInput(); } },
+        { label: t('quickopen_help_tabs'), sub: "@", icon: "columns-3", action: () => { input.value = "@"; onInput(); } },
+        { label: t('quickopen_help_history'), sub: ">", icon: "clock", action: () => { input.value = ">"; onInput(); } },
+      ];
+    } else if (mode === "tab") {
+      items = byScore(query, tabManager.tabs, (tb) => tb.title).map((x) => ({
+        label: x.v.title,
+        sub: "",
+        icon: x.v.type === "sql" ? "terminal" : "table",
+        action: () => tabManager.activate(x.v.id),
+      }));
+    } else if (mode === "history") {
+      items = byScore(query, loadHistory(), (h) => h.sql).slice(0, 50).map((x) => ({
+        label: x.v.sql.replace(/\s+/g, " ").slice(0, 120),
+        sub: "",
+        icon: "clock",
+        action: () => insertSqlFromHistory(x.v.sql),
+      }));
+    } else {
+      items = byScore(query, currentTables, (n) => n).slice(0, 100).map((x) => ({
+        label: x.v,
+        sub: "",
+        icon: "table",
+        action: () => openTableTab(x.v, "data"),
+      }));
+    }
+    if (selected >= items.length) selected = Math.max(0, items.length - 1);
+  }
+
+  function render() {
+    listEl.innerHTML = "";
+    if (items.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "quickopen-empty";
+      empty.textContent = t('quickopen_no_results');
+      listEl.appendChild(empty);
+      return;
+    }
+    items.forEach((it, i) => {
+      const row = document.createElement("div");
+      row.className = "quickopen-item" + (i === selected ? " selected" : "");
+      const ic = document.createElement("span");
+      ic.className = "quickopen-item-icon";
+      ic.innerHTML = icon(it.icon, 14);
+      row.appendChild(ic);
+      const lbl = document.createElement("span");
+      lbl.className = "quickopen-item-label";
+      lbl.textContent = it.label;
+      row.appendChild(lbl);
+      if (it.sub) {
+        const sub = document.createElement("span");
+        sub.className = "quickopen-item-sub";
+        sub.textContent = it.sub;
+        row.appendChild(sub);
+      }
+      row.addEventListener("mousemove", (e) => {
+        // Ignore synthetic mousemove from scrollIntoView (same pointer coords) so it
+        // doesn't fight keyboard navigation.
+        if (e.clientX === lastPointerX && e.clientY === lastPointerY) return;
+        lastPointerX = e.clientX;
+        lastPointerY = e.clientY;
+        if (selected !== i) { selected = i; updateSelection(); }
+      });
+      row.addEventListener("click", () => choose(i));
+      listEl.appendChild(row);
+    });
+  }
+
+  function updateSelection() {
+    Array.from(listEl.children).forEach((c, i) => c.classList.toggle("selected", i === selected));
+    const sel = listEl.children[selected];
+    if (sel && sel.scrollIntoView) sel.scrollIntoView({ block: "nearest" });
+  }
+
+  function choose(i) {
+    const it = items[i];
+    if (!it) return;
+    const keepOpen = input.value.startsWith("?"); // help mode just switches the prefix
+    it.action();
+    if (!keepOpen) close();
+  }
+
+  function onInput() {
+    selected = 0;
+    computeItems();
+    render();
+  }
+
+  function onKey(e) {
+    // stopPropagation so the handled keys don't leak to the bubble-phase Escape
+    // handler (which would also close the AI assist modal if it were open).
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); }
+    else if (e.key === "ArrowDown") { e.preventDefault(); e.stopPropagation(); if (items.length) { selected = (selected + 1) % items.length; updateSelection(); } }
+    else if (e.key === "ArrowUp") { e.preventDefault(); e.stopPropagation(); if (items.length) { selected = (selected - 1 + items.length) % items.length; updateSelection(); } }
+    else if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); choose(selected); }
+  }
+
+  input.addEventListener("input", onInput);
+  document.addEventListener("keydown", onKey, true);
+  overlay.addEventListener("mousedown", (e) => { if (e.target === overlay) close(); });
+  onInput();
+  input.focus();
+}
+
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === "p" || e.key === "P")) {
+    e.preventDefault();
+    openQuickOpen();
+  }
+}, true);
+
 document.addEventListener("click", hideContextMenu);
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
@@ -2672,6 +2883,7 @@ document.addEventListener("keydown", (e) => {
 // ── Reset ──
 
 function resetExplorer() {
+  if (quickOpenClose) quickOpenClose();
   saveDrafts();
   tabManager.removeAll();
   currentDb = null;

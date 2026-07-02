@@ -40,12 +40,16 @@
 
   // Theme toggle is now menu-only; no floating button.
 
-  // Suppress WebView reload shortcuts (Ctrl+R / Ctrl+Shift+R / Ctrl+F5 / F5) in every
-  // window. A reload serves no purpose in a packaged app and, in the query window, would
-  // drop in-flight query tracking (RUNNING_QUERIES) and unsaved tab state (#42).
+  // Suppress WebView shortcuts in every window:
+  //  - Reload (F5 / Ctrl+R / Ctrl+Shift+R / Ctrl+F5): a reload serves no purpose in a
+  //    packaged app and, in the query window, would drop in-flight query tracking
+  //    (RUNNING_QUERIES) and unsaved tab state (#42).
+  //  - Print (Ctrl/Cmd+P): there is no print feature, so the OS print dialog is just a
+  //    surprise. The query window repurposes Ctrl+P for QuickOpen in query.js (#44).
   window.addEventListener("keydown", function(e) {
-    var isReloadKey = e.key === "F5" ||
-      ((e.ctrlKey || e.metaKey) && (e.key === "r" || e.key === "R"));
-    if (isReloadKey) e.preventDefault();
+    var mod = e.ctrlKey || e.metaKey;
+    var isReloadKey = e.key === "F5" || (mod && (e.key === "r" || e.key === "R"));
+    var isPrintKey = mod && (e.key === "p" || e.key === "P");
+    if (isReloadKey || isPrintKey) e.preventDefault();
   }, { capture: true });
 })();
