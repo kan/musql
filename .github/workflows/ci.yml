@@ -57,15 +57,14 @@ jobs:
 
   audit:
     runs-on: ubuntu-latest
-    # 週次スケジュール実行で新規アドバイザリを検知したら issue を作成できるようにする
-    permissions:
-      contents: read
-      issues: write
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: actions-rust-lang/audit@72c09e02f132669d52284a3323acdb503cfc1a24 # v1.2.7
         with:
           file: src-tauri/Cargo.lock
+          # 起票は無効。この action は権限があると push/schedule 毎に warning (unmaintained/
+          # yanked 等) まで issue 化して大量起票するため。検知は run の成否 (脆弱性で失敗) で担保。
+          createIssues: false
           # RUSTSEC-2026-0194 / -0195: quick-xml <0.41 DoS. 推移依存 plist(<=1.9.0)→quick-xml
           # がまだ >=0.41 に対応しておらず、更新経路なし。ビルド/plist 経由でランタイムに
           # 信頼できない XML を渡さないため実リスクは低い。上流が quick-xml >=0.41 を採用したら削除。
