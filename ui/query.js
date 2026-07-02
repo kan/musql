@@ -1152,6 +1152,127 @@ function renderTable(columns, rows, container, onRowClick, sortState, onSortCall
   container.appendChild(scrollDiv);
 }
 
+// Client-side row sort matching renderTable's comparator (used for paged SQL results)
+function sortRowsByColumn(rows, ci, dir) {
+  const mult = dir === "asc" ? 1 : -1;
+  const sorted = rows.slice();
+  sorted.sort((a, b) => {
+    const va = a[ci];
+    const vb = b[ci];
+    if ((va === null || va === undefined) && (vb === null || vb === undefined)) return 0;
+    if (va === null || va === undefined) return 1;
+    if (vb === null || vb === undefined) return -1;
+    if (va === "" && vb === "") return 0;
+    if (va === "") return 1;
+    if (vb === "") return -1;
+    if (typeof va === "number" && typeof vb === "number") return (va - vb) * mult;
+    const na = Number(va);
+    const nb = Number(vb);
+    if (!isNaN(na) && !isNaN(nb) && va !== "" && vb !== "") return (na - nb) * mult;
+    return String(va).localeCompare(String(vb)) * mult;
+  });
+  return sorted;
+}
+
+// Render a result set with client-side pagination + sort (used by the SQL tab).
+// The full row set is kept in memory; only the current page is rendered.
+function renderPagedTable(columns, rows, container, onRowClick) {
+  container.innerHTML = "";
+  const tableWrap = document.createElement("div");
+  const footer = document.createElement("div");
+  footer.className = "paging-bar";
+  container.appendChild(tableWrap);
+  container.appendChild(footer);
+
+  let page = 0;
+  let pageSize = 100;
+  const sortState = { colIndex: -1, dir: null };
+  let viewRows = rows;
+
+  function applySort() {
+    viewRows = (sortState.colIndex < 0 || sortState.dir === null)
+      ? rows
+      : sortRowsByColumn(rows, sortState.colIndex, sortState.dir);
+  }
+
+  function onSort(ci) {
+    if (sortState.colIndex === ci) {
+      if (sortState.dir === "asc") sortState.dir = "desc";
+      else if (sortState.dir === "desc") { sortState.dir = null; sortState.colIndex = -1; }
+      else sortState.dir = "asc";
+    } else {
+      sortState.colIndex = ci;
+      sortState.dir = "asc";
+    }
+    page = 0;
+    applySort();
+    render();
+  }
+
+  function renderFooter(totalPages, offset, count) {
+    footer.innerHTML = "";
+
+    const nav = document.createElement("div");
+    nav.className = "paging-nav";
+    const prevBtn = document.createElement("button");
+    prevBtn.className = "ghost paging-btn";
+    prevBtn.innerHTML = icon('chevron-left') + t('prev');
+    prevBtn.disabled = page === 0;
+    prevBtn.addEventListener("click", () => { page--; render(); });
+    nav.appendChild(prevBtn);
+    const pageInfo = document.createElement("span");
+    pageInfo.className = "paging-info";
+    pageInfo.textContent = (page + 1) + " / " + totalPages;
+    nav.appendChild(pageInfo);
+    const nextBtn = document.createElement("button");
+    nextBtn.className = "ghost paging-btn";
+    nextBtn.innerHTML = t('next') + icon('chevron-right');
+    nextBtn.disabled = page >= totalPages - 1;
+    nextBtn.addEventListener("click", () => { page++; render(); });
+    nav.appendChild(nextBtn);
+    footer.appendChild(nav);
+
+    const sizeSelector = document.createElement("div");
+    sizeSelector.className = "paging-sizes";
+    [50, 100, 200, 500].forEach((size) => {
+      const btn = document.createElement("button");
+      btn.className = "ghost paging-size-btn" + (size === pageSize ? " active" : "");
+      btn.textContent = size;
+      btn.addEventListener("click", () => {
+        if (size === pageSize) return;
+        pageSize = size;
+        page = 0;
+        render();
+      });
+      sizeSelector.appendChild(btn);
+    });
+    footer.appendChild(sizeSelector);
+
+    const actions = document.createElement("div");
+    actions.className = "footer-actions";
+    const range = document.createElement("span");
+    range.className = "paging-info";
+    range.textContent = viewRows.length === 0
+      ? t('rows_range', { from: 0, to: 0, total: 0 })
+      : t('rows_range', { from: offset + 1, to: offset + count, total: viewRows.length });
+    actions.appendChild(range);
+    footer.appendChild(actions);
+  }
+
+  function render() {
+    const totalPages = Math.max(1, Math.ceil(viewRows.length / pageSize));
+    if (page >= totalPages) page = totalPages - 1;
+    if (page < 0) page = 0;
+    const offset = page * pageSize;
+    const slice = viewRows.slice(offset, offset + pageSize);
+    renderTable(columns, slice, tableWrap, onRowClick, sortState, (ci) => onSort(ci));
+    renderFooter(totalPages, offset, slice.length);
+  }
+
+  applySort();
+  render();
+}
+
 // ── TabManager ──
 
 const tabManager = {
@@ -2116,7 +2237,9 @@ function addSqlTab(initialContent, tabNum) {
       try {
         for (const sql of statements) {
           const stmtStart = performance.now();
-          const res = await runQuery(sql, undefined, tabId);
+          // maxRows = 0 → fetch all rows; on-screen paging is client-side (see renderPagedTable),
+          // and export uses the full in-memory set (issue #41).
+          const res = await runQuery(sql, 0, tabId);
           const stmtElapsed = performance.now() - stmtStart;
 
           if (cancelled) {
@@ -2146,7 +2269,7 @@ function addSqlTab(initialContent, tabNum) {
 
             const wrapper = document.createElement("div");
             resultArea.appendChild(wrapper);
-            renderTable(res.columns, res.rows, wrapper, (cols, row) => showRowDetailModal(cols, row));
+            renderPagedTable(res.columns, res.rows, wrapper, (cols, row) => showRowDetailModal(cols, row));
           } else {
             const prefix = multi ? (sql.length > 60 ? sql.substring(0, 60) + "\u2026" : sql) + " \u2192 " : "";
             resultArea.appendChild(makeResultInfo(prefix + t('affected_rows', { n: res.affected_rows != null ? res.affected_rows : 0 }), stmtElapsed));
