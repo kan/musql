@@ -102,7 +102,7 @@ struct ConnectionProfile {
     clear_ssh_password: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
 struct ConnectionProfileStore {
     version: u32,
     #[serde(default)]
@@ -497,10 +497,162 @@ fn save_profiles(app: &AppHandle, store: &ConnectionProfileStore) -> Result<(), 
     let data = serde_json::to_string_pretty(store)
         .map_err(|e| format!("Failed to serialize profiles: {e}"))?;
     std::fs::write(&path, data).map_err(|e| format!("Failed to write profiles: {e}"))?;
+    // Mirror to the external sync file (if configured) so every profile change from
+    // any window is pushed out automatically (#47). Passwords are keyring-only and are
+    // already empty in the store, so no secret is written.
+    mirror_to_sync(app, store);
     Ok(())
 }
 
+// ── External profile sync (path-based) (#47) ──
+
+fn sync_path_file(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .resolve("sync_path", tauri::path::BaseDirectory::AppConfig)
+        .map_err(|e| format!("Failed to resolve sync-path config: {e}"))
+}
+
+fn read_sync_path(app: &AppHandle) -> String {
+    match sync_path_file(app) {
+        Ok(p) => std::fs::read_to_string(p).unwrap_or_default().trim().to_string(),
+        Err(_) => String::new(),
+    }
+}
+
+// Serialize the store for the external sync file with ALL secrets stripped
+// (defense-in-depth: secrets live in the keyring, never in the synced JSON — this also
+// scrubs any legacy plaintext SSH secrets that predate keyring migration).
+fn sanitized_store_json(store: &ConnectionProfileStore) -> Result<String, serde_json::Error> {
+    let mut clone = store.clone();
+    for item in clone.items.iter_mut() {
+        item.request.mysql.password = String::new();
+        if let Some(ssh) = item.request.ssh.as_mut() {
+            ssh.passphrase = String::new();
+            ssh.ssh_password = String::new();
+        }
+    }
+    serde_json::to_string_pretty(&clone)
+}
+
+// Write the (secret-stripped) store to the sync file, creating parent dirs. Returns an
+// error so callers that want a truthful result (manual export) can surface it.
+fn write_sync_file(path: &str, store: &ConnectionProfileStore) -> Result<(), String> {
+    let data =
+        sanitized_store_json(store).map_err(|e| format!("Failed to serialize sync data: {e}"))?;
+    if let Some(parent) = std::path::Path::new(path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create sync dir: {e}"))?;
+        }
+    }
+    std::fs::write(path, data).map_err(|e| format!("Failed to write sync file: {e}"))
+}
+
+// Best-effort mirror on every save (the sync folder may be temporarily offline; a failure
+// here must not fail the profile save).
+fn mirror_to_sync(app: &AppHandle, store: &ConnectionProfileStore) {
+    let path = read_sync_path(app);
+    if path.is_empty() {
+        return;
+    }
+    let _ = write_sync_file(&path, store);
+}
+
+#[tauri::command]
+fn get_sync_path(app: AppHandle) -> String {
+    read_sync_path(&app)
+}
+
+#[tauri::command]
+fn set_sync_path(app: AppHandle, path: String) -> Result<(), String> {
+    let file = sync_path_file(&app)?;
+    if let Some(dir) = file.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("Failed to create config dir: {e}"))?;
+    }
+    std::fs::write(&file, path.trim()).map_err(|e| format!("Failed to write sync path: {e}"))?;
+    Ok(())
+}
+
+// Pull the external sync file and merge it into the local store (id-based; the file
+// wins for existing entries, local-only entries are kept, deletions do not propagate).
+// Runs on a blocking thread — the sync file may be a cloud on-demand placeholder that
+// blocks for seconds while it hydrates, which must not stall the IPC thread.
+#[tauri::command]
+async fn sync_import(app: AppHandle) -> Result<ProfileListResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || sync_import_blocking(app))
+        .await
+        .map_err(|e| format!("Task error: {e}"))?
+}
+
+fn sync_import_blocking(app: AppHandle) -> Result<ProfileListResponse, String> {
+    let path = read_sync_path(&app);
+    // Resilient: a missing / unreadable / malformed sync file must never break the
+    // profile list — fall back to the local store.
+    if path.is_empty() {
+        return list_profiles(app);
+    }
+    let incoming: ConnectionProfileStore = match std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|c| serde_json::from_str(&c).ok())
+    {
+        Some(store) => store,
+        None => return list_profiles(app),
+    };
+
+    let mut store = load_profiles(&app)?;
+    let before = serde_json::to_string(&store).unwrap_or_default();
+    for g in incoming.groups {
+        if let Some(existing) = store.groups.iter_mut().find(|x| x.id == g.id) {
+            *existing = g;
+        } else {
+            store.groups.push(g);
+        }
+    }
+    for it in incoming.items {
+        if let Some(existing) = store.items.iter_mut().find(|x| x.id == it.id) {
+            *existing = it;
+        } else {
+            store.items.push(it);
+        }
+    }
+    // Only persist (and re-mirror) when the merge actually changed something, so the
+    // frequent startup/focus refresh doesn't churn disk or bounce the sync file.
+    if serde_json::to_string(&store).unwrap_or_default() != before {
+        save_profiles(&app, &store)?;
+    }
+    Ok(ProfileListResponse {
+        groups: store.groups,
+        items: store.items,
+        saved_id: None,
+    })
+}
+
+// Manually push the current store to the external sync file (surfaces write errors).
+#[tauri::command]
+fn sync_export(app: AppHandle) -> Result<bool, String> {
+    let path = read_sync_path(&app);
+    if path.is_empty() {
+        return Ok(false);
+    }
+    let store = load_profiles(&app)?;
+    write_sync_file(&path, &store)?;
+    Ok(true)
+}
+
+// Native save-dialog that returns the chosen path without writing (for choosing the
+// sync file location, which may not exist yet).
+#[tauri::command]
+async fn pick_sync_path() -> Result<Option<String>, String> {
+    let dialog = rfd::AsyncFileDialog::new()
+        .set_file_name("musql-profiles-sync.json")
+        .add_filter("JSON files", &["json"])
+        .save_file()
+        .await;
+    Ok(dialog.map(|h| h.path().to_string_lossy().into_owned()))
+}
+
 fn generate_profile_id() -> String {
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -509,7 +661,13 @@ fn generate_profile_id() -> String {
         .unwrap_or_else(|_| Duration::from_millis(0))
         .as_millis();
     let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!("p{ts}_{seq}")
+    // Per-call random component (RandomState is OS-seeded per process) so two machines
+    // creating their first id in the same millisecond don't collide and clobber each
+    // other's profile on sync merge (#47).
+    let mut h = RandomState::new().build_hasher();
+    h.write_u64(seq);
+    let rnd = h.finish() & 0xff_ffff;
+    format!("p{ts}_{seq}_{rnd:06x}")
 }
 
 const KEYRING_SERVICE: &str = "musql";
@@ -2345,6 +2503,7 @@ fn ml<'a>(lang: &str, key: &'a str) -> &'a str {
         ("ja", "new_group") => "新規グループ",
         ("ja", "import") => "インポート...",
         ("ja", "export") => "エクスポート...",
+        ("ja", "sync_settings") => "接続の同期...",
         ("ja", "exit") => "終了",
         ("ja", "github") => "GitHub リポジトリ",
         ("ja", "check_update") => "アップデートを確認...",
@@ -2378,6 +2537,7 @@ fn ml<'a>(lang: &str, key: &'a str) -> &'a str {
         (_, "new_group") => "New Group",
         (_, "import") => "Import Profiles...",
         (_, "export") => "Export Profiles...",
+        (_, "sync_settings") => "Sync Connections...",
         (_, "exit") => "Exit",
         (_, "github") => "GitHub Repository",
         (_, "check_update") => "Check for Updates...",
@@ -2495,6 +2655,13 @@ fn build_main_menu(handle: &AppHandle<Wry>, lang: &str, theme: &str) -> tauri::R
                 handle,
                 "main:export",
                 ml(lang, "export"),
+                true,
+                None::<&str>,
+            )?,
+            &MenuItem::with_id(
+                handle,
+                "main:sync-settings",
+                ml(lang, "sync_settings"),
                 true,
                 None::<&str>,
             )?,
@@ -3080,6 +3247,11 @@ fn main() {
             has_ssh_password,
             export_profiles,
             import_profiles,
+            get_sync_path,
+            set_sync_path,
+            sync_import,
+            sync_export,
+            pick_sync_path,
             show_popup_menu,
             check_update,
             install_update,

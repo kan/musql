@@ -445,7 +445,9 @@ async function deleteGroup(id) {
 }
 
 async function refreshProfiles() {
-  profileData = await safeInvoke("list_profiles");
+  // sync_import merges an external sync file (if configured) then returns the list;
+  // with no path / unreadable file it just returns the local profiles (#47).
+  profileData = await safeInvoke("sync_import");
   renderTree();
 }
 
@@ -797,6 +799,149 @@ async function importProfiles() {
   }
 }
 
+// ── Connection profile sync (external JSON, path-based) (#47) ──
+let syncModalOpen = false;
+async function openSyncModal() {
+  if (syncModalOpen) return; // single instance
+  syncModalOpen = true;
+  let current = "";
+  try { current = await safeInvoke("get_sync_path"); } catch (_) { /* ignore */ }
+
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  const box = document.createElement("div");
+  box.className = "modal-box";
+  box.style.maxWidth = "540px";
+
+  const h2 = document.createElement("h2");
+  h2.textContent = t('sync_settings');
+  box.appendChild(h2);
+
+  const desc = document.createElement("p");
+  desc.className = "modal-status";
+  desc.style.whiteSpace = "pre-wrap";
+  desc.textContent = t('sync_desc');
+  box.appendChild(desc);
+
+  const label = document.createElement("label");
+  const span = document.createElement("span");
+  span.textContent = t('sync_path_label');
+  label.appendChild(span);
+  const row = document.createElement("div");
+  row.style.display = "flex";
+  row.style.gap = "6px";
+  const input = document.createElement("input");
+  input.type = "text";
+  input.value = current || "";
+  input.placeholder = "C:\\Users\\...\\Dropbox\\musql-profiles-sync.json";
+  input.style.flex = "1";
+  const browseBtn = document.createElement("button");
+  browseBtn.className = "ghost";
+  browseBtn.textContent = t('sync_browse');
+  row.appendChild(input);
+  row.appendChild(browseBtn);
+  label.appendChild(row);
+  box.appendChild(label);
+
+  const status = document.createElement("p");
+  status.className = "modal-status";
+  box.appendChild(status);
+
+  const actions = document.createElement("div");
+  actions.className = "actions actions-right";
+  actions.style.marginTop = "16px";
+  const importBtn = document.createElement("button");
+  importBtn.className = "ghost";
+  importBtn.textContent = t('sync_import_now');
+  const exportBtn = document.createElement("button");
+  exportBtn.className = "ghost";
+  exportBtn.textContent = t('sync_export_now');
+  const cancelBtn = document.createElement("button");
+  cancelBtn.className = "ghost";
+  cancelBtn.textContent = t('cancel');
+  const saveBtn = document.createElement("button");
+  saveBtn.className = "success";
+  saveBtn.textContent = t('save');
+  actions.appendChild(importBtn);
+  actions.appendChild(exportBtn);
+  actions.appendChild(cancelBtn);
+  actions.appendChild(saveBtn);
+  box.appendChild(actions);
+
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+
+  let busy = false;
+  function close() {
+    overlay.remove();
+    document.removeEventListener("keydown", onKey);
+    syncModalOpen = false;
+  }
+  function onKey(e) { if (e.key === "Escape" && !busy) close(); }
+  document.addEventListener("keydown", onKey);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay && !busy) close(); });
+  cancelBtn.addEventListener("click", () => { if (!busy) close(); });
+
+  async function persistPath() {
+    await safeInvoke("set_sync_path", { path: input.value.trim() });
+  }
+  function setBusy(b) {
+    busy = b;
+    [importBtn, exportBtn, saveBtn, browseBtn, input].forEach((el) => { el.disabled = b; });
+  }
+  function showStatus(msg, ok) {
+    status.style.color = ok ? "var(--success)" : "var(--danger)";
+    status.textContent = msg;
+  }
+
+  browseBtn.addEventListener("click", async () => {
+    try {
+      const picked = await safeInvoke("pick_sync_path");
+      if (picked) input.value = picked;
+    } catch (error) { showStatus(String(error), false); }
+  });
+
+  saveBtn.addEventListener("click", async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await persistPath();
+      // Join the sync: pull the file (merge in) then push the merged result, so a fresh
+      // path gets created/populated and local-only profiles propagate out.
+      profileData = await safeInvoke("sync_import");
+      await safeInvoke("sync_export");
+      renderTree();
+      close();
+    } catch (error) { showStatus(String(error), false); setBusy(false); }
+  });
+
+  importBtn.addEventListener("click", async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await persistPath();
+      if (!input.value.trim()) { showStatus(t('sync_disabled'), false); setBusy(false); return; }
+      profileData = await safeInvoke("sync_import");
+      renderTree();
+      showStatus(t('sync_imported'), true);
+    } catch (error) { showStatus(String(error), false); }
+    setBusy(false);
+  });
+
+  exportBtn.addEventListener("click", async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await persistPath();
+      const ok = await safeInvoke("sync_export");
+      showStatus(ok ? t('sync_exported') : t('sync_disabled'), ok);
+    } catch (error) { showStatus(String(error), false); }
+    setBusy(false);
+  });
+
+  input.focus();
+}
+
 // ── Docker ──
 
 let dockerCredResolve = null;
@@ -1024,14 +1169,14 @@ filterInput.addEventListener("input", () => renderTree());
 })();
 
 refreshProfiles().catch((error) => alert(String(error)));
-window.addEventListener("focus", () => refreshProfiles());
+window.addEventListener("focus", () => { refreshProfiles().catch(() => {}); });
 
 // Listen for profile changes from settings window
 // Note: unlisten is not needed here — windows use show/hide (never destroyed),
 // so JS context persists for the app lifetime and listeners are registered exactly once.
 const eventApi = window.__TAURI__ && window.__TAURI__.event ? window.__TAURI__.event : null;
 if (eventApi && eventApi.listen) {
-  eventApi.listen("profiles:changed", () => refreshProfiles());
+  eventApi.listen("profiles:changed", () => { refreshProfiles().catch(() => {}); });
 
   // Update banner
   eventApi.listen("update-available", (event) => {
@@ -1067,6 +1212,7 @@ if (eventApi && eventApi.listen) {
       case "new-group": createGroup(); break;
       case "import": importProfiles(); break;
       case "export": exportProfiles(); break;
+      case "sync-settings": openSyncModal(); break;
       case "theme-light": setTheme("light"); break;
       case "theme-dark": setTheme("dark"); break;
       case "lang-en": setLang("en"); break;
