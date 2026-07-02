@@ -42,6 +42,7 @@ Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`
 - `musql:ai-chat:<profileId>:<database>` — AI アシストのチャット履歴
 - `musql:docker-creds` — Docker コンテナ毎の資格情報（user/ssl_mode のみ。パスワードは keyring `docker:{containerId}` に保存）
 - `musql:docker-last-cred` — 最後に使った Docker 資格情報（user/ssl_mode のみ。パスワードは keyring `docker:_last` に保存）
+- `musql:export:encoding`, `musql:export:newline` — エクスポートの文字コード / 改行コード設定（既定 utf-8 / lf）
 
 ## Limits
 - 結果行 500 件、ページング 100 件/ページ、SSH タイムアウト 8 秒。

@@ -116,6 +116,15 @@
       sql_all: "SQL (all rows)",
       markdown_schema: "Markdown",
 
+      // ── Export options (#40) ──
+      export_options_title: "Export",
+      export_charset: "Encoding",
+      export_newline: "Line ending",
+      export_save_file: "Save",
+      export_copy_clipboard: "Copy",
+      export_copied: "Copied to clipboard",
+      export_failed: "Export failed: {msg}",
+
       // ── Import/Export ──
       export_profiles_title: "Export profiles",
       import_profiles_title: "Import profiles",
@@ -270,6 +279,15 @@
       tsv_all: "TSV（全行）",
       sql_all: "SQL（全行）",
       markdown_schema: "Markdown",
+
+      // ── エクスポートオプション (#40) ──
+      export_options_title: "エクスポート",
+      export_charset: "文字コード",
+      export_newline: "改行コード",
+      export_save_file: "保存",
+      export_copy_clipboard: "コピー",
+      export_copied: "クリップボードにコピーしました",
+      export_failed: "エクスポートに失敗しました: {msg}",
 
       // ── インポート/エクスポート ──
       export_profiles_title: "プロファイルをエクスポート",

@@ -22,6 +22,7 @@ russh = { version = "0.61", default-features = false, features = ["ring", "flate
 tokio = { version = "1", features = ["net", "io-util", "time"] }
 tauri-plugin-updater = { version = "2", optional = true }
 reqwest = { version = "0.13", default-features = false, features = ["json", "native-tls"] }
+encoding_rs = "0.8"
 bollard = { version = "0.20", optional = true }
 futures-util = { version = "0.3", optional = true }
 

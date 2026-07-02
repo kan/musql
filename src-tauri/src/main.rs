@@ -1696,12 +1696,29 @@ fn disconnect_pool(
     Ok(())
 }
 
+// Encode export content to the requested charset. Unmappable characters are
+// replaced with numeric character references by encoding_rs (never fails).
+fn encode_export_content(content: &str, encoding: Option<&str>) -> Vec<u8> {
+    match encoding.unwrap_or("utf-8") {
+        "utf-8-bom" => {
+            let mut v = Vec::with_capacity(content.len() + 3);
+            v.extend_from_slice(&[0xEF, 0xBB, 0xBF]);
+            v.extend_from_slice(content.as_bytes());
+            v
+        }
+        "shift_jis" => encoding_rs::SHIFT_JIS.encode(content).0.into_owned(),
+        "euc-jp" => encoding_rs::EUC_JP.encode(content).0.into_owned(),
+        _ => content.as_bytes().to_vec(),
+    }
+}
+
 #[tauri::command]
 async fn export_file(
     content: String,
     default_name: String,
     filter_name: String,
     extensions: Vec<String>,
+    encoding: Option<String>,
 ) -> Result<bool, String> {
     let ext_refs: Vec<&str> = extensions.iter().map(|s| s.as_str()).collect();
     let dialog = rfd::AsyncFileDialog::new()
@@ -1712,7 +1729,8 @@ async fn export_file(
 
     match dialog {
         Some(handle) => {
-            std::fs::write(handle.path(), content.as_bytes())
+            let bytes = encode_export_content(&content, encoding.as_deref());
+            std::fs::write(handle.path(), &bytes)
                 .map_err(|e| format!("Failed to write file: {e}"))?;
             Ok(true)
         }
