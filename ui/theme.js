@@ -39,4 +39,13 @@
   });
 
   // Theme toggle is now menu-only; no floating button.
+
+  // Suppress WebView reload shortcuts (Ctrl+R / Ctrl+Shift+R / Ctrl+F5 / F5) in every
+  // window. A reload serves no purpose in a packaged app and, in the query window, would
+  // drop in-flight query tracking (RUNNING_QUERIES) and unsaved tab state (#42).
+  window.addEventListener("keydown", function(e) {
+    var isReloadKey = e.key === "F5" ||
+      ((e.ctrlKey || e.metaKey) && (e.key === "r" || e.key === "R"));
+    if (isReloadKey) e.preventDefault();
+  }, { capture: true });
 })();

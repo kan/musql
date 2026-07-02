@@ -58,6 +58,60 @@ async function safeInvoke(command, payload) {
 
 // ── Helpers ──
 
+// Custom confirm dialog (replaces window.confirm, which shows the origin URL in
+// its title). Enter = OK, Escape / overlay click = Cancel. Resolves to a boolean.
+function confirmDialog(message, opts) {
+  opts = opts || {};
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    const box = document.createElement("div");
+    box.className = "modal-box";
+    box.style.maxWidth = "400px";
+
+    const msg = document.createElement("p");
+    msg.textContent = message;
+    msg.style.whiteSpace = "pre-wrap"; // some messages contain \n
+    msg.style.margin = "4px 0 0";
+    box.appendChild(msg);
+
+    const actions = document.createElement("div");
+    actions.className = "actions actions-right";
+    actions.style.marginTop = "16px";
+    const cancelBtn = document.createElement("button");
+    cancelBtn.className = "ghost";
+    cancelBtn.textContent = opts.cancelLabel || t('cancel');
+    const okBtn = document.createElement("button");
+    okBtn.className = opts.danger ? "danger" : "success";
+    okBtn.textContent = opts.okLabel || t('ok');
+    actions.appendChild(cancelBtn);
+    actions.appendChild(okBtn);
+    box.appendChild(actions);
+
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+
+    let done = false;
+    function finish(result) {
+      if (done) return;
+      done = true;
+      overlay.remove();
+      document.removeEventListener("keydown", onKey);
+      resolve(result);
+    }
+    // Enter activates the focused button natively (OK is focused by default; Tab to
+    // Cancel then Enter cancels) — matching window.confirm. Only Escape is handled here.
+    function onKey(e) {
+      if (e.key === "Escape") finish(false);
+    }
+    document.addEventListener("keydown", onKey);
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) finish(false); });
+    cancelBtn.addEventListener("click", () => finish(false));
+    okBtn.addEventListener("click", () => finish(true));
+    okBtn.focus();
+  });
+}
+
 function getItemHint(item) {
   const ssh = item.request.ssh;
   const mysqlHost = item.request.mysql.host || t('host_not_set');
@@ -349,7 +403,7 @@ async function duplicateProfile(id) {
 }
 
 async function deleteProfile(id) {
-  if (!confirm(t('confirm_delete_profile'))) return;
+  if (!(await confirmDialog(t('confirm_delete_profile'), { danger: true, okLabel: t('delete') }))) return;
   try {
     profileData = await safeInvoke("delete_profile", { id });
     renderTree();
@@ -381,7 +435,7 @@ async function renameGroup(id, currentName) {
 }
 
 async function deleteGroup(id) {
-  if (!confirm(t('confirm_delete_group'))) return;
+  if (!(await confirmDialog(t('confirm_delete_group'), { danger: true, okLabel: t('delete') }))) return;
   try {
     profileData = await safeInvoke("delete_group", { id });
     renderTree();
@@ -701,7 +755,7 @@ async function commitReorder() {
 // ── Import / Export ──
 
 async function exportProfiles() {
-  const includePasswords = confirm(t('confirm_include_passwords'));
+  const includePasswords = await confirmDialog(t('confirm_include_passwords'));
   try {
     await safeInvoke("export_profiles", { includePasswords });
   } catch (error) {
@@ -722,7 +776,7 @@ async function importProfiles() {
         groups: result.conflicts.groups.length,
         profiles: result.conflicts.profiles.length,
       });
-      const overwrite = confirm(msg);
+      const overwrite = await confirmDialog(msg);
       const mode = overwrite ? "overwrite" : "add";
       const result2 = await safeInvoke("import_profiles", {
         mode, filePath: result.file_path,

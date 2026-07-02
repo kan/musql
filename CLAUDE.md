@@ -4,7 +4,7 @@
 Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`ui/` の HTML/JS/CSS、Node.js 不要）。SSH 踏み台対応（`russh`）。
 
 ## How to run
-- `cd src-tauri && cargo tauri dev` で起動。
+- `cd src-tauri && cargo tauri dev --config tauri.dev.conf.json` で起動。dev config は identifier を `...musql.debug` に上書きし、インストール版とウィンドウ状態（`tauri-plugin-window-state`）・アプリデータを分離する。
 - `cargo check` / `cargo test` / `cargo fmt --check` / `cargo clippy -- -D warnings`。
 
 ## Architecture
@@ -24,6 +24,7 @@ Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`
 - **メニュー**: ハンバーガーボタン → `popup_menu()`。アクセラレータは非表示メニューバーで保持。
 - **アップデート**: `tauri-plugin-updater` + Ed25519 署名。起動3秒後に自動チェック + Help メニューから手動チェック。Cargo feature `self-updater`（デフォルト有効）で分離。`--no-default-features` で Store ビルド（アップデータ無効）。
 - **Docker 連携**: `bollard` クレートで Docker API に接続（名前付きパイプ → TCP `127.0.0.1:2375/2376` フォールバック、WSL2 dockerd 対応）。running コンテナから MySQL コンテナを自動検出（exposed port 3306 or `musql.enable=true` ラベル）。ports バインドなしのコンテナには `alpine/socat` 一時コンテナで TCP トンネルを作成（`auto_remove: true`、ラベル `musql.tunnel=true`）。トンネルコンテナは検出一覧から除外。アプリ起動時・終了時・query ウィンドウ close 時にトンネルをクリーンアップ。資格情報はコンテナ毎に保持（user/ssl_mode は localStorage、パスワードは keyring）。Cargo feature `docker`（デフォルト有効）で `bollard`/`futures-util` 依存を分離。
+- **ウィンドウ状態永続化**: `tauri-plugin-window-state`（常時有効）で main / query のサイズ・位置・最大化を保存/復元。`StateFlags` は `SIZE | POSITION | MAXIMIZED` のみ（VISIBLE 等は除外＝show/hide パターンを上書きしない）。固定サイズの settings は `with_denylist(["settings"])` で除外。プラグインは `RunEvent::Exit` で自動保存するが、`main:exit` メニューは `std::process::exit(0)` で終了しフックを飛ばすため、その直前で `app.save_window_state(StateFlags::all())` を明示呼び出ししている（この save を消すと状態が保存されない）。dev 起動は `tauri.dev.conf.json` で identifier を `.debug` に分離しているため、インストール版とウィンドウ状態は混ざらない。
 - **SQL 識別子**: JS `quoteId()` / Rust `escape_identifier()` でバッククォートエスケープ。
 - **ウィンドウ管理**: show/hide パターン採用。main 以外のウィンドウ（query, settings）は `on_window_event` で `CloseRequested` を `api.prevent_close()` + `window.hide()` に差し替え、ウィンドウ破棄を防止。query 閉じ時は `query:reset` イベントを emit してから main を show。main ウィンドウの close はそのままアプリ終了。多重起動は意図的に許容している（1 インスタンスで同時に開ける connection は 1 つのため、複数接続は複数インスタンスで行う設計）。`tauri-plugin-single-instance` は導入しないこと。参考知見（[zenn.dev/sttk3/articles/69cb3bd6331325](https://zenn.dev/sttk3/articles/69cb3bd6331325)）:
   - `close()` はウィンドウを完全破棄、`hide()` はメモリ保持で非表示、`destroy()` はイベント発火なしで破棄。macOS では最後のウィンドウを `close()` するとアプリ自動終了するため main は `hide()` が安全（musql は Windows 専用だが将来のクロスプラットフォーム対応時に重要）。

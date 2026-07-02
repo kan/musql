@@ -1553,6 +1553,24 @@ const tabManager = {
       document.addEventListener("mouseup", onUp);
     });
 
+    // ── Right-click context menu (#42) ──
+    el.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      const idx = this.tabs.findIndex((t) => t.id === id);
+      const items = [
+        { label: t('tab_close'), icon: 'x', action: () => this.closeTab(id) },
+      ];
+      if (this.tabs.length > 1) {
+        items.push({ label: t('tab_close_others'), action: () => this.closeOthers(id) });
+      }
+      if (idx >= 0 && idx < this.tabs.length - 1) {
+        items.push({ label: t('tab_close_right'), action: () => this.closeToRight(id) });
+      }
+      items.push({ separator: true });
+      items.push({ label: t('tab_close_all'), action: () => this.closeAllTabs() });
+      showContextMenu(e, items);
+    });
+
     tabBarTabs.appendChild(el);
 
     // Pane
@@ -1659,6 +1677,23 @@ const tabManager = {
 
   has(id) {
     return this.tabs.some((t) => t.id === id);
+  },
+
+  // Close a set of tabs by id. Collect ids first so index shifts during
+  // closeTab don't skip any (#42).
+  _closeMany(ids) {
+    ids.forEach((id) => this.closeTab(id));
+  },
+  closeOthers(id) {
+    this._closeMany(this.tabs.filter((t) => t.id !== id).map((t) => t.id));
+  },
+  closeToRight(id) {
+    const idx = this.tabs.findIndex((t) => t.id === id);
+    if (idx === -1) return;
+    this._closeMany(this.tabs.slice(idx + 1).map((t) => t.id));
+  },
+  closeAllTabs() {
+    this._closeMany(this.tabs.map((t) => t.id));
   },
 };
 

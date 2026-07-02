@@ -5,12 +5,17 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    # 週次 (毎週月曜 00:00 UTC): コミットがない期間の新規 RUSTSEC を検知する
+    - cron: "0 0 * * 1"
 
 permissions:
   contents: read
 
 jobs:
   check:
+    # スケジュール実行では audit のみ回す (Windows ビルドは push/PR 時だけ)
+    if: github.event_name != 'schedule'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -40,6 +45,10 @@ jobs:
 
   audit:
     runs-on: ubuntu-latest
+    # 週次スケジュール実行で新規アドバイザリを検知したら issue を作成できるようにする
+    permissions:
+      contents: read
+      issues: write
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: actions-rust-lang/audit@72c09e02f132669d52284a3323acdb503cfc1a24 # v1.2.7

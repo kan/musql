@@ -2872,8 +2872,21 @@ fn open_docker_query_window(_app: AppHandle, _info: DockerConnectionInfo) -> Res
 }
 
 fn main() {
+    // `mut` is only used when the self-updater feature adds another plugin below.
     #[allow(unused_mut)]
-    let mut builder = tauri::Builder::default();
+    // Persist & restore window size / position / maximized only (#42). VISIBLE etc. are
+    // excluded so the show/hide pattern isn't overridden; the fixed-size settings dialog
+    // is denylisted so its geometry is never forced.
+    let mut builder = tauri::Builder::default().plugin(
+        tauri_plugin_window_state::Builder::default()
+            .with_state_flags(
+                tauri_plugin_window_state::StateFlags::SIZE
+                    | tauri_plugin_window_state::StateFlags::POSITION
+                    | tauri_plugin_window_state::StateFlags::MAXIMIZED,
+            )
+            .with_denylist(&["settings"])
+            .build(),
+    );
     #[cfg(feature = "self-updater")]
     {
         builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
@@ -2912,6 +2925,12 @@ fn main() {
             let id = event.id().0.as_str();
             match id {
                 "main:exit" => {
+                    // std::process::exit bypasses the plugin's save-on-exit hook,
+                    // so persist window state explicitly first (#42).
+                    {
+                        use tauri_plugin_window_state::{AppHandleExt, StateFlags};
+                        let _ = app.save_window_state(StateFlags::all());
+                    }
                     #[cfg(feature = "docker")]
                     {
                         tauri::async_runtime::spawn(async {
