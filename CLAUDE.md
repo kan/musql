@@ -6,6 +6,7 @@ Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`
 ## How to run
 - `cd src-tauri && cargo tauri dev --config tauri.dev.conf.json` で起動。dev config は identifier を `...musql.debug` に上書きし、インストール版とウィンドウ状態（`tauri-plugin-window-state`）・アプリデータを分離する。
 - `cargo check` / `cargo test` / `cargo fmt --check` / `cargo clippy -- -D warnings`。
+- UI (`ui/*.js`) の lint: `npx @biomejs/biome@2.4.10 lint --error-on-warnings`（Biome、package.json 不要。設定は `biome.json`、`ui/lib/**` の vendor は除外。CI の `lint-ui` ジョブでも実行）。
 
 ## Architecture
 - **main** (`ui/index.html`, `ui/app.js`): 接続プロファイル一覧。

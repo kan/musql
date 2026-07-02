@@ -1,0 +1,35 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.4.10/schema.json",
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
+  "files": {
+    "includes": ["ui/**/*.js", "!ui/lib/**"]
+  },
+  "formatter": {
+    "enabled": false
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "style": {
+        "useTemplate": "off"
+      },
+      "complexity": {
+        "useOptionalChain": "off",
+        "useArrowFunction": "off",
+        "useLiteralKeys": "off"
+      },
+      "correctness": {
+        "noInnerDeclarations": "off"
+      },
+      "suspicious": {
+        "useIterableCallbackReturn": "off",
+        "useBiomeIgnoreFolder": "off"
+      }
+    }
+  }
+}

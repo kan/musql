@@ -45,7 +45,7 @@ menuBtn.addEventListener("click", () => safeInvoke("show_popup_menu", { lang: ge
 })();
 
 let profileData = { groups: [], items: [] };
-let collapsedGroups = JSON.parse(localStorage.getItem("musql:collapsed") || "{}");
+const collapsedGroups = JSON.parse(localStorage.getItem("musql:collapsed") || "{}");
 let dragState = null; // { type: "item"|"group", id }
 let activeFilterTag = null;
 
@@ -864,7 +864,7 @@ async function migrateDockerCreds() {
   var all = loadDockerCreds();
   var migrated = false;
   for (var id in all) {
-    if (!all.hasOwnProperty(id)) continue;
+    if (!Object.hasOwn(all, id)) continue;
     if (all[id] && all[id].password) {
       try {
         await safeInvoke("save_docker_password", { containerId: id, password: all[id].password });
@@ -1020,7 +1020,7 @@ filterInput.addEventListener("input", () => renderTree());
   try {
     var ver = await window.__TAURI__.app.getVersion();
     document.getElementById("app-version").textContent = "v" + ver;
-  } catch(e) {}
+  } catch {}
 })();
 
 refreshProfiles().catch((error) => alert(String(error)));

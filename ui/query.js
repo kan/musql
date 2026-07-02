@@ -71,7 +71,7 @@ function saveDrafts() {
       const cmEl = tab.paneEl.querySelector(".CodeMirror");
       const content = (cmEl && cmEl.CodeMirror) ? cmEl.CodeMirror.getValue() : "";
       const match = tab.id.match(/^sql-(\d+)$/);
-      const num = match ? parseInt(match[1]) : 0;
+      const num = match ? parseInt(match[1], 10) : 0;
       tabs.push({ type: "sql", num, content });
     } else if (tab.type === "data") {
       const match = tab.id.match(/^table-(.+)$/);
@@ -659,7 +659,7 @@ function updateWindowTitle() {
 // ── Export utilities ──
 
 function generateCsv(columns, rows, separator, newline) {
-  const escape = (val) => {
+  const escapeField = (val) => {
     if (val === null || val === undefined) return "";
     const s = String(val);
     if (s.includes(separator) || s.includes('"') || s.includes("\n") || s.includes("\r")) {
@@ -668,9 +668,9 @@ function generateCsv(columns, rows, separator, newline) {
     return s;
   };
   const lines = [];
-  lines.push(columns.map(escape).join(separator));
+  lines.push(columns.map(escapeField).join(separator));
   rows.forEach((row) => {
-    lines.push(columns.map((_, i) => escape(row[i])).join(separator));
+    lines.push(columns.map((_, i) => escapeField(row[i])).join(separator));
   });
   // Only the record separator uses the chosen line ending; newlines embedded in
   // quoted field values are preserved verbatim (data fidelity — see #40 review).
@@ -1285,7 +1285,7 @@ function renderTable(columns, rows, container, onRowClick, sortState, onSortCall
       if (typeof va === "number" && typeof vb === "number") return (va - vb) * dir;
       const na = Number(va);
       const nb = Number(vb);
-      if (!isNaN(na) && !isNaN(nb) && va !== "" && vb !== "") return (na - nb) * dir;
+      if (!Number.isNaN(na) && !Number.isNaN(nb) && va !== "" && vb !== "") return (na - nb) * dir;
       return String(va).localeCompare(String(vb)) * dir;
     });
     return sorted;
@@ -1342,7 +1342,7 @@ function sortRowsByColumn(rows, ci, dir) {
     if (typeof va === "number" && typeof vb === "number") return (va - vb) * mult;
     const na = Number(va);
     const nb = Number(vb);
-    if (!isNaN(na) && !isNaN(nb) && va !== "" && vb !== "") return (na - nb) * mult;
+    if (!Number.isNaN(na) && !Number.isNaN(nb) && va !== "" && vb !== "") return (na - nb) * mult;
     return String(va).localeCompare(String(vb)) * mult;
   });
   return sorted;
@@ -1643,7 +1643,7 @@ const tabManager = {
         const cmEl = tab.paneEl.querySelector(".CodeMirror");
         if (cmEl && cmEl.CodeMirror) {
           const content = cmEl.CodeMirror.getValue();
-          if (content) closedDrafts[parseInt(match[1])] = content;
+          if (content) closedDrafts[parseInt(match[1], 10)] = content;
         }
       }
     }
@@ -1996,8 +1996,7 @@ function openTableTab(tableName, initialView) {
           indexContainer.className = "table-scroll";
           // Remove "Table" column and move "Key_name" to the front
           const tableIdx = indexRes.columns.indexOf("Table");
-          const keyNameIdx = indexRes.columns.indexOf("Key_name");
-          let idxCols = indexRes.columns.slice();
+          const idxCols = indexRes.columns.slice();
           let idxRows = indexRes.rows.map((r) => r.slice());
           if (tableIdx >= 0) {
             idxCols.splice(tableIdx, 1);
@@ -2140,7 +2139,7 @@ function addSqlTab(initialContent, tabNum) {
     tabManager.tabs.forEach((tab) => {
       if (tab.type === "sql") {
         const match = tab.id.match(/^sql-(\d+)$/);
-        if (match) usedNumbers.add(parseInt(match[1]));
+        if (match) usedNumbers.add(parseInt(match[1], 10));
       }
     });
     num = 1;

@@ -44,3 +44,6 @@ function icon(name, size) {
   var s = size || 16;
   return '<svg class="icon" width="' + s + '" height="' + s + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + paths + '</svg>';
 }
+
+// Expose as a global for the other page scripts (icons.js loads before them).
+window.icon = icon;

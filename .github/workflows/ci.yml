@@ -43,6 +43,18 @@ jobs:
         run: cargo test
         working-directory: src-tauri
 
+  lint-ui:
+    # 静的 UI (ui/*.js) の Biome lint。スケジュール実行では回さない
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: biomejs/setup-biome@4c91541eaada48f67d7dbd7833600ce162b68f51 # v2.7.1
+        with:
+          version: 2.4.10
+      - name: Biome lint
+        run: biome lint --error-on-warnings
+
   audit:
     runs-on: ubuntu-latest
     # 週次スケジュール実行で新規アドバイザリを検知したら issue を作成できるようにする
