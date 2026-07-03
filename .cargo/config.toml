@@ -1,0 +1,5 @@
+# cargo alias: リポジトリ直下から `cargo dev` でデバッグビルドを起動できる。
+# src-tauri から実行した場合は src-tauri/.cargo/config.toml の同名 alias が優先される
+# (相対パスの解決先が違うため 2 か所に定義している)。
+[alias]
+dev = "tauri dev --config src-tauri/tauri.dev.conf.json"
