@@ -1,0 +1,66 @@
+{
+  "version": 2,
+  "groups": [{ "id": "grp-proj", "name": "プロジェクト A", "order": 1000 }],
+  "items": [
+    {
+      "id": "prof-local-docker",
+      "name": "ローカル開発 (Docker)",
+      "group_id": null,
+      "order": 1000,
+      "color": null,
+      "tags": [],
+      "request": {
+        "mysql": {
+          "host": "127.0.0.1",
+          "port": 3306,
+          "database": "ec_demo",
+          "username": "demo",
+          "ssl_mode": "DISABLED",
+          "tls_ca_cert_path": null,
+          "save_password": true
+        },
+        "ssh": null
+      }
+    },
+    {
+      "id": "prof-simple-dev",
+      "name": "開発サーバー",
+      "group_id": "grp-proj",
+      "order": 1000,
+      "color": null,
+      "tags": [],
+      "request": {
+        "mysql": {
+          "host": "dev-db.example.internal",
+          "port": 3306,
+          "database": "app",
+          "username": "app",
+          "ssl_mode": "DISABLED",
+          "tls_ca_cert_path": null,
+          "save_password": true
+        },
+        "ssh": null
+      }
+    },
+    {
+      "id": "prof-simple-prod",
+      "name": "本番サーバー",
+      "group_id": "grp-proj",
+      "order": 2000,
+      "color": null,
+      "tags": [],
+      "request": {
+        "mysql": {
+          "host": "db.example.internal",
+          "port": 3306,
+          "database": "app",
+          "username": "app",
+          "ssl_mode": "REQUIRED",
+          "tls_ca_cert_path": null,
+          "save_password": true
+        },
+        "ssh": null
+      }
+    }
+  ]
+}

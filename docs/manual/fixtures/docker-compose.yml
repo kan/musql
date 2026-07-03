@@ -1,0 +1,27 @@
+name: musql-demo
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: musql-demo-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root-demo
+      MYSQL_DATABASE: ec_demo
+      MYSQL_USER: demo
+      MYSQL_PASSWORD: demo1234
+      TZ: Asia/Tokyo
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./init:/docker-entrypoint-initdb.d:ro
+      - demo-data:/var/lib/mysql
+    labels:
+      musql.name: "EC デモ"
+      musql.user: "demo"
+      musql.password: "demo1234"
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_ja_0900_as_cs
+
+volumes:
+  demo-data:

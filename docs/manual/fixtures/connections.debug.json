@@ -1,0 +1,139 @@
+{
+  "version": 2,
+  "groups": [
+    { "id": "grp-ec", "name": "EC サイト", "order": 1000 },
+    { "id": "grp-corp", "name": "社内システム", "order": 2000 }
+  ],
+  "items": [
+    {
+      "id": "prof-local-docker",
+      "name": "ローカル開発 (Docker)",
+      "group_id": null,
+      "order": 1000,
+      "color": "#1abc9c",
+      "tags": ["dev"],
+      "request": {
+        "mysql": {
+          "host": "127.0.0.1",
+          "port": 3306,
+          "database": "ec_demo",
+          "username": "demo",
+          "ssl_mode": "DISABLED",
+          "tls_ca_cert_path": null,
+          "save_password": true
+        },
+        "ssh": null
+      }
+    },
+    {
+      "id": "prof-ec-prod",
+      "name": "EC 本番",
+      "group_id": "grp-ec",
+      "order": 1000,
+      "color": "#d24a4a",
+      "tags": ["本番"],
+      "request": {
+        "mysql": {
+          "host": "db01.ec-prod.example.internal",
+          "port": 3306,
+          "database": "ec_main",
+          "username": "app",
+          "ssl_mode": "REQUIRED",
+          "tls_ca_cert_path": null,
+          "save_password": true
+        },
+        "ssh": {
+          "enabled": true,
+          "host": "bastion.example.com",
+          "port": 22,
+          "username": "deploy",
+          "private_key_path": "C:\\Users\\demo\\.ssh\\id_ed25519",
+          "config_host": null,
+          "auth_method": "key",
+          "save_ssh_password": true,
+          "save_ssh_passphrase": true
+        }
+      }
+    },
+    {
+      "id": "prof-ec-stg",
+      "name": "EC ステージング",
+      "group_id": "grp-ec",
+      "order": 2000,
+      "color": "#27ae60",
+      "tags": ["検証"],
+      "request": {
+        "mysql": {
+          "host": "db01.ec-stg.example.internal",
+          "port": 3306,
+          "database": "ec_main",
+          "username": "app",
+          "ssl_mode": "DISABLED",
+          "tls_ca_cert_path": null,
+          "save_password": true
+        },
+        "ssh": null
+      }
+    },
+    {
+      "id": "prof-ec-replica",
+      "name": "EC 分析レプリカ",
+      "group_id": "grp-ec",
+      "order": 3000,
+      "color": "#8e44ad",
+      "tags": ["readonly", "分析"],
+      "request": {
+        "mysql": {
+          "host": "replica01.ec-prod.example.internal",
+          "port": 3307,
+          "database": "ec_main",
+          "username": "analyst",
+          "ssl_mode": "REQUIRED",
+          "tls_ca_cert_path": null,
+          "save_password": true
+        },
+        "ssh": null
+      }
+    },
+    {
+      "id": "prof-corp-kintai",
+      "name": "勤怠管理",
+      "group_id": "grp-corp",
+      "order": 1000,
+      "color": "#2980b9",
+      "tags": [],
+      "request": {
+        "mysql": {
+          "host": "kintai-db.corp.example.internal",
+          "port": 3306,
+          "database": "kintai",
+          "username": "kintai_app",
+          "ssl_mode": "DISABLED",
+          "tls_ca_cert_path": null,
+          "save_password": true
+        },
+        "ssh": null
+      }
+    },
+    {
+      "id": "prof-corp-wiki",
+      "name": "社内 Wiki",
+      "group_id": "grp-corp",
+      "order": 2000,
+      "color": "#e67e22",
+      "tags": [],
+      "request": {
+        "mysql": {
+          "host": "wiki-db.corp.example.internal",
+          "port": 3306,
+          "database": "wiki",
+          "username": "wiki",
+          "ssl_mode": "DISABLED",
+          "tls_ca_cert_path": null,
+          "save_password": true
+        },
+        "ssh": null
+      }
+    }
+  ]
+}
