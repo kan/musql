@@ -905,9 +905,13 @@ async fn call_ai_api(
 
     match provider {
         AiProvider::Claude => {
+            // thinking を明示的に無効化: Sonnet 5 以降は未指定だと adaptive thinking が
+            // 既定で有効になり、thinking トークンが max_tokens を消費して SQL が
+            // 途切れるため(SQL 断片生成にはレイテンシ面でも thinking 不要)。
             let body = serde_json::json!({
                 "model": model,
-                "max_tokens": 512,
+                "max_tokens": 2048,
+                "thinking": {"type": "disabled"},
                 "messages": [{"role": "user", "content": prompt}]
             });
             let resp = client

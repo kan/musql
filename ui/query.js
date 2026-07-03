@@ -232,20 +232,20 @@ function buildTableHints() {
 
 const AI_MODELS = {
   claude: [
-    { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
+    { value: "claude-sonnet-5", label: "Claude Sonnet 5" },
     { value: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
-    { value: "claude-opus-4-6", label: "Claude Opus 4.6" },
+    { value: "claude-opus-4-8", label: "Claude Opus 4.8" },
   ],
   openai: [
-    { value: "gpt-5", label: "GPT-5" },
-    { value: "gpt-5-mini", label: "GPT-5 Mini" },
-    { value: "gpt-5-nano", label: "GPT-5 Nano" },
-    { value: "o4-mini", label: "O4 Mini" },
+    { value: "gpt-5.4", label: "GPT-5.4" },
+    { value: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
+    { value: "gpt-5.4-nano", label: "GPT-5.4 Nano" },
+    { value: "gpt-5.5", label: "GPT-5.5" },
   ],
   gemini: [
-    { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
-    { value: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash-Lite" },
-    { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+    { value: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
+    { value: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash-Lite" },
+    { value: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro (Preview)" },
   ],
 };
 

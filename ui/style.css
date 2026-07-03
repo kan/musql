@@ -1685,6 +1685,12 @@ html.dark .CodeMirror-hint-active {
   padding: 8px 0;
 }
 
+/* AI 設定モーダルは AI アシストモーダル(同 z-index 900・DOM 後方)の
+   設定ボタンからも開くため、前面に出す (#71) */
+#ai-modal {
+  z-index: 920;
+}
+
 /* ── In-app manual viewer (#46) ── */
 .manual-overlay {
   z-index: 950; /* above regular modals so ? buttons inside them work */
