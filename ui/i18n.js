@@ -161,6 +161,15 @@
       check_update: "Check for Updates...",
       no_update_available: "You are using the latest version.",
 
+      // ── Manual viewer ──
+      manual_back: "Back",
+      manual_toc: "Contents",
+      manual_reload: "Reload",
+      manual_open_github: "Open on GitHub",
+      manual_loading: "Loading...",
+      manual_load_error: "Failed to load the manual. Check your network connection.",
+      help_open_manual: "Open manual",
+
       // ── AI ──
       ai_settings: "AI Settings",
       ai_provider: "Provider",
@@ -346,6 +355,15 @@
       update_installing: "インストール中...",
       check_update: "アップデートを確認...",
       no_update_available: "最新バージョンです。",
+
+      // ── Manual viewer ──
+      manual_back: "戻る",
+      manual_toc: "目次",
+      manual_reload: "更新",
+      manual_open_github: "GitHub で開く",
+      manual_loading: "読み込み中...",
+      manual_load_error: "マニュアルを読み込めませんでした。ネットワーク接続を確認してください。",
+      help_open_manual: "マニュアルを開く",
 
       // ── AI ──
       ai_settings: "AI 設定",

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>muSQL Settings</title>
     <link rel="icon" href="./icon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="./style.css?v=7" />
+    <link rel="stylesheet" href="./style.css?v=9" />
   </head>
   <body>
     <main class="settings-main">
@@ -25,7 +25,7 @@
       <!-- Single unified panel -->
       <section class="panel settings-panel">
         <!-- General section -->
-        <h3 class="settings-section-heading" data-i18n="general">General</h3>
+        <h3 class="settings-section-heading"><span data-i18n="general">General</span> <button type="button" class="help-btn" data-manual="connections.md#プロファイルの作成編集" data-i18n-title="help_open_manual">?</button></h3>
         <div class="grid">
           <label><span data-i18n="profile_name">Profile name</span> <input id="profile-name" data-i18n-placeholder="profile_name_placeholder" placeholder="e.g. prod/analytics" /></label>
           <label><span data-i18n="color">Color</span>
@@ -48,7 +48,7 @@
         <hr class="settings-divider" />
 
         <!-- DB section -->
-        <h3 class="settings-section-heading" data-i18n="mysql">DB Settings</h3>
+        <h3 class="settings-section-heading"><span data-i18n="mysql">DB Settings</span> <button type="button" class="help-btn" data-manual="connections.md#接続情報と-ssl" data-i18n-title="help_open_manual">?</button></h3>
         <div class="grid">
           <label><span data-i18n="db_engine">DB Engine</span>
             <select id="db-engine" disabled>
@@ -90,6 +90,7 @@
         <label class="settings-section-heading settings-ssh-toggle">
           <input id="ssh-enabled" type="checkbox" />
           <span data-i18n="ssh_via">SSH</span>
+          <button type="button" class="help-btn" data-manual="ssh.md" data-i18n-title="help_open_manual">?</button>
         </label>
         <div id="ssh-fields" class="grid" style="margin-top:10px">
           <label><span data-i18n="ssh_auth_method">Auth Method</span>
@@ -131,6 +132,7 @@
     <script src="./icons.js"></script>
     <script src="./i18n.js"></script>
     <script src="./theme.js"></script>
-    <script src="./settings.js?v=6"></script>
+    <script src="./manual.js"></script>
+    <script src="./settings.js?v=7"></script>
   </body>
 </html>

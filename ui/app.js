@@ -815,7 +815,11 @@ async function openSyncModal() {
 
   const h2 = document.createElement("h2");
   h2.textContent = t('sync_settings');
-  box.appendChild(h2);
+  const headingRow = document.createElement("div");
+  headingRow.className = "modal-heading-row";
+  headingRow.appendChild(h2);
+  headingRow.appendChild(window.createHelpButton("sync.md"));
+  box.appendChild(headingRow);
 
   const desc = document.createElement("p");
   desc.className = "modal-status";
@@ -1213,6 +1217,7 @@ if (eventApi && eventApi.listen) {
       case "import": importProfiles(); break;
       case "export": exportProfiles(); break;
       case "sync-settings": openSyncModal(); break;
+      case "manual": window.openManual(); break;
       case "theme-light": setTheme("light"); break;
       case "theme-dark": setTheme("dark"); break;
       case "lang-en": setLang("en"); break;

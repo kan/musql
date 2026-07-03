@@ -2496,6 +2496,23 @@ fn show_popup_menu(
     Ok(())
 }
 
+// Open a URL in the default browser. Restricted to https, parsed with a real
+// URL parser, and opened via tauri-plugin-opener (ShellExecuteW — no cmd.exe,
+// so shell metacharacters in the URL cannot inject commands).
+fn open_in_browser(url: &str) -> Result<(), String> {
+    let parsed = tauri::Url::parse(url).map_err(|e| format!("Invalid URL: {e}"))?;
+    if parsed.scheme() != "https" || parsed.host_str().is_none() {
+        return Err("Only https URLs can be opened".into());
+    }
+    tauri_plugin_opener::open_url(parsed.as_str(), None::<&str>)
+        .map_err(|e| format!("Failed to open browser: {e}"))
+}
+
+#[tauri::command]
+fn open_external(url: String) -> Result<(), String> {
+    open_in_browser(&url)
+}
+
 fn ml<'a>(lang: &str, key: &'a str) -> &'a str {
     match (lang, key) {
         ("ja", "file") => "ファイル",
@@ -2510,6 +2527,7 @@ fn ml<'a>(lang: &str, key: &'a str) -> &'a str {
         ("ja", "sync_settings") => "接続の同期...",
         ("ja", "exit") => "終了",
         ("ja", "github") => "GitHub リポジトリ",
+        ("ja", "manual") => "マニュアル",
         ("ja", "check_update") => "アップデートを確認...",
         ("ja", "settings") => "設定",
         ("ja", "new_sql_tab") => "新規 SQL タブ",
@@ -2544,6 +2562,7 @@ fn ml<'a>(lang: &str, key: &'a str) -> &'a str {
         (_, "sync_settings") => "Sync Connections...",
         (_, "exit") => "Exit",
         (_, "github") => "GitHub Repository",
+        (_, "manual") => "Manual",
         (_, "check_update") => "Check for Updates...",
         (_, "new_sql_tab") => "New SQL Tab",
         (_, "close_window") => "Close Window",
@@ -2675,6 +2694,13 @@ fn build_main_menu(handle: &AppHandle<Wry>, lang: &str, theme: &str) -> tauri::R
     )?;
     let edit_menu = build_edit_submenu(handle, lang)?;
     let view_menu = build_view_submenu(handle, lang, theme, WIN_MAIN)?;
+    let manual_item = MenuItem::with_id(
+        handle,
+        "main:manual",
+        ml(lang, "manual"),
+        true,
+        None::<&str>,
+    )?;
     let github_item = MenuItem::with_id(
         handle,
         "main:github",
@@ -2696,11 +2722,16 @@ fn build_main_menu(handle: &AppHandle<Wry>, lang: &str, theme: &str) -> tauri::R
             handle,
             ml(lang, "help"),
             true,
-            &[&check_update_item, &sep, &github_item],
+            &[&check_update_item, &sep, &manual_item, &github_item],
         )?
     };
     #[cfg(not(feature = "self-updater"))]
-    let help_menu = Submenu::with_items(handle, ml(lang, "help"), true, &[&github_item])?;
+    let help_menu = Submenu::with_items(
+        handle,
+        ml(lang, "help"),
+        true,
+        &[&manual_item, &github_item],
+    )?;
     Menu::with_items(handle, &[&file_menu, &edit_menu, &view_menu, &help_menu])
 }
 
@@ -3136,9 +3167,14 @@ fn main() {
                     std::process::exit(0);
                 }
                 "main:github" => {
-                    let _ = std::process::Command::new("cmd")
-                        .args(["/c", "start", "", "https://github.com/kan/musql"])
-                        .spawn();
+                    let _ = open_in_browser("https://github.com/kan/musql");
+                }
+                "main:manual" => {
+                    let _ = app.emit_to(
+                        EventTarget::webview_window(WIN_MAIN),
+                        "menu:action",
+                        "manual",
+                    );
                 }
                 #[cfg(feature = "self-updater")]
                 "main:check-update" => {
@@ -3271,7 +3307,8 @@ fn main() {
             docker_cleanup_tunnels,
             open_docker_query_window,
             get_docker_password,
-            save_docker_password
+            save_docker_password,
+            open_external
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {

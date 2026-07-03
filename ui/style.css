@@ -1684,3 +1684,165 @@ html.dark .CodeMirror-hint-active {
   color: var(--sub);
   padding: 8px 0;
 }
+
+/* ── In-app manual viewer (#46) ── */
+.manual-overlay {
+  z-index: 950; /* above regular modals so ? buttons inside them work */
+}
+.manual-box {
+  background: var(--panel);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px var(--shadow-md);
+  width: min(860px, calc(100vw - 48px));
+  height: min(85vh, 1000px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.manual-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.manual-nav-btn {
+  font-size: 13px;
+  padding: 4px 10px;
+}
+.manual-nav-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.manual-close-btn {
+  font-size: 15px;
+  padding: 4px 8px;
+}
+.manual-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 32px 40px;
+  line-height: 1.7;
+  font-size: 14px;
+}
+.manual-content h1 {
+  font-size: 1.5rem;
+  margin: 8px 0 16px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.manual-content h2 {
+  font-size: 1.2rem;
+  margin: 28px 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+}
+.manual-content h3 {
+  font-size: 1.05rem;
+  margin: 20px 0 8px;
+}
+.manual-content p {
+  margin: 10px 0;
+}
+.manual-content a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.manual-content a:hover {
+  text-decoration: underline;
+}
+.manual-content code {
+  background: var(--ghost-bg);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 0.9em;
+}
+.manual-content pre {
+  background: var(--pre-bg);
+  color: var(--pre-text);
+  border-radius: 8px;
+  padding: 12px 14px;
+  overflow-x: auto;
+}
+.manual-content pre code {
+  background: none;
+  padding: 0;
+  font-size: 12.5px;
+}
+.manual-content img {
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin: 6px 0;
+}
+.manual-content blockquote {
+  margin: 10px 0;
+  padding: 2px 14px;
+  border-left: 3px solid var(--accent);
+  color: var(--sub);
+  background: var(--hover-bg);
+  border-radius: 0 6px 6px 0;
+}
+.manual-content ul,
+.manual-content ol {
+  padding-left: 24px;
+  margin: 10px 0;
+}
+.manual-content li {
+  margin: 3px 0;
+}
+.manual-table-wrap {
+  overflow-x: auto;
+  margin: 10px 0;
+}
+.manual-content table {
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.manual-content th,
+.manual-content td {
+  border: 1px solid var(--line);
+  padding: 6px 10px;
+  text-align: left;
+}
+.manual-content th {
+  background: var(--th-bg);
+}
+.manual-error {
+  color: var(--danger);
+  margin-bottom: 12px;
+}
+
+/* Reusable "?" help button that deep-links into the manual */
+.help-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--ghost-bg);
+  color: var(--sub);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.help-btn:hover {
+  background: var(--hover-bg-strong);
+  color: var(--ink);
+}
+.modal-heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.modal-heading-row h2 {
+  margin: 0 0 12px;
+}
+.modal-heading-row .help-btn {
+  margin-bottom: 12px;
+}

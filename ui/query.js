@@ -1002,7 +1002,11 @@ function openExportDialog({ defaultName, ext, filterName, generate }) {
 
   const h2 = document.createElement("h2");
   h2.textContent = t('export_options_title');
-  box.appendChild(h2);
+  const headingRow = document.createElement("div");
+  headingRow.className = "modal-heading-row";
+  headingRow.appendChild(h2);
+  headingRow.appendChild(window.createHelpButton("export.md#文字コードと改行コード"));
+  box.appendChild(headingRow);
 
   function makeSelect(labelText, options, current) {
     const label = document.createElement("label");
