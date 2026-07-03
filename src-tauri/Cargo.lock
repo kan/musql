@@ -3019,7 +3019,7 @@ dependencies = [
 
 [[package]]
 name = "musql"
-version = "0.5.5"
+version = "0.6.0"
 dependencies = [
  "bollard",
  "encoding_rs",

@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.6.0] - 2026-07-03
+
+### Added
+- ユーザーマニュアル（`docs/manual/`、機能別・日本語）とアプリ内マニュアルビューア（`F1` / ヘルプメニュー / 各画面の `?` ボタンから該当ページへ直接ジャンプ）(#46)
+- 接続プロファイルの外部 JSON 同期（Dropbox 等のパス指定で複数マシン共有）(#47)
+- QuickOpen コマンドパレット（`Ctrl+P`: テーブル名 fuzzy / `@` タブ切替 / `>` SQL 履歴）(#44)
+- 長時間クエリ（5 秒超）完了のデスクトップ通知（非フォーカス時、View メニューで ON/OFF）(#43)
+- エクスポートの文字コード（UTF-8 / BOM 付き / Shift_JIS / EUC-JP）・改行コード選択とクリップボードコピー (#40)
+- SQL タブのクエリ結果ページングと全行エクスポート (#41)
+- query タブのコンテキストメニュー（閉じる / 他を閉じる / 右側を閉じる / すべて閉じる）(#42)
+- ウィンドウ状態（サイズ・位置・最大化）の保存 / 復元（dev とインストール版は identifier で分離）(#42)
+- SECURITY.md（脆弱性報告ポリシー）(#28)
+
+### Changed
+- AI アシストのモデルリストを現行モデルに更新（Claude Sonnet 5 / Haiku 4.5 / Opus 4.8、GPT-5.4 / 5.4 Mini / 5.4 Nano / 5.5、Gemini 3.5 Flash / 3.1 Flash-Lite / 3.1 Pro）(#71)
+- 削除確認などのダイアログをカスタム UI 化（Enter / Escape 操作対応）(#42)
+- `F5` / `Ctrl+R` による WebView リロードを抑止 (#42)
+- CI: Biome による UI JavaScript の lint を導入 (#45)、cargo audit を週次実行化
+
+### Fixed
+- AI 設定モーダルが AI アシストモーダルの背後に開いてしまう問題 (#71)
+- URL オープンを `cmd /c start` 経由から `tauri-plugin-opener`（ShellExecuteW）に変更（コマンドインジェクション対策）
+- セキュリティ: 依存関係を更新（russh 0.61.2 / openssl 0.10.81 / tauri 2.11.5 ほか GHSA / RUSTSEC 対応）
+
 ## [0.5.5] - 2026-04-25
 
 ### Changed
@@ -155,6 +179,7 @@
 - アプリ内自動更新（NSIS インストーラー + Ed25519 署名）
 - GitHub Actions CI/CD（cargo check + リリースビルド）
 
+[0.6.0]: https://github.com/kan/musql/compare/v0.5.5...v0.6.0
 [0.5.5]: https://github.com/kan/musql/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/kan/musql/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/kan/musql/compare/v0.5.2...v0.5.3
