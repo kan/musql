@@ -66,19 +66,65 @@ Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`
 
 ## Git workflow
 - PR 運用はしていない。修正は **main に直接コミット** する。
-- ただしエージェント（Claude Code 等）は **push しない**。コミットまでに留め、push の判断はユーザーに委ねる。
-- ユーザーが内容を確認後、自身で `git push origin main` を実行する。
+- コミット前にユーザーの動作確認 OK を取る。lint / test が通っただけでコミットしない（GUI アプリなので実際に触らないと分からない）。
+- ただしエージェント（Claude Code 等）は **push しない**。コミットまでに留め、push の判断はユーザーに委ねる。ユーザーが内容を確認後、自身で `git push origin main` を実行する。
+  - **例外: リリース依頼**。「リリースして」は bump コミットだけでなく、**push・タグ作成と push・ワークフロー完了待ち・リリースノート記載までの一括依頼**。個別に push の確認を取らず「Release procedure」を最後まで完遂する。
 - ブランチを切って PR を作る運用は不要。
 
 ## Release procedure
-1. `CHANGELOG.md` に新バージョンのエントリを追加（日付・Added/Changed/Fixed セクション・比較リンク）
-2. `src-tauri/Cargo.toml` の `version` を更新
-3. `src-tauri/tauri.conf.json` の `version` を更新
-4. `cargo check` で `Cargo.lock` を更新（バージョン番号が反映される）
-5. 上記ファイルをコミット: `Bump version to X.Y.Z`
-6. タグ作成 & プッシュ: `git tag vX.Y.Z && git push origin main && git push origin vX.Y.Z`
-7. CI (`release.yml`) が自動でビルド・GitHub Release 作成・アセットアップロードを実行
-8. GitHub Release のリリースノートを確認・必要に応じて編集
+
+リリース依頼を受けたら、以下を最後まで通しで実行する（push の個別確認は不要。Git workflow の例外規定）。バージョン番号は変更内容から判断する（新機能ならマイナー、修正のみならパッチ）が、**判断に迷う場合と、ユーザーが番号を指定していない大きめの変更ではユーザーに確認する**。
+
+### 1. バージョンと CHANGELOG
+
+- `CHANGELOG.md` の先頭に新セクション（日付・Added/Changed/Fixed/Security・末尾の比較リンク）
+- `src-tauri/Cargo.toml` の `version`
+- `src-tauri/tauri.conf.json` の `version`
+- `cd src-tauri && cargo check` で `Cargo.lock` の `musql` エントリを追従させる。**忘れると lockfile drift が残り、後から同期コミットが必要になる**
+
+`store/AppxManifest.xml` は `Version="{{VERSION}}"` のプレースホルダで、CI がタグから流し込むため編集不要。
+
+### 2. 検証してコミット
+
+`cargo test` / `cargo clippy --all-targets -- -D warnings` / `cargo fmt --check` / Biome lint を通してから:
+
+```
+git add CHANGELOG.md src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json
+git commit -m "Bump version to X.Y.Z"
+```
+
+### 3. push とタグ
+
+```
+git push origin main
+git tag vX.Y.Z && git push origin vX.Y.Z
+```
+
+**タグを打つ前に必ずバージョンを更新すること** — `tauri-action` は `tauri.conf.json` の `version` をアセット名に埋め込むため、ずれると `latest.json` の指す先と実ファイル名が食い違う。
+
+タグを打ち直す場合: `git push origin :refs/tags/vX.Y.Z && git tag -d vX.Y.Z` → 修正後に再タグ。
+
+### 4. ワークフロー完了待ち
+
+タグ push で `Release` が起動する。ジョブは 2 つあり**両方**待つこと。
+
+- `build` — NSIS インストーラ + `latest.json`（セルフアップデータ用）
+- `build-store` — Store 用 EXE + MSIX を同じ Release に追加アップロード
+
+Windows のフルビルドで 10〜20 分かかる。`until [ "$(gh run view <id> --json status --jq .status)" = "completed" ]; do sleep 30; done` をバックグラウンドで回して待つ（ポーリングを前景で回さない）。
+
+### 5. アセット確認とリリースノート
+
+`releaseDraft: false` なので**タグ push の時点で Release は公開される**（pike のドラフト運用とは異なる）。`releaseBody` は "See the assets below to download and install." の固定文なので、完了後に CHANGELOG の内容で上書きする:
+
+```
+gh release view vX.Y.Z --json assets --jq '.assets[].name'
+gh release edit vX.Y.Z --notes "..."
+```
+
+**`latest.json` が添付されているか必ず確認する。** これが無いとセルフアップデータが黙って壊れる（`tauri-action` v1.0.0 で `includeUpdaterJson` → `uploadUpdaterJson` にリネームされた経緯があり、設定漏れが起きやすい）。期待されるアセットは NSIS インストーラ (`.exe` / `.exe.sig`) 、`latest.json`、`muSQL-store-x64.exe`、`muSQL-store-x64.msix`。
+
+`TAURI_SIGNING_PRIVATE_KEY` / `..._PASSWORD` が GitHub Secrets に必要（未署名ビルドは updater の検証に失敗する）。
 
 ## Roadmap
 
