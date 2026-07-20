@@ -522,9 +522,22 @@ fn read_sync_path(app: &AppHandle) -> String {
     }
 }
 
-// Serialize the store for the external sync file with ALL secrets stripped
-// (defense-in-depth: secrets live in the keyring, never in the synced JSON — this also
-// scrubs any legacy plaintext SSH secrets that predate keyring migration).
+// Fields holding a path into the local filesystem. These are meaningless (or wrong) on
+// another machine — the same key/certificate lives under a different user directory, or
+// not at all — so they are excluded from the sync file and never overwrite a local value
+// on import (#80). `config_host` is deliberately NOT machine-local: it is an alias into
+// the user's own ~/.ssh/config, which is typically kept identical across machines.
+fn clear_machine_local_paths(profile: &mut ConnectionProfile) {
+    profile.request.mysql.tls_ca_cert_path = None;
+    if let Some(ssh) = profile.request.ssh.as_mut() {
+        ssh.private_key_path = None;
+    }
+}
+
+// Serialize the store for the external sync file with ALL secrets and machine-local
+// paths stripped. Secrets live in the keyring and are `skip_serializing` besides, so
+// clearing them here is defense-in-depth (it also scrubs legacy plaintext SSH secrets
+// that predate the keyring migration); the path scrubbing, by contrast, is load-bearing.
 fn sanitized_store_json(store: &ConnectionProfileStore) -> Result<String, serde_json::Error> {
     let mut clone = store.clone();
     for item in clone.items.iter_mut() {
@@ -533,6 +546,7 @@ fn sanitized_store_json(store: &ConnectionProfileStore) -> Result<String, serde_
             ssh.passphrase = String::new();
             ssh.ssh_password = String::new();
         }
+        clear_machine_local_paths(item);
     }
     serde_json::to_string_pretty(&clone)
 }
@@ -576,8 +590,45 @@ fn set_sync_path(app: AppHandle, path: String) -> Result<(), String> {
     Ok(())
 }
 
+// Drop anything the sync file has no business carrying: secrets (keyring-only) and the
+// clear_* flags, which are one-shot UI commands to delete a keyring entry and would
+// otherwise be injectable through a hand-edited sync file.
+fn scrub_incoming_profile(profile: &mut ConnectionProfile) {
+    profile.request.mysql.password = String::new();
+    if let Some(ssh) = profile.request.ssh.as_mut() {
+        ssh.passphrase = String::new();
+        ssh.ssh_password = String::new();
+    }
+    profile.clear_password = false;
+    profile.clear_ssh_passphrase = false;
+    profile.clear_ssh_password = false;
+    // A sync file written before this change still carries the origin machine's paths.
+    // Dropping them here means a profile arriving for the first time shows an empty path
+    // the user can fill in, rather than silently pointing at a key that does not exist.
+    clear_machine_local_paths(profile);
+}
+
+// Machine-local paths never cross machines: whatever this machine has (including nothing)
+// wins outright over the incoming value. Combined with the scrub above, a path from the
+// sync file can never reach the local store.
+fn carry_over_machine_local_paths(local: &ConnectionProfile, incoming: &mut ConnectionProfile) {
+    incoming
+        .request
+        .mysql
+        .tls_ca_cert_path
+        .clone_from(&local.request.mysql.tls_ca_cert_path);
+    if let Some(new_ssh) = incoming.request.ssh.as_mut() {
+        new_ssh.private_key_path = local
+            .request
+            .ssh
+            .as_ref()
+            .and_then(|s| s.private_key_path.clone());
+    }
+}
+
 // Pull the external sync file and merge it into the local store (id-based; the file
-// wins for existing entries, local-only entries are kept, deletions do not propagate).
+// wins for existing entries except machine-local paths, local-only entries are kept,
+// deletions do not propagate).
 // Runs on a blocking thread — the sync file may be a cloud on-demand placeholder that
 // blocks for seconds while it hydrates, which must not stall the IPC thread.
 #[tauri::command]
@@ -611,8 +662,13 @@ fn sync_import_blocking(app: AppHandle) -> Result<ProfileListResponse, String> {
             store.groups.push(g);
         }
     }
-    for it in incoming.items {
+    for mut it in incoming.items {
+        // The sync file is externally writable (a shared cloud folder, possibly hand
+        // edited), so never let it carry secrets or the transient clear_* commands into
+        // the local store.
+        scrub_incoming_profile(&mut it);
         if let Some(existing) = store.items.iter_mut().find(|x| x.id == it.id) {
+            carry_over_machine_local_paths(existing, &mut it);
             *existing = it;
         } else {
             store.items.push(it);
@@ -3597,5 +3653,241 @@ Host myserver
         };
         let prompt = build_ai_prompt(&schema, "SELECT ", "");
         assert!(prompt.contains("(truncated)"));
+    }
+
+    // ── profile sync sanitization (#80) ──────────────────────────────
+
+    fn make_ssh(private_key_path: Option<&str>) -> SshConfig {
+        SshConfig {
+            enabled: true,
+            host: "bastion.example.com".to_string(),
+            port: 22,
+            username: "deploy".to_string(),
+            private_key_path: private_key_path.map(str::to_string),
+            config_host: Some("myserver".to_string()),
+            passphrase: String::new(),
+            auth_method: "key".to_string(),
+            ssh_password: String::new(),
+            save_ssh_password: true,
+            save_ssh_passphrase: true,
+        }
+    }
+
+    fn make_profile(id: &str, ssh: Option<SshConfig>) -> ConnectionProfile {
+        ConnectionProfile {
+            id: id.to_string(),
+            name: format!("profile {id}"),
+            group_id: None,
+            order: 0,
+            color: None,
+            tags: vec![],
+            request: make_request("127.0.0.1", 3306, "root", ssh),
+            clear_password: false,
+            clear_ssh_passphrase: false,
+            clear_ssh_password: false,
+        }
+    }
+
+    #[test]
+    fn sanitized_store_json_strips_machine_local_paths() {
+        let mut profile = make_profile(
+            "p1",
+            Some(make_ssh(Some("C:\\Users\\alice\\.ssh\\id_ed25519"))),
+        );
+        profile.request.mysql.tls_ca_cert_path =
+            Some("C:\\Users\\alice\\certs\\ca.pem".to_string());
+        let store = ConnectionProfileStore {
+            version: 1,
+            groups: vec![],
+            items: vec![profile],
+        };
+
+        let json = sanitized_store_json(&store).unwrap();
+        assert!(
+            !json.contains("alice"),
+            "machine-local paths leaked: {json}"
+        );
+        // Non-path settings still sync.
+        assert!(json.contains("bastion.example.com"));
+        assert!(json.contains("myserver"));
+    }
+
+    #[test]
+    fn sanitized_store_json_strips_secrets() {
+        let mut profile = make_profile("p1", Some(make_ssh(None)));
+        profile.request.mysql.password = "mysql-secret".to_string();
+        let ssh = profile.request.ssh.as_mut().unwrap();
+        ssh.passphrase = "passphrase-secret".to_string();
+        ssh.ssh_password = "ssh-secret".to_string();
+        let store = ConnectionProfileStore {
+            version: 1,
+            groups: vec![],
+            items: vec![profile],
+        };
+
+        let json = sanitized_store_json(&store).unwrap();
+        assert!(!json.contains("secret"), "secret leaked: {json}");
+    }
+
+    #[test]
+    fn scrub_incoming_profile_clears_secrets_and_flags() {
+        let mut profile = make_profile("p1", Some(make_ssh(None)));
+        profile.request.mysql.password = "pw".to_string();
+        profile.clear_password = true;
+        profile.clear_ssh_passphrase = true;
+        profile.clear_ssh_password = true;
+        {
+            let ssh = profile.request.ssh.as_mut().unwrap();
+            ssh.passphrase = "pp".to_string();
+            ssh.ssh_password = "sp".to_string();
+        }
+
+        scrub_incoming_profile(&mut profile);
+
+        assert!(profile.request.mysql.password.is_empty());
+        let ssh = profile.request.ssh.as_ref().unwrap();
+        assert!(ssh.passphrase.is_empty());
+        assert!(ssh.ssh_password.is_empty());
+        assert!(!profile.clear_password);
+        assert!(!profile.clear_ssh_passphrase);
+        assert!(!profile.clear_ssh_password);
+    }
+
+    #[test]
+    fn carry_over_keeps_local_paths() {
+        let mut local = make_profile("p1", Some(make_ssh(Some("/home/local/.ssh/id_rsa"))));
+        local.request.mysql.tls_ca_cert_path = Some("/home/local/ca.pem".to_string());
+        // The sync file has these stripped, so the incoming side is empty.
+        let mut incoming = make_profile("p1", Some(make_ssh(None)));
+
+        carry_over_machine_local_paths(&local, &mut incoming);
+
+        assert_eq!(
+            incoming.request.ssh.unwrap().private_key_path.as_deref(),
+            Some("/home/local/.ssh/id_rsa")
+        );
+        assert_eq!(
+            incoming.request.mysql.tls_ca_cert_path.as_deref(),
+            Some("/home/local/ca.pem")
+        );
+    }
+
+    #[test]
+    fn carry_over_local_wins_over_incoming() {
+        let local = make_profile("p1", Some(make_ssh(Some("/home/local/.ssh/id_rsa"))));
+        let mut incoming = make_profile("p1", Some(make_ssh(Some("/home/other/.ssh/id_rsa"))));
+
+        carry_over_machine_local_paths(&local, &mut incoming);
+
+        assert_eq!(
+            incoming.request.ssh.unwrap().private_key_path.as_deref(),
+            Some("/home/local/.ssh/id_rsa")
+        );
+    }
+
+    // No fallback: an unset local path stays unset rather than adopting the file's value,
+    // which would otherwise re-import another machine's path from a pre-#80 sync file.
+    #[test]
+    fn carry_over_clears_when_local_has_no_path() {
+        let local = make_profile("p1", Some(make_ssh(None)));
+        let mut incoming = make_profile("p1", Some(make_ssh(Some("/home/other/id_rsa"))));
+        incoming.request.mysql.tls_ca_cert_path = Some("/home/other/ca.pem".to_string());
+
+        carry_over_machine_local_paths(&local, &mut incoming);
+
+        assert!(incoming.request.ssh.unwrap().private_key_path.is_none());
+        assert!(incoming.request.mysql.tls_ca_cert_path.is_none());
+    }
+
+    // A sync file written before #80 still contains the origin machine's paths.
+    #[test]
+    fn legacy_sync_file_paths_never_reach_the_local_store() {
+        let legacy = r#"{
+          "version": 1,
+          "groups": [],
+          "items": [{
+            "id": "p1",
+            "name": "prod",
+            "request": {
+              "mysql": {
+                "host": "db.example.com", "port": 3306, "database": null,
+                "username": "root", "ssl_mode": "VERIFY_CA",
+                "tls_ca_cert_path": "C:\\Users\\alice\\ca.pem", "save_password": true
+              },
+              "ssh": {
+                "enabled": true, "host": "bastion", "port": 22, "username": "deploy",
+                "private_key_path": "C:\\Users\\alice\\id_ed25519",
+                "auth_method": "key"
+              }
+            }
+          }]
+        }"#;
+        let incoming: ConnectionProfileStore = serde_json::from_str(legacy).unwrap();
+        let mut it = incoming.items.into_iter().next().unwrap();
+
+        // New profile on this machine: scrubbing alone must drop the foreign paths.
+        scrub_incoming_profile(&mut it);
+        assert!(it.request.mysql.tls_ca_cert_path.is_none());
+        assert!(it.request.ssh.as_ref().unwrap().private_key_path.is_none());
+        // Everything else still arrives.
+        assert_eq!(it.request.mysql.host, "db.example.com");
+        assert_eq!(it.request.mysql.ssl_mode, "VERIFY_CA");
+    }
+
+    // Machine A exports, machine B imports: B must keep its own key/cert paths while
+    // picking up every other change A made. This is the regression the issue is about.
+    #[test]
+    fn sync_roundtrip_preserves_local_paths_and_applies_remote_edits() {
+        let mut on_machine_a =
+            make_profile("p1", Some(make_ssh(Some("C:\\Users\\alice\\id_ed25519"))));
+        on_machine_a.name = "renamed on A".to_string();
+        on_machine_a.request.mysql.host = "db.example.com".to_string();
+        on_machine_a.request.mysql.tls_ca_cert_path = Some("C:\\Users\\alice\\ca.pem".to_string());
+        let store_a = ConnectionProfileStore {
+            version: 1,
+            groups: vec![],
+            items: vec![on_machine_a],
+        };
+
+        // A writes the sync file; B reads it back.
+        let json = sanitized_store_json(&store_a).unwrap();
+        let incoming: ConnectionProfileStore = serde_json::from_str(&json).unwrap();
+
+        let mut on_machine_b =
+            make_profile("p1", Some(make_ssh(Some("/home/bob/.ssh/id_ed25519"))));
+        on_machine_b.request.mysql.tls_ca_cert_path = Some("/home/bob/ca.pem".to_string());
+
+        let mut merged = incoming.items.into_iter().next().unwrap();
+        scrub_incoming_profile(&mut merged);
+        carry_over_machine_local_paths(&on_machine_b, &mut merged);
+
+        // A's edits land …
+        assert_eq!(merged.name, "renamed on A");
+        assert_eq!(merged.request.mysql.host, "db.example.com");
+        // … but B keeps its own filesystem paths.
+        assert_eq!(
+            merged.request.ssh.unwrap().private_key_path.as_deref(),
+            Some("/home/bob/.ssh/id_ed25519")
+        );
+        assert_eq!(
+            merged.request.mysql.tls_ca_cert_path.as_deref(),
+            Some("/home/bob/ca.pem")
+        );
+    }
+
+    #[test]
+    fn carry_over_handles_missing_ssh_on_either_side() {
+        // Local has no SSH block at all: there is no local path to carry, so the
+        // incoming one is dropped rather than inherited.
+        let local = make_profile("p1", None);
+        let mut incoming = make_profile("p1", Some(make_ssh(Some("/home/other/id_rsa"))));
+        carry_over_machine_local_paths(&local, &mut incoming);
+        assert!(incoming.request.ssh.unwrap().private_key_path.is_none());
+
+        // Incoming has no SSH block: nothing to write into, and no panic.
+        let local = make_profile("p1", Some(make_ssh(Some("/home/local/id_rsa"))));
+        let mut incoming = make_profile("p1", None);
+        carry_over_machine_local_paths(&local, &mut incoming);
+        assert!(incoming.request.ssh.is_none());
     }
 }
