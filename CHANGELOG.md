@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.7.0] - 2026-07-20
+
+### Added
+- 1Password 連携（#80）。DB パスワード / SSH パスフレーズ / SSH パスワード / AI API キーを 1Password のシークレット参照（`op://vault/item/field`）から取得できる。取得した値は Windows 資格情報マネージャーに保存され、以降はそこから読まれるため 1Password CLI が呼ばれるのはマシン毎に 1 回だけ
+- 1Password のアイテム / フィールドを一覧から選ぶ参照ピッカー（#80）。参照を手で貼り付ける必要がなく、フィールドを選ぶと値の取得まで自動で実行される。設定ウィンドウと AI 設定モーダルの両方から利用可能
+
+### Changed
+- 接続の同期で、SSH 秘密鍵と SSL の CA 証明書の**ファイルパスを同期対象から除外**した（#80）。マシンごとに置き場所が異なるため。同期ファイル経由で他マシンのパスがローカル設定を上書きすることはなくなる
+- 依存関係を更新（tokio 1.53.0 / russh 0.62.2 / bollard 0.21.0 / reqwest 0.13.4 ほか）
+
+### Fixed
+- 接続の同期で、別マシンの SSH 秘密鍵 / CA 証明書のパスがローカルの設定を上書きしてしまう問題（#80）
+- 同期ファイルを手で編集することで、保存済みパスワードの削除フラグ（`clear_*`）を注入できた問題（#80）
+- `tauri-action` v1.0.0 の破壊的変更により `latest.json` がリリースに添付されず、セルフアップデータが動作しなくなる問題
+
+### Security
+- Dependabot alert の解消（serde_with 3.21.0 / GHSA-7gcf-g7xr-8hxj、cmov 0.5.4 / GHSA-3rjw-m598-pq24）
+
 ## [0.6.0] - 2026-07-03
 
 ### Added
@@ -179,6 +197,7 @@
 - アプリ内自動更新（NSIS インストーラー + Ed25519 署名）
 - GitHub Actions CI/CD（cargo check + リリースビルド）
 
+[0.7.0]: https://github.com/kan/musql/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/kan/musql/compare/v0.5.5...v0.6.0
 [0.5.5]: https://github.com/kan/musql/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/kan/musql/compare/v0.5.3...v0.5.4
