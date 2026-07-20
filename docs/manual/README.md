@@ -19,6 +19,7 @@ muSQL は **Windows 向けの軽量な MySQL クライアント**です。Tauri 
 | [AI アシスト](ai-assist.md) | 自然言語からの SQL 生成、プロバイダ設定、チャット履歴 |
 | [エクスポート](export.md) | CSV / TSV / SQL / Markdown 出力、文字コード・改行コード、クリップボードコピー |
 | [接続の同期](sync.md) | 接続プロファイルを外部 JSON で複数マシン間に同期 |
+| [1Password 連携](1password.md) | パスワードの初期取得・更新元として 1Password を使う |
 | [設定](settings.md) | テーマ・言語、アップデート、キーボードショートカット一覧 |
 
 ## muSQL の考え方（30 秒で把握）

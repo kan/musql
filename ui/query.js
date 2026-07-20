@@ -290,11 +290,60 @@ async function isAiConfigured() {
   const provider = getAiProvider();
   if (!provider) return false;
   try {
-    return await safeInvoke("has_ai_api_key", { provider });
+    if (await safeInvoke("has_ai_api_key", { provider })) return true;
   } catch (_) {
-    return false;
+    // Fall through: a 1Password reference still counts as configured.
   }
+  // A 1Password reference counts as configured — the key is fetched on first use.
+  return !!getAiOpRef(provider);
 }
+
+// ── 1Password (AI API key) ──
+// The reference lives in localStorage rather than the profile store: AI settings are
+// per-machine and are not part of what syncs. It seeds the keyring on first use, exactly
+// like the connection credentials.
+const aiOpRefInput = document.getElementById("ai-op-ref");
+const aiOpRow = document.getElementById("ai-op-row");
+let aiOpAvailable = false;
+
+function aiOpRefKey(provider) {
+  return `musql:ai:op-ref:${provider}`;
+}
+
+function getAiOpRef(provider) {
+  return provider ? localStorage.getItem(aiOpRefKey(provider)) || "" : "";
+}
+
+function updateAiOpRowVisibility() {
+  aiOpRow.classList.toggle("hidden", !aiOpAvailable || !aiProviderSelect.value);
+}
+
+safeInvoke("op_available")
+  .then((available) => {
+    aiOpAvailable = !!available;
+    updateAiOpRowVisibility();
+  })
+  .catch(() => {});
+
+const aiOpStatus = document.getElementById("ai-op-status");
+
+function setAiOpStatus(message, ok) {
+  aiOpStatus.textContent = message;
+  aiOpStatus.style.color = ok ? "var(--success)" : "var(--danger)";
+}
+
+document.getElementById("ai-op-fetch").addEventListener("click", async () => {
+  const reference = aiOpRefInput.value.trim();
+  if (!reference) return;
+  setAiOpStatus(t('op_fetching'), true);
+  try {
+    aiApiKeyInput.value = await safeInvoke("op_read_secret", { reference });
+    aiApiKeyInput.placeholder = "";
+    setAiOpStatus(t('op_fetched'), true);
+  } catch (e) {
+    setAiOpStatus(String(e), false);
+  }
+});
 
 async function showAiModal() {
   const provider = getAiProvider();
@@ -302,6 +351,9 @@ async function showAiModal() {
   aiProviderSelect.value = provider;
   populateAiModelSelect(provider, model);
   aiApiKeyInput.value = "";
+  aiOpRefInput.value = getAiOpRef(provider);
+  setAiOpStatus("", true);
+  updateAiOpRowVisibility();
   if (provider) {
     try {
       const hasKey = await safeInvoke("has_ai_api_key", { provider });
@@ -326,6 +378,9 @@ aiProviderSelect.addEventListener("change", () => {
   populateAiModelSelect(p, "");
   aiApiKeyInput.value = "";
   aiApiKeyInput.placeholder = "";
+  aiOpRefInput.value = getAiOpRef(p);
+  setAiOpStatus("", true);
+  updateAiOpRowVisibility();
   if (p) {
     safeInvoke("has_ai_api_key", { provider: p }).then((hasKey) => {
       if (hasKey) aiApiKeyInput.placeholder = "(saved)";
@@ -339,6 +394,9 @@ aiSaveBtn.addEventListener("click", async () => {
   if (provider) {
     localStorage.setItem("musql:ai:provider", provider);
     localStorage.setItem("musql:ai:model", model || aiDefaultModel(provider));
+    const opRef = aiOpRefInput.value.trim();
+    if (opRef) localStorage.setItem(aiOpRefKey(provider), opRef);
+    else localStorage.removeItem(aiOpRefKey(provider));
     const key = aiApiKeyInput.value.trim();
     if (key) {
       try { await safeInvoke("save_ai_api_key", { provider, apiKey: key }); }
@@ -491,6 +549,7 @@ async function sendAiAssistMessage() {
       provider,
       model,
       database: currentDb,
+      opRef: getAiOpRef(provider) || null,
     });
     progressEl.remove();
     const updated = loadAiChat();

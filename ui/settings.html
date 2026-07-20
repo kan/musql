@@ -65,6 +65,13 @@
               <button type="button" id="mysql-pass-clear" class="browse-btn clear-pw-btn hidden" data-i18n-title="clear_password">&times;</button>
             </div>
             <label class="save-toggle"><input id="mysql-save-password" type="checkbox" checked /><span data-i18n="save_to_keyring">Save to keyring</span></label>
+            <div class="op-row hidden" id="mysql-op-row">
+              <div class="input-with-btn">
+                <input id="mysql-op-ref" data-i18n-placeholder="op_ref_placeholder" placeholder="op://vault/item/field" />
+                <button type="button" id="mysql-op-fetch" class="browse-btn" data-i18n-title="op_fetch">1P</button>
+                <button type="button" class="help-btn" data-manual="1password.md" data-i18n-title="help_open_manual">?</button>
+              </div>
+            </div>
           </label>
           <label><span data-i18n="ssl_mode">SSL Mode</span>
             <select id="mysql-ssl-mode">
@@ -114,6 +121,12 @@
               <button type="button" id="ssh-passphrase-clear" class="browse-btn clear-pw-btn hidden" data-i18n-title="clear_ssh_passphrase">&times;</button>
             </div>
             <label class="save-toggle"><input id="ssh-save-passphrase" type="checkbox" checked /><span data-i18n="save_to_keyring">Save to keyring</span></label>
+            <div class="op-row hidden" id="ssh-passphrase-op-row">
+              <div class="input-with-btn">
+                <input id="ssh-passphrase-op-ref" data-i18n-placeholder="op_ref_placeholder" placeholder="op://vault/item/field" />
+                <button type="button" id="ssh-passphrase-op-fetch" class="browse-btn" data-i18n-title="op_fetch">1P</button>
+              </div>
+            </div>
           </label>
           <label id="ssh-password-row" class="hidden"><span data-i18n="ssh_password_label">Password</span>
             <div class="input-with-btn">
@@ -121,6 +134,12 @@
               <button type="button" id="ssh-password-clear" class="browse-btn clear-pw-btn hidden" data-i18n-title="clear_ssh_password">&times;</button>
             </div>
             <label class="save-toggle"><input id="ssh-save-password" type="checkbox" checked /><span data-i18n="save_to_keyring">Save to keyring</span></label>
+            <div class="op-row hidden" id="ssh-password-op-row">
+              <div class="input-with-btn">
+                <input id="ssh-password-op-ref" data-i18n-placeholder="op_ref_placeholder" placeholder="op://vault/item/field" />
+                <button type="button" id="ssh-password-op-fetch" class="browse-btn" data-i18n-title="op_fetch">1P</button>
+              </div>
+            </div>
           </label>
           <div id="ssh-config-row" class="ssh-config-row"></div>
         </div>

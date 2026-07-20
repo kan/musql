@@ -21,6 +21,7 @@ Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`
 
 ## Key behaviors
 - **パスワード / API キー**: `keyring`（Windows Credential Manager）で保存。各パスワード（MySQL / SSH パスフレーズ / SSH パスワード）は `save_*` フラグで keyring 保存 or 都度入力を選択可能。都度入力の場合、query 画面で接続前にモーダルプロンプトを表示。
+- **1Password 連携（#80）**: `op` CLI（公式 Rust SDK が無いためサブプロセス起動）を**パスワードの初期取得・更新元**として使う。`src-tauri/src/onepassword.rs`。解決順は「プロンプト入力 → keyring → 1Password」で、op から取れた値は即 keyring に書き戻すため **op が呼ばれるのはマシン毎に 1 回**。接続毎に呼ばない設計にしているのは、Windows では呼び出し元プロセス単位で認証が要る＝毎回 Windows Hello が出るため。参照は `op://vault/item/field` 形式の文字列 1 本（`MySqlConfig.op_ref` / `SshConfig.op_passphrase_ref` / `op_password_ref`）で、秘密ではないので**同期対象**。AI の API キーは同期対象外なので参照を localStorage（`musql:ai:op-ref:<provider>`）に置き `ai_assist` の引数で渡す。コマンド: `op_available`（UI の出し分け）/ `op_read_secret`（設定画面の `1P` ボタン）。op 呼び出しは `spawn_blocking` + 90 秒タイムアウト、`CREATE_NO_WINDOW` でコンソール抑止。実 CLI を叩くテストは `#[ignore]` 付き（`cargo test -- --ignored`）。
 - **接続プール**: `ConnectionCache`（`Arc<Mutex>`）で Pool + SshTunnel をキャッシュ。fingerprint 一致で再利用。
 - **クエリキャンセル**: `RUNNING_QUERIES` でタブ単位に `KILL QUERY`。
 - **SSH**: `russh` v0.57。認証方式は公開鍵（`key`）またはパスワード（`password`）を選択可能。公開鍵: 指定鍵 → agent → デフォルト鍵。パスワード: `session.authenticate_password()`。タイムアウト 8 秒。ssh config 参照時は認証方式を公開鍵に固定。
@@ -46,7 +47,7 @@ Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`
 
 ## localStorage keys
 - `musql:collapsed`, `musql:drafts:<profileId>`, `musql:history:<profileId>`, `musql:theme`, `musql:lang`
-- `musql:ai:provider`, `musql:ai:model`
+- `musql:ai:provider`, `musql:ai:model`, `musql:ai:op-ref:<provider>`
 - `musql:ai-chat:<profileId>:<database>` — AI アシストのチャット履歴
 - `musql:docker-creds` — Docker コンテナ毎の資格情報（user/ssl_mode のみ。パスワードは keyring `docker:{containerId}` に保存）
 - `musql:docker-last-cred` — 最後に使った Docker 資格情報（user/ssl_mode のみ。パスワードは keyring `docker:_last` に保存）

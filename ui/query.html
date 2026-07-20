@@ -60,6 +60,13 @@
         </label>
         <label><span data-i18n="ai_api_key">API Key</span>
           <input id="ai-api-key" type="password" />
+          <div class="op-row hidden" id="ai-op-row">
+            <div class="input-with-btn">
+              <input id="ai-op-ref" data-i18n-placeholder="op_ref_placeholder" placeholder="op://vault/item/field" />
+              <button type="button" id="ai-op-fetch" class="browse-btn" data-i18n-title="op_fetch">1P</button>
+            </div>
+            <p id="ai-op-status" class="modal-status"></p>
+          </div>
         </label>
         <div class="actions actions-right">
           <button id="ai-save-btn" data-i18n="save">Save</button>

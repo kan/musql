@@ -13,6 +13,7 @@ use tauri::{AppHandle, Emitter, EventTarget, Manager, Window, Wry};
 
 #[cfg(feature = "docker")]
 mod docker;
+mod onepassword;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 struct MySqlConfig {
@@ -28,6 +29,10 @@ struct MySqlConfig {
     tls_ca_cert_path: Option<String>,
     #[serde(default = "default_true")]
     save_password: bool, // false = don't persist to keyring (prompt each time)
+    // 1Password secret reference (op://vault/item/field) used to seed / refresh the
+    // keyring entry. A pointer, not a secret, so it syncs with the profile (#80).
+    #[serde(default)]
+    op_ref: Option<String>,
     // Legacy (read-only, never re-saved)
     #[serde(default, skip_serializing)]
     tls_enabled: bool,
@@ -66,6 +71,11 @@ struct SshConfig {
     save_ssh_password: bool, // false = don't persist to keyring
     #[serde(default = "default_true")]
     save_ssh_passphrase: bool, // false = don't persist to keyring
+    // 1Password secret references (see MySqlConfig::op_ref)
+    #[serde(default)]
+    op_passphrase_ref: Option<String>,
+    #[serde(default)]
+    op_password_ref: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -818,17 +828,77 @@ fn has_ssh_password(profile_id: String) -> bool {
     !get_ssh_password(&profile_id).is_empty()
 }
 
-fn resolve_ssh_password(request: &mut ConnectionRequest, profile_id: Option<&str>) {
-    if let Some(ref mut ssh) = request.ssh {
-        if !ssh.ssh_password.is_empty() {
-            return;
-        }
-        if let Some(id) = profile_id {
-            if !id.is_empty() {
-                ssh.ssh_password = get_ssh_password(id);
-            }
-        }
+fn resolve_ssh_password(
+    request: &mut ConnectionRequest,
+    profile_id: Option<&str>,
+) -> Result<(), String> {
+    let Some(ssh) = request.ssh.as_mut() else {
+        return Ok(());
+    };
+    // The settings form always submits an ssh block, so a disabled tunnel or the other
+    // auth method can leave a stale 1Password reference behind. Resolving it would fetch
+    // a secret nothing will use — and turn a failed fetch into a failed connection.
+    if !ssh.enabled || ssh.auth_method != "password" {
+        return Ok(());
     }
+    if !ssh.ssh_password.is_empty() {
+        return Ok(());
+    }
+    let Some(id) = profile_id.filter(|s| !s.is_empty()) else {
+        return Ok(());
+    };
+    ssh.ssh_password = get_ssh_password(id);
+    if !ssh.ssh_password.is_empty() || !ssh.save_ssh_password {
+        return Ok(());
+    }
+    if let Some(fetched) = onepassword::read_optional(ssh.op_password_ref.as_ref()) {
+        let value = fetched.map_err(|e| format!("1Password (SSH password): {e}"))?;
+        // Best-effort cache: we already hold the secret, so a keyring failure must not
+        // fail the connection — it only means 1Password is consulted again next time.
+        let _ = set_ssh_password(id, &value);
+        ssh.ssh_password = value;
+    }
+    Ok(())
+}
+
+// ── 1Password ──
+
+/// Whether the `op` CLI is installed. The UI hides the 1Password fields when it is not.
+/// Async because the probe spawns a process, which must not run on the main thread.
+#[tauri::command]
+async fn op_available() -> bool {
+    tauri::async_runtime::spawn_blocking(onepassword::is_available)
+        .await
+        .unwrap_or(false)
+}
+
+/// Resolve a secret reference on demand — the settings screen's "fetch from 1Password"
+/// button. Blocking work (and a possible Windows Hello prompt) is kept off the IPC thread.
+#[tauri::command]
+async fn op_read_secret(reference: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || onepassword::read_secret(&reference))
+        .await
+        .map_err(|e| format!("Task error: {e}"))?
+}
+
+// Resolve all three credentials off the async runtime: hitting 1Password shells out to
+// the CLI, which can sit for many seconds while the user approves a Windows Hello prompt.
+async fn resolve_credentials(
+    request: &mut ConnectionRequest,
+    profile_id: Option<&str>,
+) -> Result<(), String> {
+    let mut owned = request.clone();
+    let id = profile_id.map(str::to_string);
+    let resolved = tauri::async_runtime::spawn_blocking(move || {
+        resolve_password(&mut owned, id.as_deref())?;
+        resolve_ssh_passphrase(&mut owned, id.as_deref())?;
+        resolve_ssh_password(&mut owned, id.as_deref())?;
+        Ok::<ConnectionRequest, String>(owned)
+    })
+    .await
+    .map_err(|e| format!("Task error: {e}"))??;
+    *request = resolved;
+    Ok(())
 }
 
 // ── AI keyring ──
@@ -839,6 +909,33 @@ fn ai_keyring_key(provider: &AiProvider) -> String {
         AiProvider::OpenAi => "ai:openai".to_string(),
         AiProvider::Gemini => "ai:gemini".to_string(),
     }
+}
+
+// AI keys follow the same rule as connection credentials: the keyring answers when it has
+// the key, otherwise a configured 1Password reference is resolved once and written back.
+// The reference lives in the UI's localStorage (AI settings are not part of the synced
+// profile store), so it arrives as a command argument rather than from disk.
+async fn resolve_ai_api_key(
+    provider: &AiProvider,
+    op_ref: Option<String>,
+) -> Result<String, String> {
+    let key = get_ai_api_key(provider);
+    if !key.is_empty() {
+        return Ok(key);
+    }
+    let Some(reference) = op_ref.filter(|s| !s.trim().is_empty()) else {
+        return Err("AI API key not configured".to_string());
+    };
+    let provider = provider.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let value = onepassword::read_secret(&reference)
+            .map_err(|e| format!("1Password (AI API key): {e}"))?;
+        // Best-effort cache, as with the connection credentials.
+        let _ = set_ai_api_key(&provider, &value);
+        Ok(value)
+    })
+    .await
+    .map_err(|e| format!("Task error: {e}"))?
 }
 
 fn get_ai_api_key(provider: &AiProvider) -> String {
@@ -1070,15 +1167,13 @@ async fn ai_complete(
     provider: String,
     model: String,
     database: String,
+    op_ref: Option<String>,
     state: tauri::State<'_, Arc<Mutex<Option<ConnectionCache>>>>,
 ) -> Result<String, String> {
     let ai_provider: AiProvider = serde_json::from_value(serde_json::json!(provider))
         .map_err(|_| format!("Invalid AI provider: {provider}"))?;
 
-    let api_key = get_ai_api_key(&ai_provider);
-    if api_key.is_empty() {
-        return Err("AI API key not configured".to_string());
-    }
+    let api_key = resolve_ai_api_key(&ai_provider, op_ref).await?;
 
     // Get pool + fingerprint from state
     let (pool, fingerprint) = {
@@ -1169,6 +1264,9 @@ fn build_ai_assist_prompt(
     parts
 }
 
+// Tauri commands take their arguments flat off the IPC payload, so grouping them into a
+// struct would only move the noise to the call site in JS.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 async fn ai_assist(
     prompt: String,
@@ -1177,15 +1275,13 @@ async fn ai_assist(
     provider: String,
     model: String,
     database: String,
+    op_ref: Option<String>,
     state: tauri::State<'_, Arc<Mutex<Option<ConnectionCache>>>>,
 ) -> Result<String, String> {
     let ai_provider: AiProvider = serde_json::from_value(serde_json::json!(provider))
         .map_err(|_| format!("Invalid AI provider: {provider}"))?;
 
-    let api_key = get_ai_api_key(&ai_provider);
-    if api_key.is_empty() {
-        return Err("AI API key not configured".to_string());
-    }
+    let api_key = resolve_ai_api_key(&ai_provider, op_ref).await?;
 
     let (pool, fingerprint) = {
         let guard = state.lock().map_err(|e| format!("Lock error: {e}"))?;
@@ -1737,28 +1833,64 @@ fn row_to_json(row: Row) -> Vec<serde_json::Value> {
     row.unwrap().into_iter().map(mysql_value_to_json).collect()
 }
 
-fn resolve_password(request: &mut ConnectionRequest, profile_id: Option<&str>) {
+// Credentials resolve in a fixed order: a value already on the request (typed into the
+// per-connection prompt) wins, then the keyring, then 1Password. A value fetched from
+// 1Password is written straight back to the keyring, so the CLI is consulted once per
+// machine rather than once per connection (#80).
+fn resolve_password(
+    request: &mut ConnectionRequest,
+    profile_id: Option<&str>,
+) -> Result<(), String> {
     if !request.mysql.password.is_empty() {
-        return;
+        return Ok(());
     }
-    if let Some(id) = profile_id {
-        if !id.is_empty() {
-            request.mysql.password = get_password(id);
-        }
+    let Some(id) = profile_id.filter(|s| !s.is_empty()) else {
+        return Ok(());
+    };
+    request.mysql.password = get_password(id);
+    // With "save to keyring" off there is nowhere to cache the result, so 1Password would
+    // be consulted on every single connection — exactly the per-connection biometric
+    // prompt this design avoids. That mode uses the per-connection prompt instead.
+    if !request.mysql.password.is_empty() || !request.mysql.save_password {
+        return Ok(());
     }
+    if let Some(fetched) = onepassword::read_optional(request.mysql.op_ref.as_ref()) {
+        let value = fetched.map_err(|e| format!("1Password (MySQL password): {e}"))?;
+        // Best-effort cache: we already hold the secret, so a keyring failure must not
+        // fail the connection — it only means 1Password is consulted again next time.
+        let _ = set_password(id, &value);
+        request.mysql.password = value;
+    }
+    Ok(())
 }
 
-fn resolve_ssh_passphrase(request: &mut ConnectionRequest, profile_id: Option<&str>) {
-    if let Some(ref mut ssh) = request.ssh {
-        if !ssh.passphrase.is_empty() {
-            return;
-        }
-        if let Some(id) = profile_id {
-            if !id.is_empty() {
-                ssh.passphrase = get_ssh_passphrase(id);
-            }
-        }
+fn resolve_ssh_passphrase(
+    request: &mut ConnectionRequest,
+    profile_id: Option<&str>,
+) -> Result<(), String> {
+    let Some(ssh) = request.ssh.as_mut() else {
+        return Ok(());
+    };
+    // See resolve_ssh_password: skip when this secret cannot be in play.
+    if !ssh.enabled || ssh.auth_method != "key" {
+        return Ok(());
     }
+    if !ssh.passphrase.is_empty() {
+        return Ok(());
+    }
+    let Some(id) = profile_id.filter(|s| !s.is_empty()) else {
+        return Ok(());
+    };
+    ssh.passphrase = get_ssh_passphrase(id);
+    if !ssh.passphrase.is_empty() || !ssh.save_ssh_passphrase {
+        return Ok(());
+    }
+    if let Some(fetched) = onepassword::read_optional(ssh.op_passphrase_ref.as_ref()) {
+        let value = fetched.map_err(|e| format!("1Password (SSH passphrase): {e}"))?;
+        let _ = set_ssh_passphrase(id, &value);
+        ssh.passphrase = value;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1766,9 +1898,7 @@ async fn test_connection(
     mut request: ConnectionRequest,
     profile_id: Option<String>,
 ) -> Result<String, String> {
-    resolve_password(&mut request, profile_id.as_deref());
-    resolve_ssh_passphrase(&mut request, profile_id.as_deref());
-    resolve_ssh_password(&mut request, profile_id.as_deref());
+    resolve_credentials(&mut request, profile_id.as_deref()).await?;
 
     // Set up SSH tunnel if needed (async)
     let (target_host, target_port, _tunnel) = match &request.ssh {
@@ -1808,9 +1938,7 @@ async fn run_query(
         return Err("Query is empty".to_string());
     }
 
-    resolve_password(&mut request, profile_id.as_deref());
-    resolve_ssh_passphrase(&mut request, profile_id.as_deref());
-    resolve_ssh_password(&mut request, profile_id.as_deref());
+    resolve_credentials(&mut request, profile_id.as_deref()).await?;
     let limit = max_rows.unwrap_or(500);
 
     // Get or create pool (async — SSH tunnel creation is async)
@@ -3368,6 +3496,8 @@ fn main() {
             open_docker_query_window,
             get_docker_password,
             save_docker_password,
+            op_available,
+            op_read_secret,
             open_external
         ])
         .run(tauri::generate_context!())
@@ -3504,6 +3634,7 @@ Host myserver
                 ssl_mode: "DISABLED".to_string(),
                 tls_ca_cert_path: None,
                 save_password: true,
+                op_ref: None,
                 tls_enabled: false,
                 tls_skip_verify: false,
             },
@@ -3533,6 +3664,8 @@ Host myserver
             ssh_password: String::new(),
             save_ssh_password: true,
             save_ssh_passphrase: true,
+            op_passphrase_ref: None,
+            op_password_ref: None,
         };
         let req = make_request("127.0.0.1", 3306, "root", Some(ssh));
         let fp = connection_fingerprint(&req);
@@ -3655,6 +3788,80 @@ Host myserver
         assert!(prompt.contains("(truncated)"));
     }
 
+    // ── 1Password resolution gating (#80) ────────────────────────────
+    //
+    // These assert that a credential which cannot be in play never reaches the CLI. The
+    // reference points at a vault that does not exist, so a broken gate surfaces as an
+    // Err rather than a silent extra process. No keyring entry exists for this id, so the
+    // keyring lookup in between returns empty either way.
+
+    const NO_SUCH_REF: &str = "op://NoSuchVault/NoSuchItem/password";
+    const UNUSED_ID: &str = "p_test_op_gating_no_such_profile";
+
+    fn ssh_with_refs(enabled: bool, auth_method: &str) -> SshConfig {
+        let mut ssh = make_ssh(None);
+        ssh.enabled = enabled;
+        ssh.auth_method = auth_method.to_string();
+        ssh.op_passphrase_ref = Some(NO_SUCH_REF.to_string());
+        ssh.op_password_ref = Some(NO_SUCH_REF.to_string());
+        ssh
+    }
+
+    #[test]
+    fn resolve_ssh_secrets_skip_when_tunnel_disabled() {
+        // The settings form always submits an ssh block, so a disabled tunnel can still
+        // carry references left over from when it was on.
+        let mut req = make_request("127.0.0.1", 3306, "root", Some(ssh_with_refs(false, "key")));
+        resolve_ssh_passphrase(&mut req, Some(UNUSED_ID)).unwrap();
+        resolve_ssh_password(&mut req, Some(UNUSED_ID)).unwrap();
+        let ssh = req.ssh.unwrap();
+        assert!(ssh.passphrase.is_empty());
+        assert!(ssh.ssh_password.is_empty());
+    }
+
+    #[test]
+    fn resolve_ssh_secrets_skip_the_unused_auth_method() {
+        let mut req = make_request(
+            "127.0.0.1",
+            3306,
+            "root",
+            Some(ssh_with_refs(true, "password")),
+        );
+        resolve_ssh_passphrase(&mut req, Some(UNUSED_ID)).unwrap();
+        assert!(req.ssh.as_ref().unwrap().passphrase.is_empty());
+
+        let mut req = make_request("127.0.0.1", 3306, "root", Some(ssh_with_refs(true, "key")));
+        resolve_ssh_password(&mut req, Some(UNUSED_ID)).unwrap();
+        assert!(req.ssh.as_ref().unwrap().ssh_password.is_empty());
+    }
+
+    #[test]
+    fn resolve_password_skips_op_when_not_persisting() {
+        // Nowhere to cache the result means 1Password would be hit on every connection.
+        let mut req = make_request("127.0.0.1", 3306, "root", None);
+        req.mysql.op_ref = Some(NO_SUCH_REF.to_string());
+        req.mysql.save_password = false;
+        resolve_password(&mut req, Some(UNUSED_ID)).unwrap();
+        assert!(req.mysql.password.is_empty());
+    }
+
+    #[test]
+    fn resolve_password_prefers_a_value_already_on_the_request() {
+        // What the per-connection prompt collected wins over both keyring and 1Password.
+        let mut req = make_request("127.0.0.1", 3306, "root", None);
+        req.mysql.op_ref = Some(NO_SUCH_REF.to_string());
+        req.mysql.password = "typed-at-the-prompt".to_string();
+        resolve_password(&mut req, Some(UNUSED_ID)).unwrap();
+        assert_eq!(req.mysql.password, "typed-at-the-prompt");
+    }
+
+    #[test]
+    fn resolve_password_without_a_reference_never_calls_op() {
+        let mut req = make_request("127.0.0.1", 3306, "root", None);
+        resolve_password(&mut req, Some(UNUSED_ID)).unwrap();
+        assert!(req.mysql.password.is_empty());
+    }
+
     // ── profile sync sanitization (#80) ──────────────────────────────
 
     fn make_ssh(private_key_path: Option<&str>) -> SshConfig {
@@ -3670,6 +3877,8 @@ Host myserver
             ssh_password: String::new(),
             save_ssh_password: true,
             save_ssh_passphrase: true,
+            op_passphrase_ref: None,
+            op_password_ref: None,
         }
     }
 

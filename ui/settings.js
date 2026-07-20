@@ -28,6 +28,9 @@ const sshPasswordClearBtn = document.getElementById("ssh-password-clear");
 const mysqlSavePasswordCheck = document.getElementById("mysql-save-password");
 const sshSavePassphraseCheck = document.getElementById("ssh-save-passphrase");
 const sshSavePasswordCheck = document.getElementById("ssh-save-password");
+const mysqlOpRefInput = document.getElementById("mysql-op-ref");
+const sshPassphraseOpRefInput = document.getElementById("ssh-passphrase-op-ref");
+const sshPasswordOpRefInput = document.getElementById("ssh-password-op-ref");
 
 const menuBtn = document.getElementById("menu-btn");
 menuBtn.innerHTML = icon('menu');
@@ -403,6 +406,7 @@ function collectRequest() {
       ssl_mode: sslModeSelect.value,
       tls_ca_cert_path: caCertInput.value.trim() || null,
       save_password: mysqlSavePasswordCheck.checked,
+      op_ref: mysqlOpRefInput.value.trim() || null,
     },
     ssh: {
       enabled: sshEnabled,
@@ -416,6 +420,8 @@ function collectRequest() {
       ssh_password: sshPasswordInput.value,
       save_ssh_password: sshSavePasswordCheck.checked,
       save_ssh_passphrase: sshSavePassphraseCheck.checked,
+      op_passphrase_ref: sshPassphraseOpRefInput.value.trim() || null,
+      op_password_ref: sshPasswordOpRefInput.value.trim() || null,
     },
   };
 }
@@ -429,6 +435,7 @@ function applyRequest(request) {
   sslModeSelect.value = request.mysql.ssl_mode || "DISABLED";
   caCertInput.value = request.mysql.tls_ca_cert_path || "";
   mysqlSavePasswordCheck.checked = request.mysql.save_password !== false;
+  mysqlOpRefInput.value = request.mysql.op_ref || "";
   updateCaCertVisibility();
 
   const ssh = request.ssh || {
@@ -449,6 +456,9 @@ function applyRequest(request) {
   sshPasswordInput.value = ssh.ssh_password || "";
   sshSavePasswordCheck.checked = ssh.save_ssh_password !== false;
   sshSavePassphraseCheck.checked = ssh.save_ssh_passphrase !== false;
+  sshPassphraseOpRefInput.value = ssh.op_passphrase_ref || "";
+  sshPasswordOpRefInput.value = ssh.op_password_ref || "";
+  updateOpRowVisibility();
   renderSshConfigRow();
   updateSshFieldVisibility();
   updateSshAuthMethodVisibility();
@@ -519,6 +529,69 @@ sshPasswordInput.addEventListener("input", () => {
     clearSshPasswordFlag = false;
   }
 });
+
+// ── 1Password ──
+// A secret reference seeds the keyring; it is not consulted on every connection. The
+// button fetches the current value into the password field, and the normal save path
+// stores it. Rows stay hidden when the CLI is absent or the secret is not persisted.
+let opAvailable = false;
+
+const OP_ROWS = [
+  ["mysql-op-row", () => mysqlSavePasswordCheck],
+  ["ssh-passphrase-op-row", () => sshSavePassphraseCheck],
+  ["ssh-password-op-row", () => sshSavePasswordCheck],
+];
+
+function updateOpRowVisibility() {
+  for (const [rowId, getCheck] of OP_ROWS) {
+    const row = document.getElementById(rowId);
+    if (row) row.classList.toggle("hidden", !opAvailable || !getCheck().checked);
+  }
+}
+
+async function fetchFromOnePassword(refInput, targetInput, resetClearFlag) {
+  const reference = refInput.value.trim();
+  if (!reference) return;
+  show(t('op_fetching'));
+  try {
+    const value = await safeInvoke("op_read_secret", { reference });
+    targetInput.value = value;
+    targetInput.placeholder = "";
+    // Assigning .value fires no input event, so the pending "clear this secret" flag
+    // would survive and wipe the keyring entry we just filled in.
+    resetClearFlag();
+    show(t('op_fetched'));
+  } catch (error) {
+    show(String(error));
+  }
+}
+
+document.getElementById("mysql-op-fetch").addEventListener("click", () =>
+  fetchFromOnePassword(mysqlOpRefInput, mysqlPassInput, () => {
+    clearPasswordFlag = false;
+  })
+);
+document.getElementById("ssh-passphrase-op-fetch").addEventListener("click", () =>
+  fetchFromOnePassword(sshPassphraseOpRefInput, sshPassphraseInput, () => {
+    clearSshPassphraseFlag = false;
+  })
+);
+document.getElementById("ssh-password-op-fetch").addEventListener("click", () =>
+  fetchFromOnePassword(sshPasswordOpRefInput, sshPasswordInput, () => {
+    clearSshPasswordFlag = false;
+  })
+);
+
+for (const [, getCheck] of OP_ROWS) {
+  getCheck().addEventListener("change", updateOpRowVisibility);
+}
+
+safeInvoke("op_available")
+  .then((available) => {
+    opAvailable = !!available;
+    updateOpRowVisibility();
+  })
+  .catch(() => {});
 
 function updateSshAuthMethodVisibility() {
   const method = sshAuthMethodSelect.value;
