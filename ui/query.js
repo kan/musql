@@ -332,9 +332,15 @@ function setAiOpStatus(message, ok) {
   aiOpStatus.style.color = ok ? "var(--success)" : "var(--danger)";
 }
 
-document.getElementById("ai-op-fetch").addEventListener("click", async () => {
+const aiOpBrowseBtn = document.getElementById("ai-op-browse");
+const aiOpFetchBtn = document.getElementById("ai-op-fetch");
+
+async function fetchAiKeyFromOnePassword() {
   const reference = aiOpRefInput.value.trim();
   if (!reference) return;
+  // Both buttons would start another CLI call on top of the one in flight.
+  aiOpBrowseBtn.disabled = true;
+  aiOpFetchBtn.disabled = true;
   setAiOpStatus(t('op_fetching'), true);
   try {
     aiApiKeyInput.value = await safeInvoke("op_read_secret", { reference });
@@ -342,8 +348,22 @@ document.getElementById("ai-op-fetch").addEventListener("click", async () => {
     setAiOpStatus(t('op_fetched'), true);
   } catch (e) {
     setAiOpStatus(String(e), false);
+  } finally {
+    aiOpBrowseBtn.disabled = false;
+    aiOpFetchBtn.disabled = false;
   }
+}
+
+aiOpBrowseBtn.addEventListener("click", async () => {
+  if (typeof window.openOpPicker !== "function") return;
+  const reference = await window.openOpPicker();
+  if (!reference) return;
+  aiOpRefInput.value = reference;
+  // Picking a field settles what the key is, so fetch it without a second click.
+  await fetchAiKeyFromOnePassword();
 });
+
+aiOpFetchBtn.addEventListener("click", fetchAiKeyFromOnePassword);
 
 async function showAiModal() {
   const provider = getAiProvider();
@@ -529,7 +549,7 @@ async function sendAiAssistMessage() {
   // Show progress
   const progressEl = document.createElement("div");
   progressEl.className = "ai-assist-progress";
-  progressEl.innerHTML = '<span class="ai-spinner"></span>' + t('ai_requesting');
+  progressEl.innerHTML = '<span class="spinner"></span>' + t('ai_requesting');
   aiAssistMessages.appendChild(progressEl);
   aiAssistMessages.scrollTop = aiAssistMessages.scrollHeight;
   aiAssistSendBtn.disabled = true;

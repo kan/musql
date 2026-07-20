@@ -801,17 +801,17 @@ pre {
   background: var(--sql-error-bg);
   border-bottom: 2px wavy var(--sql-error-underline);
 }
-@keyframes ai-spin {
+@keyframes spin {
   to { transform: rotate(360deg); }
 }
-.ai-spinner {
+.spinner {
   display: inline-block;
   width: 12px;
   height: 12px;
   border: 2px solid var(--line);
   border-top-color: var(--accent);
   border-radius: 50%;
-  animation: ai-spin 0.6s linear infinite;
+  animation: spin 0.6s linear infinite;
   vertical-align: middle;
   margin-right: 4px;
 }
@@ -1076,6 +1076,45 @@ pre {
 .op-row .browse-btn {
   font-size: 11px;
   font-weight: 600;
+}
+/* 1Password reference picker (op-picker.js) */
+.op-picker-box {
+  max-width: 560px;
+  width: 90vw;
+  height: 70vh;
+}
+.op-picker-list {
+  margin-top: 8px;
+  /* Take the leftover height inside .modal-box's 70vh rather than adding to it, so the
+     action row cannot be pushed off-screen. min-height:0 lets a flex item shrink. */
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.op-picker-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+}
+.op-picker-row:hover {
+  background: var(--hover-bg);
+}
+.op-picker-row-title {
+  font-size: 13px;
+}
+.op-picker-row-sub {
+  font-size: 11px;
+  color: var(--sub);
 }
 
 /* ── SSH config row ── */

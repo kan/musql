@@ -536,54 +536,88 @@ sshPasswordInput.addEventListener("input", () => {
 // stores it. Rows stay hidden when the CLI is absent or the secret is not persisted.
 let opAvailable = false;
 
+// One entry per credential that can be backed by 1Password. Kept as a table so the row,
+// its inputs, its buttons and its pending clear-flag cannot drift apart.
 const OP_ROWS = [
-  ["mysql-op-row", () => mysqlSavePasswordCheck],
-  ["ssh-passphrase-op-row", () => sshSavePassphraseCheck],
-  ["ssh-password-op-row", () => sshSavePasswordCheck],
+  {
+    row: document.getElementById("mysql-op-row"),
+    refInput: mysqlOpRefInput,
+    target: mysqlPassInput,
+    browseBtn: document.getElementById("mysql-op-browse"),
+    fetchBtn: document.getElementById("mysql-op-fetch"),
+    saveCheck: mysqlSavePasswordCheck,
+    resetClearFlag: () => {
+      clearPasswordFlag = false;
+    },
+  },
+  {
+    row: document.getElementById("ssh-passphrase-op-row"),
+    refInput: sshPassphraseOpRefInput,
+    target: sshPassphraseInput,
+    browseBtn: document.getElementById("ssh-passphrase-op-browse"),
+    fetchBtn: document.getElementById("ssh-passphrase-op-fetch"),
+    saveCheck: sshSavePassphraseCheck,
+    resetClearFlag: () => {
+      clearSshPassphraseFlag = false;
+    },
+  },
+  {
+    row: document.getElementById("ssh-password-op-row"),
+    refInput: sshPasswordOpRefInput,
+    target: sshPasswordInput,
+    browseBtn: document.getElementById("ssh-password-op-browse"),
+    fetchBtn: document.getElementById("ssh-password-op-fetch"),
+    saveCheck: sshSavePasswordCheck,
+    resetClearFlag: () => {
+      clearSshPasswordFlag = false;
+    },
+  },
 ];
 
 function updateOpRowVisibility() {
-  for (const [rowId, getCheck] of OP_ROWS) {
-    const row = document.getElementById(rowId);
-    if (row) row.classList.toggle("hidden", !opAvailable || !getCheck().checked);
+  for (const entry of OP_ROWS) {
+    entry.row.classList.toggle("hidden", !opAvailable || !entry.saveCheck.checked);
   }
 }
 
-async function fetchFromOnePassword(refInput, targetInput, resetClearFlag) {
-  const reference = refInput.value.trim();
+async function fetchFromOnePassword(entry) {
+  const reference = entry.refInput.value.trim();
   if (!reference) return;
+  // Both buttons would start another CLI call on top of the one in flight.
+  entry.browseBtn.disabled = true;
+  entry.fetchBtn.disabled = true;
   show(t('op_fetching'));
   try {
     const value = await safeInvoke("op_read_secret", { reference });
-    targetInput.value = value;
-    targetInput.placeholder = "";
+    entry.target.value = value;
+    entry.target.placeholder = "";
     // Assigning .value fires no input event, so the pending "clear this secret" flag
     // would survive and wipe the keyring entry we just filled in.
-    resetClearFlag();
+    entry.resetClearFlag();
     show(t('op_fetched'));
   } catch (error) {
     show(String(error));
+  } finally {
+    entry.browseBtn.disabled = false;
+    entry.fetchBtn.disabled = false;
   }
 }
 
-document.getElementById("mysql-op-fetch").addEventListener("click", () =>
-  fetchFromOnePassword(mysqlOpRefInput, mysqlPassInput, () => {
-    clearPasswordFlag = false;
-  })
-);
-document.getElementById("ssh-passphrase-op-fetch").addEventListener("click", () =>
-  fetchFromOnePassword(sshPassphraseOpRefInput, sshPassphraseInput, () => {
-    clearSshPassphraseFlag = false;
-  })
-);
-document.getElementById("ssh-password-op-fetch").addEventListener("click", () =>
-  fetchFromOnePassword(sshPasswordOpRefInput, sshPasswordInput, () => {
-    clearSshPasswordFlag = false;
-  })
-);
+// Browse: pick an item and field in 1Password instead of pasting the reference by hand.
+// Picking a field settles what the secret is, so fetch it straight away rather than
+// making the user press the second button for a result they already asked for.
+async function browseForOpRef(entry) {
+  if (typeof window.openOpPicker !== "function") return;
+  const reference = await window.openOpPicker();
+  if (!reference) return;
+  entry.refInput.value = reference;
+  await fetchFromOnePassword(entry);
+}
 
-for (const [, getCheck] of OP_ROWS) {
-  getCheck().addEventListener("change", updateOpRowVisibility);
+for (const entry of OP_ROWS) {
+  entry.browseBtn.addEventListener("click", () => browseForOpRef(entry));
+  entry.fetchBtn.addEventListener("click", () => fetchFromOnePassword(entry));
+  entry.saveCheck.addEventListener("change", updateOpRowVisibility);
 }
 
 safeInvoke("op_available")

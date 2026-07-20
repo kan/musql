@@ -881,6 +881,22 @@ async fn op_read_secret(reference: String) -> Result<String, String> {
         .map_err(|e| format!("Task error: {e}"))?
 }
 
+/// Items for the reference picker. Cached per session; `refresh` forces a re-fetch.
+#[tauri::command]
+async fn op_list_items(refresh: Option<bool>) -> Result<Vec<onepassword::OpItem>, String> {
+    tauri::async_runtime::spawn_blocking(move || onepassword::list_items(refresh.unwrap_or(false)))
+        .await
+        .map_err(|e| format!("Task error: {e}"))?
+}
+
+/// Referenceable fields of one item. Secret values are dropped before this returns.
+#[tauri::command]
+async fn op_list_fields(item_id: String) -> Result<Vec<onepassword::OpField>, String> {
+    tauri::async_runtime::spawn_blocking(move || onepassword::list_fields(&item_id))
+        .await
+        .map_err(|e| format!("Task error: {e}"))?
+}
+
 // Resolve all three credentials off the async runtime: hitting 1Password shells out to
 // the CLI, which can sit for many seconds while the user approves a Windows Hello prompt.
 async fn resolve_credentials(
@@ -3498,6 +3514,8 @@ fn main() {
             save_docker_password,
             op_available,
             op_read_secret,
+            op_list_items,
+            op_list_fields,
             open_external
         ])
         .run(tauri::generate_context!())

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>muSQL Query</title>
     <link rel="icon" href="./icon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="./style.css?v=10" />
+    <link rel="stylesheet" href="./style.css?v=12" />
     <link rel="stylesheet" href="./lib/codemirror/codemirror.css" />
     <link rel="stylesheet" href="./lib/codemirror/show-hint.css" />
   </head>
@@ -63,7 +63,8 @@
           <div class="op-row hidden" id="ai-op-row">
             <div class="input-with-btn">
               <input id="ai-op-ref" data-i18n-placeholder="op_ref_placeholder" placeholder="op://vault/item/field" />
-              <button type="button" id="ai-op-fetch" class="browse-btn" data-i18n-title="op_fetch">1P</button>
+              <button type="button" id="ai-op-browse" class="browse-btn" data-i18n-title="op_browse">&hellip;</button>
+                <button type="button" id="ai-op-fetch" class="browse-btn" data-i18n-title="op_fetch">1P</button>
             </div>
             <p id="ai-op-status" class="modal-status"></p>
           </div>
@@ -130,6 +131,7 @@
     <script src="./i18n.js"></script>
     <script src="./theme.js"></script>
     <script src="./manual.js"></script>
-    <script src="./query.js?v=16"></script>
+    <script src="./op-picker.js"></script>
+    <script src="./query.js?v=18"></script>
   </body>
 </html>
