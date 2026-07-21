@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.7.1] - 2026-07-21
+
+### Fixed
+- 接続の同期で、古いバージョンの muSQL が新しいバージョンの書いた同期ファイルを上書きし、新バージョンが増やした設定項目を削ってしまう問題（#81）。同期ファイルに書き込んだアプリのバージョンを記録し、自分より新しいバージョンで書かれていた場合は書き込みをスキップする（この保護が働くのは双方が本機能を含むバージョンのときなので、同期するマシンは揃えて更新することを推奨）
+
 ## [0.7.0] - 2026-07-20
 
 ### Added
@@ -197,6 +202,7 @@
 - アプリ内自動更新（NSIS インストーラー + Ed25519 署名）
 - GitHub Actions CI/CD（cargo check + リリースビルド）
 
+[0.7.1]: https://github.com/kan/musql/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/kan/musql/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/kan/musql/compare/v0.5.5...v0.6.0
 [0.5.5]: https://github.com/kan/musql/compare/v0.5.4...v0.5.5
