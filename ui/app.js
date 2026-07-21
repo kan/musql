@@ -800,6 +800,18 @@ async function importProfiles() {
 }
 
 // ── Connection profile sync (external JSON, path-based) (#47) ──
+
+// The Rust write commands reject with this exact sentinel when the sync file was last written
+// by a newer muSQL and must not be overwritten (#81).
+const SYNC_BLOCKED_NEWER = "sync_blocked_newer";
+function isSyncBlockedNewer(error) {
+  return String(error && error.message ? error.message : error) === SYNC_BLOCKED_NEWER;
+}
+// Map a rejected sync command to a user-facing string, translating the newer-file sentinel.
+function syncErrorMessage(error) {
+  return isSyncBlockedNewer(error) ? t('sync_blocked_newer') : String(error);
+}
+
 let syncModalOpen = false;
 async function openSyncModal() {
   if (syncModalOpen) return; // single instance
@@ -913,8 +925,25 @@ async function openSyncModal() {
       // Join the sync: pull the file (merge in) then push the merged result, so a fresh
       // path gets created/populated and local-only profiles propagate out.
       profileData = await safeInvoke("sync_import");
-      await safeInvoke("sync_export");
+      // Export is best-effort here: if the file was written by a newer muSQL (#81) the push
+      // is refused, but the import above already pulled its data in — so just note it and
+      // still finish joining rather than aborting with an error.
+      let blockedNewer = false;
+      try {
+        await safeInvoke("sync_export");
+      } catch (error) {
+        if (!isSyncBlockedNewer(error)) throw error;
+        blockedNewer = true;
+      }
       renderTree();
+      if (blockedNewer) {
+        // Import succeeded but our push was refused. Keep the modal open with the message so
+        // the user actually sees that their local changes were not sent out (close() would
+        // tear down the status immediately).
+        showStatus(t('sync_blocked_newer'), false);
+        setBusy(false);
+        return;
+      }
       close();
     } catch (error) { showStatus(String(error), false); setBusy(false); }
   });
@@ -939,7 +968,7 @@ async function openSyncModal() {
       await persistPath();
       const ok = await safeInvoke("sync_export");
       showStatus(ok ? t('sync_exported') : t('sync_disabled'), ok);
-    } catch (error) { showStatus(String(error), false); }
+    } catch (error) { showStatus(syncErrorMessage(error), false); }
     setBusy(false);
   });
 

@@ -115,10 +115,20 @@ struct ConnectionProfile {
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 struct ConnectionProfileStore {
     version: u32,
+    // Version of the musql that last wrote the external sync file (#81). Written only into
+    // the sync file (see `sanitized_store_json`), never the local `profiles.json` — hence
+    // `skip_serializing_if`. Absent when the file predates this feature or is the local
+    // store. Used to stop an older musql from clobbering fields a newer one wrote.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    app_version: Option<String>,
     #[serde(default)]
     groups: Vec<ProfileGroup>,
     items: Vec<ConnectionProfile>,
 }
+
+// This build's version, the single source of truth (mirrors src-tauri/Cargo.toml). Stamped
+// into the sync file on write and compared against an incoming file's stamp to gate writes.
+const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Debug, Serialize)]
 struct ProfileListResponse {
@@ -444,6 +454,7 @@ fn load_profiles(app: &AppHandle) -> Result<ConnectionProfileStore, String> {
     if !path.exists() {
         return Ok(ConnectionProfileStore {
             version: 2,
+            app_version: None,
             groups: Vec::new(),
             items: Vec::new(),
         });
@@ -550,6 +561,9 @@ fn clear_machine_local_paths(profile: &mut ConnectionProfile) {
 // that predate the keyring migration); the path scrubbing, by contrast, is load-bearing.
 fn sanitized_store_json(store: &ConnectionProfileStore) -> Result<String, serde_json::Error> {
     let mut clone = store.clone();
+    // Stamp this build's version so another machine can tell who last wrote the file and
+    // refuse to overwrite it with an older musql that would drop fields it doesn't know (#81).
+    clone.app_version = Some(APP_VERSION.to_string());
     for item in clone.items.iter_mut() {
         item.request.mysql.password = String::new();
         if let Some(ssh) = item.request.ssh.as_mut() {
@@ -559,6 +573,30 @@ fn sanitized_store_json(store: &ConnectionProfileStore) -> Result<String, serde_
         clear_machine_local_paths(item);
     }
     serde_json::to_string_pretty(&clone)
+}
+
+// True when the sync file at `path` was last written by a strictly newer musql than this
+// build (#81). Such a file may carry fields this build doesn't understand; serde would drop
+// them on read, so writing our view back would silently strip them for every machine. When
+// the file is missing / unreadable / malformed, or carries no (or an unparseable) version,
+// we return false — writing is allowed, matching the pre-#81 behavior for those cases.
+fn sync_file_written_by_newer(path: &str) -> bool {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    let Ok(store) = serde_json::from_str::<ConnectionProfileStore>(&content) else {
+        return false;
+    };
+    let Some(other) = store.app_version.as_deref() else {
+        return false;
+    };
+    match (
+        semver::Version::parse(other),
+        semver::Version::parse(APP_VERSION),
+    ) {
+        (Ok(other_v), Ok(mine)) => other_v > mine,
+        _ => false,
+    }
 }
 
 // Write the (secret-stripped) store to the sync file, creating parent dirs. Returns an
@@ -582,8 +620,17 @@ fn mirror_to_sync(app: &AppHandle, store: &ConnectionProfileStore) {
     if path.is_empty() {
         return;
     }
+    // Don't let this build overwrite a file a newer musql wrote — we'd strip fields we can't
+    // round-trip (#81). Silently skipping matches the best-effort contract of this mirror.
+    if sync_file_written_by_newer(&path) {
+        return;
+    }
     let _ = write_sync_file(&path, store);
 }
+
+// Sentinel returned by the write commands when a newer musql owns the sync file; the UI maps
+// it to a localized message. Kept stable and distinct from real error text.
+const SYNC_BLOCKED_NEWER: &str = "sync_blocked_newer";
 
 #[tauri::command]
 fn get_sync_path(app: AppHandle) -> String {
@@ -702,6 +749,11 @@ fn sync_export(app: AppHandle) -> Result<bool, String> {
     let path = read_sync_path(&app);
     if path.is_empty() {
         return Ok(false);
+    }
+    // A manual export must not clobber a file a newer musql wrote (#81). Unlike the silent
+    // auto-mirror, tell the user why their explicit action was refused.
+    if sync_file_written_by_newer(&path) {
+        return Err(SYNC_BLOCKED_NEWER.to_string());
     }
     let store = load_profiles(&app)?;
     write_sync_file(&path, &store)?;
@@ -3925,6 +3977,7 @@ Host myserver
             Some("C:\\Users\\alice\\certs\\ca.pem".to_string());
         let store = ConnectionProfileStore {
             version: 1,
+            app_version: None,
             groups: vec![],
             items: vec![profile],
         };
@@ -3948,6 +4001,7 @@ Host myserver
         ssh.ssh_password = "ssh-secret".to_string();
         let store = ConnectionProfileStore {
             version: 1,
+            app_version: None,
             groups: vec![],
             items: vec![profile],
         };
@@ -4072,6 +4126,7 @@ Host myserver
         on_machine_a.request.mysql.tls_ca_cert_path = Some("C:\\Users\\alice\\ca.pem".to_string());
         let store_a = ConnectionProfileStore {
             version: 1,
+            app_version: None,
             groups: vec![],
             items: vec![on_machine_a],
         };
@@ -4116,5 +4171,83 @@ Host myserver
         let mut incoming = make_profile("p1", None);
         carry_over_machine_local_paths(&local, &mut incoming);
         assert!(incoming.request.ssh.is_none());
+    }
+
+    // ── App-version write guard (#81) ──
+
+    #[test]
+    fn sanitized_store_json_stamps_current_app_version() {
+        let store = ConnectionProfileStore {
+            version: 2,
+            app_version: None,
+            groups: vec![],
+            items: vec![],
+        };
+        let parsed: ConnectionProfileStore =
+            serde_json::from_str(&sanitized_store_json(&store).unwrap()).unwrap();
+        assert_eq!(parsed.app_version.as_deref(), Some(APP_VERSION));
+    }
+
+    // Write a sync file carrying `app_version` and return whether this build considers it
+    // newer. Uses a per-test filename in the temp dir so parallel tests don't collide.
+    fn newer_check_with_version(name: &str, version: Option<&str>) -> bool {
+        let store = ConnectionProfileStore {
+            version: 2,
+            app_version: version.map(str::to_string),
+            groups: vec![],
+            items: vec![],
+        };
+        let path = std::env::temp_dir().join(name);
+        std::fs::write(&path, serde_json::to_string(&store).unwrap()).unwrap();
+        let result = sync_file_written_by_newer(path.to_str().unwrap());
+        let _ = std::fs::remove_file(&path);
+        result
+    }
+
+    #[test]
+    fn sync_guard_blocks_strictly_newer_file() {
+        assert!(newer_check_with_version(
+            "musql_guard_newer.json",
+            Some("999.0.0"),
+        ));
+    }
+
+    #[test]
+    fn sync_guard_allows_equal_and_older_and_absent() {
+        // Same version — safe to write.
+        assert!(!newer_check_with_version(
+            "musql_guard_equal.json",
+            Some(APP_VERSION),
+        ));
+        // Older writer — safe to write.
+        assert!(!newer_check_with_version(
+            "musql_guard_older.json",
+            Some("0.0.1"),
+        ));
+        // No stamp (pre-#81 file or the local store) — writing was always allowed here.
+        assert!(!newer_check_with_version("musql_guard_absent.json", None));
+    }
+
+    #[test]
+    fn sync_guard_allows_when_unreadable_or_malformed() {
+        // Missing file — falls through to "allowed".
+        let missing = std::env::temp_dir().join("musql_guard_does_not_exist.json");
+        let _ = std::fs::remove_file(&missing);
+        assert!(!sync_file_written_by_newer(missing.to_str().unwrap()));
+
+        // Malformed JSON — allowed rather than blocking the user out.
+        let bad = std::env::temp_dir().join("musql_guard_malformed.json");
+        std::fs::write(&bad, "not json {").unwrap();
+        assert!(!sync_file_written_by_newer(bad.to_str().unwrap()));
+        let _ = std::fs::remove_file(&bad);
+    }
+
+    #[test]
+    fn sync_guard_allows_when_version_unparseable() {
+        // A garbage version string must not block writes (it can't be proven newer).
+        assert!(!newer_check_with_version(
+            "musql_guard_badver.json",
+            Some("not-a-semver"),
+        ));
     }
 }

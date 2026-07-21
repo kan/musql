@@ -3037,6 +3037,7 @@ dependencies = [
  "reqwest",
  "rfd",
  "russh",
+ "semver",
  "serde",
  "serde_json",
  "tauri",
