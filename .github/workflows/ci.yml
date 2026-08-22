@@ -31,17 +31,17 @@ jobs:
         with:
           workspaces: src-tauri
 
+      - name: Install just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
       - name: cargo fmt
-        run: cargo fmt --check
-        working-directory: src-tauri
+        run: just fmt
 
       - name: cargo clippy
-        run: cargo clippy -- -D warnings
-        working-directory: src-tauri
+        run: just clippy
 
       - name: cargo test
-        run: cargo test
-        working-directory: src-tauri
+        run: just test
 
   lint-ui:
     # 静的 UI (ui/*.js) の Biome lint。スケジュール実行では回さない
@@ -52,8 +52,11 @@ jobs:
       - uses: biomejs/setup-biome@4c91541eaada48f67d7dbd7833600ce162b68f51 # v2.7.1
         with:
           version: 2.4.10
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
       - name: Biome lint
-        run: biome lint --error-on-warnings
+        # just lint-ui は PATH の biome (setup-biome が入れたもの) を優先し、
+        # 無ければ npx にフォールバックする
+        run: just lint-ui
 
   audit:
     runs-on: ubuntu-latest

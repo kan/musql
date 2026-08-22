@@ -7,9 +7,13 @@ Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`
 - **ユーザー向け挙動を変えたら `docs/manual/` の該当ページも更新する**（画像は `docs/manual/img/`、撮影リストは `docs/manual/img/README.md`）。マニュアルは pike 構成に倣い、見出しアンカーは GitHub slug、校正は japanese-tech-writing 規範に従う。
 
 ## How to run
-- `cargo dev` で起動（リポジトリ直下 / src-tauri のどちらからでも可。`.cargo/config.toml` の alias で `cargo tauri dev --config tauri.dev.conf.json` に展開される）。dev config は identifier を `...musql.debug` に上書きし、インストール版とウィンドウ状態（`tauri-plugin-window-state`）・アプリデータを分離する。
-- `cargo check` / `cargo test` / `cargo fmt --check` / `cargo clippy -- -D warnings`。
-- UI (`ui/*.js`) の lint: `npx @biomejs/biome@2.4.10 lint --error-on-warnings`（Biome、package.json 不要。設定は `biome.json`、`ui/lib/**` の vendor は除外。CI の `lint-ui` ジョブでも実行）。
+- 開発タスクの入口は `justfile`。`just` でレシピ一覧、`just dev` で起動、`just check` でコミット前チェック一式（fmt / clippy / test / UI lint）、`just bump X.Y.Z` でバージョン更新。`ci.yml` の各ステップも同じレシピを呼ぶ（ステップ名は残したまま中身だけ just に寄せてあるので、失敗箇所の粒度は従来どおり）。
+  - just は cargo の薄いファサードで、cargo から直接叩いても同じ。`cargo dev` の alias（`.cargo/config.toml`）はそのまま残してある。
+  - justfile 先頭の `set windows-shell` は必須。just の Windows 既定シェル `sh -c` は PATH に無く、PATH 上の `bash` は WSL ランチャ（`C:\Windows\System32\bash.exe`）で Windows 側の cargo / tauri が見えないため、Git Bash を明示している。Git を別の場所に入れている環境は `just --shell <bash へのパス>` で上書きする。
+  - `release.yml` は just を経由しない。ビルドは `tauri-action` と PowerShell スクリプトが主体で、レシピに寄せても重複が減らないため。
+- `cargo dev`（= `just dev`）で起動（リポジトリ直下 / src-tauri のどちらからでも可。`.cargo/config.toml` の alias で `cargo tauri dev --config tauri.dev.conf.json` に展開される）。dev config は identifier を `...musql.debug` に上書きし、インストール版とウィンドウ状態（`tauri-plugin-window-state`）・アプリデータを分離する。
+- `cargo check` / `cargo test` / `cargo fmt --check` / `cargo clippy --all-targets -- -D warnings`。
+- UI (`ui/*.js`) の lint: `just lint-ui`（= `npx @biomejs/biome@2.4.10 lint --error-on-warnings`。Biome、package.json 不要。設定は `biome.json`、`ui/lib/**` の vendor は除外）。CI は `setup-biome` が入れた `biome` を使うため、レシピは PATH にあればそちらを優先し、無ければ npx にフォールバックする。
 
 ## Architecture
 - **main** (`ui/index.html`, `ui/app.js`): 接続プロファイル一覧。
@@ -78,15 +82,13 @@ Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`
 ### 1. バージョンと CHANGELOG
 
 - `CHANGELOG.md` の先頭に新セクション（日付・Added/Changed/Fixed/Security・末尾の比較リンク）
-- `src-tauri/Cargo.toml` の `version`
-- `src-tauri/tauri.conf.json` の `version`
-- `cd src-tauri && cargo check` で `Cargo.lock` の `musql` エントリを追従させる。**忘れると lockfile drift が残り、後から同期コミットが必要になる**
+- `just bump X.Y.Z` で `src-tauri/Cargo.toml` と `src-tauri/tauri.conf.json` の `version` を更新し、`cargo check` で `Cargo.lock` の `musql` エントリまで追従させる。**忘れると lockfile drift が残り、後から同期コミットが必要になる**
 
 `store/AppxManifest.xml` は `Version="{{VERSION}}"` のプレースホルダで、CI がタグから流し込むため編集不要。
 
 ### 2. 検証してコミット
 
-`cargo test` / `cargo clippy --all-targets -- -D warnings` / `cargo fmt --check` / Biome lint を通してから:
+`just check`（fmt / clippy / test / UI lint）を通してから:
 
 ```
 git add CHANGELOG.md src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json
