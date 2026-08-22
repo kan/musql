@@ -2,5 +2,10 @@ src-tauri/target/
 **/.DS_Store
 rustup-init.exe
 src-tauri/gen/
+
+# ~/.gitignore が .claude/ ごと除外しているので、rules だけ追跡対象に戻す
+!.claude/
+.claude/*
+!.claude/rules/
 .claude/settings.local.json
 *.msix
