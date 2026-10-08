@@ -230,12 +230,21 @@ impl russh::client::Handler for SshHandler {
 
     fn check_server_key(
         &mut self,
-        server_public_key: &russh::keys::PublicKey,
+        server_public_key: &russh::keys::PublicKeyOrCertificate,
     ) -> impl std::future::Future<Output = Result<bool, Self::Error>> + Send {
         let host = self.host.clone();
         let port = self.port;
-        let key = server_public_key.clone();
+        // Host certificates are never advertised (Config::default() leaves
+        // host_key_certificates empty), so a server cannot present one. Reject it anyway:
+        // there is no trusted CA list to check a certificate against.
+        let key = match server_public_key {
+            russh::keys::PublicKeyOrCertificate::PublicKey { key, .. } => Some(key.clone()),
+            russh::keys::PublicKeyOrCertificate::Certificate(_) => None,
+        };
         async move {
+            let Some(key) = key else {
+                return Ok(false);
+            };
             let known_hosts_path = ssh_known_hosts_path();
             match russh::keys::known_hosts::check_known_hosts_path(
                 &host,
