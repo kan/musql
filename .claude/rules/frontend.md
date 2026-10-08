@@ -1,6 +1,6 @@
 # UI 実装ルール（`ui/`）
 
-静的 UI（HTML/JS/CSS、Node.js 不要、ビルド工程なし）を触るときに読む。lint は `just lint-ui`（Biome、`ui/lib/**` の vendor は除外）。
+静的 UI（HTML/JS/CSS、Node.js 不要、ビルド工程なし）を触るときに従う。lint は `just lint-ui`（Biome、`ui/lib/**` の vendor は除外）。
 
 ## 画面構成
 - **main** (`ui/index.html`, `ui/app.js`): 接続プロファイル一覧。
