@@ -1,7 +1,7 @@
 # テスト方針
 
 ## 何をどこで担保するか
-- **Rust のユニットテスト**（`just test`）が自動テストの本体。`src-tauri/src/main.rs` 末尾の `mod tests`、`onepassword.rs` の `mod tests`、`docker/discovery.rs` の `mod tests` に置く。純関数（プロファイルのサニタイズ、同期の merge、AI プロンプト組み立て、op の出力パース、Docker ラベルの正規化）を対象にする。
+- **Rust のユニットテスト**（`just test`）が自動テストの本体。`src-tauri/src/main.rs` 末尾の `mod tests`、`onepassword.rs` の `mod tests`、`docker/discovery.rs` の `mod tests`、`app_log.rs` の `mod tests` に置く。純関数（プロファイルのサニタイズ、同期の merge、AI プロンプト組み立て、op の出力パース、Docker ラベルの正規化、ログの間引きと整形）を対象にする。
 - **GUI の挙動は自動テストで担保しない**。接続・タブ操作・メニューは実際に `just dev` で触って確認する。コミット前にユーザーの動作確認 OK を取るのはこのため（CLAUDE.md「Git workflow」参照）。
 - **UI の静的検査**は Biome（`just lint-ui`）のみ。JS のユニットテストは持たない（Node.js を要求しない方針のため）。
 

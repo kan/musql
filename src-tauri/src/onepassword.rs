@@ -162,7 +162,7 @@ pub fn read_secret(reference: &str) -> Result<String, String> {
          in the 1Password desktop app."
             .to_string()
     })?;
-    let value = run_raw(&bin, &["read", "--no-newline", reference])?;
+    let value = run_raw(&bin, &["read", "--no-newline", reference]).inspect_err(log_cli_failure)?;
     if value.is_empty() {
         return Err(format!("1Password returned an empty value for {reference}"));
     }
@@ -249,7 +249,15 @@ fn run_op(args: &[&str]) -> Result<String, String> {
          in the 1Password desktop app."
             .to_string()
     })?;
-    run_raw(&bin, args)
+    run_raw(&bin, args).inspect_err(log_cli_failure)
+}
+
+/// Logs a failed CLI call. Every path that reaches the CLI goes through here (the
+/// settings button, the picker and the connection-time lookup). Safe to log: on failure
+/// `run_raw` returns the CLI's stderr or a timeout, and a secret only ever comes back on
+/// stdout of a successful call.
+fn log_cli_failure(e: &String) {
+    log::warn!("1Password CLI failed: {e}");
 }
 
 /// Every item the account can see: id, title, vault and category only.

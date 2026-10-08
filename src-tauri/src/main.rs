@@ -11,6 +11,7 @@ use std::time::Duration;
 use tauri::menu::{CheckMenuItemBuilder, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter, EventTarget, Manager, Window, Wry};
 
+mod app_log;
 #[cfg(feature = "docker")]
 mod docker;
 mod onepassword;
@@ -632,9 +633,15 @@ fn mirror_to_sync(app: &AppHandle, store: &ConnectionProfileStore) {
     // Don't let this build overwrite a file a newer musql wrote — we'd strip fields we can't
     // round-trip (#81). Silently skipping matches the best-effort contract of this mirror.
     if sync_file_written_by_newer(&path) {
+        app_log::warn_throttled(
+            app_log::LONG,
+            &format!("sync mirror skipped: {path} was written by a newer muSQL"),
+        );
         return;
     }
-    let _ = write_sync_file(&path, store);
+    if let Err(e) = write_sync_file(&path, store) {
+        app_log::warn_throttled(app_log::LONG, &format!("sync mirror to {path} failed: {e}"));
+    }
 }
 
 // Sentinel returned by the write commands when a newer musql owns the sync file; the UI maps
@@ -712,11 +719,19 @@ fn sync_import_blocking(app: AppHandle) -> Result<ProfileListResponse, String> {
         return list_profiles(app);
     }
     let incoming: ConnectionProfileStore = match std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|c| serde_json::from_str(&c).ok())
+        .map_err(|e| e.to_string())
+        .and_then(|c| serde_json::from_str(&c).map_err(|e| e.to_string()))
     {
-        Some(store) => store,
-        None => return list_profiles(app),
+        Ok(store) => store,
+        Err(e) => {
+            // Runs on every window focus, so an unreachable file would otherwise add a
+            // line each time.
+            app_log::warn_throttled(
+                app_log::LONG,
+                &format!("sync import from {path} skipped: {e}"),
+            );
+            return list_profiles(app);
+        }
     };
 
     let mut store = load_profiles(&app)?;
@@ -819,9 +834,11 @@ fn keyring_set(key: &str, value: &str) -> Result<(), String> {
     if value.is_empty() {
         let _ = entry.delete_credential();
     } else {
+        // The key names the entry (a profile id or a provider), never the secret itself.
         entry
             .set_password(value)
-            .map_err(|e| format!("Keyring save error: {e}"))?;
+            .map_err(|e| format!("Keyring save error: {e}"))
+            .inspect_err(|e| log::warn!("{e} (entry {key})"))?;
     }
     Ok(())
 }
@@ -1139,7 +1156,24 @@ fn build_ai_prompt(schema: &SchemaInfo, text_before: &str, text_after: &str) -> 
 
 // ── AI API call ──
 
+/// Sends `prompt` to the provider. A failure is logged here, once for every caller. The
+/// error is the provider's status and message; the key travels in a header and the
+/// prompt is never echoed into it.
 async fn call_ai_api(
+    provider: &AiProvider,
+    model: &str,
+    api_key: &str,
+    prompt: &str,
+) -> Result<String, String> {
+    send_ai_request(provider, model, api_key, prompt)
+        .await
+        .inspect_err(|e| {
+            // Throttled: completion fires per keystroke, and a 401 or 429 repeats each time.
+            app_log::warn_throttled(app_log::BRIEF, &format!("AI request failed: {e}"))
+        })
+}
+
+async fn send_ai_request(
     provider: &AiProvider,
     model: &str,
     api_key: &str,
@@ -1965,6 +1999,15 @@ fn resolve_ssh_passphrase(
 
 #[tauri::command]
 async fn test_connection(
+    request: ConnectionRequest,
+    profile_id: Option<String>,
+) -> Result<String, String> {
+    run_connection_test(request, profile_id)
+        .await
+        .inspect_err(|e| log::warn!("connection test failed: {e}"))
+}
+
+async fn run_connection_test(
     mut request: ConnectionRequest,
     profile_id: Option<String>,
 ) -> Result<String, String> {
@@ -2013,7 +2056,14 @@ async fn run_query(
 
     // Get or create pool (async — SSH tunnel creation is async)
     let cache = Arc::clone(&state);
-    let pool = get_or_create_pool_async(&cache, &request).await?;
+    // Safe to log: this fails before any statement runs, so `e` cannot contain SQL.
+    // Errors from the statement itself (below) are never logged.
+    let pool = get_or_create_pool_async(&cache, &request)
+        .await
+        .inspect_err(|e| {
+            // Throttled: a dropped connection fails every query of a tab at once.
+            app_log::warn_throttled(app_log::BRIEF, &format!("connection failed: {e}"))
+        })?;
 
     let db = request.mysql.database.clone();
     let tab_key = tab_id.unwrap_or_else(|| "__internal__".to_string());
@@ -2820,6 +2870,7 @@ fn ml<'a>(lang: &str, key: &'a str) -> &'a str {
         ("ja", "exit") => "終了",
         ("ja", "github") => "GitHub リポジトリ",
         ("ja", "manual") => "マニュアル",
+        ("ja", "open_logs") => "ログフォルダを開く",
         ("ja", "check_update") => "アップデートを確認...",
         ("ja", "settings") => "設定",
         ("ja", "new_sql_tab") => "新規 SQL タブ",
@@ -2855,6 +2906,7 @@ fn ml<'a>(lang: &str, key: &'a str) -> &'a str {
         (_, "exit") => "Exit",
         (_, "github") => "GitHub Repository",
         (_, "manual") => "Manual",
+        (_, "open_logs") => "Open Log Folder",
         (_, "check_update") => "Check for Updates...",
         (_, "new_sql_tab") => "New SQL Tab",
         (_, "close_window") => "Close Window",
@@ -3000,6 +3052,13 @@ fn build_main_menu(handle: &AppHandle<Wry>, lang: &str, theme: &str) -> tauri::R
         true,
         None::<&str>,
     )?;
+    let open_logs_item = MenuItem::with_id(
+        handle,
+        "main:open-logs",
+        ml(lang, "open_logs"),
+        true,
+        None::<&str>,
+    )?;
     #[cfg(feature = "self-updater")]
     let help_menu = {
         let check_update_item = MenuItem::with_id(
@@ -3014,7 +3073,13 @@ fn build_main_menu(handle: &AppHandle<Wry>, lang: &str, theme: &str) -> tauri::R
             handle,
             ml(lang, "help"),
             true,
-            &[&check_update_item, &sep, &manual_item, &github_item],
+            &[
+                &check_update_item,
+                &sep,
+                &manual_item,
+                &github_item,
+                &open_logs_item,
+            ],
         )?
     };
     #[cfg(not(feature = "self-updater"))]
@@ -3022,7 +3087,7 @@ fn build_main_menu(handle: &AppHandle<Wry>, lang: &str, theme: &str) -> tauri::R
         handle,
         ml(lang, "help"),
         true,
-        &[&manual_item, &github_item],
+        &[&manual_item, &github_item, &open_logs_item],
     )?;
     Menu::with_items(handle, &[&file_menu, &edit_menu, &view_menu, &help_menu])
 }
@@ -3191,16 +3256,22 @@ fn setup_menus(handle: &AppHandle<Wry>) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Asks the update server for a newer version. Failures are logged here, so every
+/// caller records them the same way.
+#[cfg(feature = "self-updater")]
+async fn fetch_update(app: &AppHandle) -> Result<Option<tauri_plugin_updater::Update>, String> {
+    use tauri_plugin_updater::UpdaterExt;
+    let result = match app.updater() {
+        Ok(updater) => updater.check().await.map_err(|e| e.to_string()),
+        Err(e) => Err(e.to_string()),
+    };
+    result.inspect_err(|e| log::warn!("update check failed: {e}"))
+}
+
 #[cfg(feature = "self-updater")]
 #[tauri::command]
 async fn check_update(app: AppHandle) -> Result<bool, String> {
-    use tauri_plugin_updater::UpdaterExt;
-    let update = app
-        .updater()
-        .map_err(|e| e.to_string())?
-        .check()
-        .await
-        .map_err(|e| e.to_string())?;
+    let update = fetch_update(&app).await?;
     if let Some(update) = update {
         let _ = app.emit(
             "update-available",
@@ -3217,18 +3288,13 @@ async fn check_update(app: AppHandle) -> Result<bool, String> {
 #[cfg(feature = "self-updater")]
 #[tauri::command]
 async fn install_update(app: AppHandle) -> Result<(), String> {
-    use tauri_plugin_updater::UpdaterExt;
-    let update = app
-        .updater()
-        .map_err(|e| e.to_string())?
-        .check()
-        .await
-        .map_err(|e| e.to_string())?;
+    let update = fetch_update(&app).await?;
     if let Some(update) = update {
         update
             .download_and_install(|_, _| {}, || {})
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| e.to_string())
+            .inspect_err(|e| log::error!("update install failed: {e}"))?;
         app.restart();
     }
     Ok(())
@@ -3305,8 +3371,12 @@ async fn docker_create_tunnel(
     port: u16,
 ) -> Result<docker::tunnel::TunnelInfo, String> {
     let docker = connect_docker().await?;
-    docker::tunnel::ensure_socat_image(&docker).await?;
-    docker::tunnel::create_tunnel(&docker, &container_id, port).await
+    docker::tunnel::ensure_socat_image(&docker)
+        .await
+        .inspect_err(|e| log::warn!("docker tunnel image unavailable: {e}"))?;
+    docker::tunnel::create_tunnel(&docker, &container_id, port)
+        .await
+        .inspect_err(|e| log::warn!("docker tunnel to {container_id}:{port} failed: {e}"))
 }
 
 #[cfg(feature = "docker")]
@@ -3408,6 +3478,8 @@ fn main() {
     }
     builder
         .setup(|app| {
+            // First, so that failures in the rest of setup are written too.
+            app_log::init(app.handle());
             setup_menus(app.handle())?;
             // The titles in tauri.conf.json are the release ones; mark them on dev builds.
             // Runs once, while every title is still the undecorated one from the config.
@@ -3432,15 +3504,8 @@ fn main() {
                 tauri::async_runtime::spawn(async move {
                     // Delay to avoid slowing down app startup
                     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-                    use tauri_plugin_updater::UpdaterExt;
-                    if let Ok(updater) = handle.updater() {
-                        if let Ok(Some(update)) = updater.check().await {
-                            let _ = handle.emit(
-                                "update-available",
-                                serde_json::json!({ "version": update.version }),
-                            );
-                        }
-                    }
+                    // Emits `update-available` when there is one; a failure is logged.
+                    let _ = check_update(handle).await;
                 });
             }
             Ok(())
@@ -3469,6 +3534,11 @@ fn main() {
                 }
                 "main:github" => {
                     let _ = open_in_browser("https://github.com/kan/musql");
+                }
+                "main:open-logs" => {
+                    if let Err(e) = app_log::open_dir(app) {
+                        log::warn!("failed to open the log directory: {e}");
+                    }
                 }
                 "main:manual" => {
                     let _ = app.emit_to(
@@ -3614,7 +3684,8 @@ fn main() {
             op_list_items,
             op_list_fields,
             open_external,
-            set_window_title
+            set_window_title,
+            app_log::log_frontend
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {

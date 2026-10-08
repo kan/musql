@@ -15,6 +15,8 @@
 - **クエリ完了通知**: 5秒超のクエリが**非フォーカス時**に完了（成功/失敗問わず）で通知（`query.js` `maybeNotifyQueryDone`）。`tauri-plugin-notification` 優先（`window.__TAURI__.notification`）→ Web Notification フォールバック。ON/OFF は query View メニュー `query:toggle-notify`、`musql:notify-query`（既定 ON）、capabilities `notification:default`。**Windows 制約**: dev は AUMID 未登録でタイトルが起動元プロセス名（インストール版は muSQL 表示）／WebView2 は Web の `onclick` 非配送・notify_rust も desktop クリックコールバック無しのため**クリックでのフォーカス/タブ切替は非対応**（表示のみ）。
 - **アプリ内マニュアル（#46）**: `ui/manual.js` が `docs/manual/*.md` を raw.githubusercontent.com から fetch し、自前の簡易 Markdown レンダラ（DOM 構築・innerHTML 不使用）でモーダル表示。バンドルしない（main ブランチが正）。入口は F1（全ウィンドウ）/ main ヘルプメニュー「マニュアル」（`main:manual` → `menu:action` "manual"）/ 各画面の `?` ボタン（`data-manual="page.md#anchor"`、動的モーダルは `window.createHelpButton()`）。見出し ID は GitHub slug 互換（`makeSlugger`）。外部リンクは Rust `open_external`（https 限定）。CSP で raw.githubusercontent.com を connect-src / img-src に許可。マニュアルの見出しを変えたら `data-manual` のアンカーも追従すること。
 
+- **JS エラーのログ（#110）**: `ui/error-log.js` が未捕捉のエラー（`error` / `unhandledrejection`）を `log_frontend` コマンドでログファイルへ送る。3 画面とも**最初の `<script>`** として読み込む（後続スクリプトのエラーを拾うため）。同じエラーは 60 秒に 1 回へ間引く。**書くのは `Error` オブジェクトだけ**で、それ以外の値（`invoke` が reject する Rust の `Err` 文字列など）は型名しか書かない。`catch` を 1 つ書き忘れても SQL がログへ出ないようにするためなので、この制限を外さないこと。**`catch` 済みの失敗を `log_frontend` へ流さないこと**（クエリのエラー文には SQL の一部が入る。ログに書いてよいものの基準は `rust.md`「秘密情報」）。
+
 ## localStorage keys
 - `musql:collapsed`, `musql:drafts:<profileId>`, `musql:history:<profileId>`, `musql:theme`, `musql:lang`
 - `musql:ai:provider`, `musql:ai:model`, `musql:ai:op-ref:<provider>`
