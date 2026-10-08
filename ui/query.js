@@ -815,10 +815,22 @@ function quoteId(name) {
   return '`' + name.replace(/`/g, '``') + '`';
 }
 
+// A value as a SQL string literal. Every literal built in this file goes through here.
+//
+// Both the backslash and the quote are doubled. `''` is one quote in either sql_mode,
+// so nothing can end the literal early. The backslash is doubled because MySQL treats
+// it as an escape by default: left alone, a value ending in `\` would swallow the
+// closing quote (#123). Under NO_BACKSLASH_ESCAPES a doubled backslash is two
+// characters, so a value containing one fails to match; that is a miss, never an
+// injection. `\'` is not used: under that mode it would close the literal.
+function sqlStringLiteral(val) {
+  return "'" + String(val).replace(/\\/g, "\\\\").replace(/'/g, "''") + "'";
+}
+
 function sqlEscapeValue(val) {
   if (val === null || val === undefined) return "NULL";
   if (typeof val === "number") return String(val);
-  return "'" + String(val).replace(/\\/g, "\\\\").replace(/'/g, "\\'") + "'";
+  return sqlStringLiteral(val);
 }
 
 async function generateInsertSql(tableName, newline) {
@@ -862,15 +874,15 @@ async function generateInsertSql(tableName, newline) {
 }
 
 async function generateMarkdownSchema(tableName, newline) {
-  const escaped = tableName.replace(/'/g, "''");
+  const tableLiteral = sqlStringLiteral(tableName);
   const [createRes, descRes, indexRes, commentRes, colCommentRes, fkParentRes, fkChildRes] = await Promise.all([
     runQuery("SHOW CREATE TABLE " + quoteId(tableName)).catch(() => null),
     runQuery("DESCRIBE " + quoteId(tableName)),
     runQuery("SHOW INDEX FROM " + quoteId(tableName)),
-    runQuery("SELECT TABLE_COMMENT FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '" + escaped + "'"),
-    runQuery("SELECT COLUMN_NAME, COLUMN_COMMENT FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '" + escaped + "' ORDER BY ORDINAL_POSITION"),
-    runQuery("SELECT CONSTRAINT_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '" + escaped + "' AND REFERENCED_TABLE_NAME IS NOT NULL"),
-    runQuery("SELECT TABLE_NAME, COLUMN_NAME, CONSTRAINT_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = DATABASE() AND REFERENCED_TABLE_NAME = '" + escaped + "'"),
+    runQuery("SELECT TABLE_COMMENT FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = " + tableLiteral),
+    runQuery("SELECT COLUMN_NAME, COLUMN_COMMENT FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = " + tableLiteral + " ORDER BY ORDINAL_POSITION"),
+    runQuery("SELECT CONSTRAINT_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = " + tableLiteral + " AND REFERENCED_TABLE_NAME IS NOT NULL"),
+    runQuery("SELECT TABLE_NAME, COLUMN_NAME, CONSTRAINT_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = DATABASE() AND REFERENCED_TABLE_NAME = " + tableLiteral),
   ]);
 
   // Build lookup maps
@@ -2010,8 +2022,8 @@ function openTableTab(tableName, initialView) {
       if (columnsDetected) return;
       const sql = "SELECT COLUMN_NAME, DATA_TYPE, COLUMN_KEY " +
         "FROM INFORMATION_SCHEMA.COLUMNS " +
-        "WHERE TABLE_SCHEMA = '" + currentDb.replace(/'/g, "''") + "' " +
-        "AND TABLE_NAME = '" + tableName.replace(/'/g, "''") + "' " +
+        "WHERE TABLE_SCHEMA = " + sqlStringLiteral(currentDb) + " " +
+        "AND TABLE_NAME = " + sqlStringLiteral(tableName) + " " +
         "ORDER BY ORDINAL_POSITION";
       const res = await runQuery(sql);
       allColumns = res.rows.map((r) => ({ name: r[0], dataType: (r[1] || "").toLowerCase(), columnKey: r[2] || "" }));
@@ -2047,7 +2059,7 @@ function openTableTab(tableName, initialView) {
           const val = row[idx];
           if (val === null || val === undefined) return quoteId(pk) + " IS NULL";
           if (typeof val === "number") return quoteId(pk) + " = " + val;
-          return quoteId(pk) + " = '" + String(val).replace(/'/g, "''") + "'";
+          return quoteId(pk) + " = " + sqlStringLiteral(val);
         }).filter(Boolean);
         if (whereParts.length > 0) {
           const detailCols = allColumns.map((c) => {
