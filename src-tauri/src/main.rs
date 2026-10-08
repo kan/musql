@@ -19,6 +19,8 @@ mod docker;
 #[cfg(test)]
 mod docs_consistency;
 mod onepassword;
+#[cfg(test)]
+mod verify;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 struct MySqlConfig {

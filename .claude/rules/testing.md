@@ -8,7 +8,10 @@
 
 ## 外部プロセス・ネットワークに触るテスト
 - 実 `op` CLI を叩くテストは `#[ignore]` を付ける。実行は `just test-ignored`。CI では回さない（1Password の認証が要るため）。
-- MySQL / SSH / Docker に実接続するテストは書かない。手元の環境差で落ちるため、手動確認に寄せる。
+- MySQL / SSH / Docker に実接続するテストは、**CI で回るテストとしては書かない**（手元の環境差で落ちるため）。
+- 実接続を確かめたいときは `src-tauri/src/verify.rs` の検証テストを使う（#117）。`just verify-ssh` / `just verify-mysql` / `just verify-docker`。`#[ignore]` 付きで、接続先と資格情報は環境変数（`MUSQL_VERIFY_*`。一覧はファイル内のコメント）で渡す。**環境変数が無ければ「skipped」と出して成功する**ので、`just test-ignored` でまとめて回しても落ちない。russh / mysql / bollard を更新したら、GUI を起動する前にこれで確かめる。
+  - 検証バイナリ（`src/bin/verify_*.rs`）にしないこと。musql は実行ファイルだけのクレートなので、別の実行ファイルからは `main.rs` の接続処理を呼べない（先にライブラリへの分割が要る）。テストなら `start_ssh_tunnel` や `run_connection_test` をそのまま呼べる。
+  - 接続先やパスワードをリポジトリに書かない。出力にもパスワードを出さない。
 
 ## 消してはいけないテスト
 - `parse_fields_drops_secret_values`（`onepassword.rs`）。`op item get` の応答に含まれる秘密値が WebView に渡らないことを、serde が未知フィールドを捨てる挙動として固定している。`OpField` / `RawField` に `value` を足すと壊れる。

@@ -64,6 +64,26 @@ test:
 test-ignored:
     cargo test -- --ignored
 
+# --- 実接続の検証（#117。接続先は環境変数で渡す。一覧は src-tauri/src/verify.rs） ---
+#
+# russh / mysql / bollard を更新したあと、GUI を起動せずに接続を確かめるためのもの。
+# 環境変数が無ければ「skipped」と出して成功する。CI では回さない。
+
+# SSH の踏み台へ接続して認証する（MUSQL_VERIFY_SSH_HOST / _USER ほか）
+[working-directory('src-tauri')]
+verify-ssh:
+    cargo test verify::verify_ssh -- --ignored --nocapture
+
+# MySQL へ接続する（MUSQL_VERIFY_MYSQL_HOST ほか。SSH の変数があれば踏み台を経由する）
+[working-directory('src-tauri')]
+verify-mysql:
+    cargo test verify::verify_mysql -- --ignored --nocapture
+
+# Docker API へ接続し、検出される MySQL コンテナを列挙する（MUSQL_VERIFY_DOCKER=1）
+[working-directory('src-tauri')]
+verify-docker:
+    cargo test verify::verify_docker -- --ignored --nocapture
+
 # ドキュメントと実装の乖離の検査だけを回す（just test にも含まれる。#115）
 [working-directory('src-tauri')]
 check-docs:
