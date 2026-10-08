@@ -39,8 +39,8 @@ Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`
 5. 見出しを変えたら、ページ内アンカー（`](#...)`）と `data-manual` 属性のアンカーとの整合を確認する（「アプリ内マニュアル」参照）。
 
 ## How to run
-- 開発タスクの入口は `justfile`。`just` でレシピ一覧、`just dev` で起動、`just check` でコミット前チェック一式（fmt / clippy / test / UI lint）、`just bump X.Y.Z` でバージョン更新。`ci.yml` の各ステップも同じレシピを呼ぶ（ステップ名は残したまま中身だけ just に寄せてあるので、失敗箇所の粒度は従来どおり）。
-  - just は cargo の薄いファサードで、cargo から直接叩いても同じ。`cargo dev` の alias（`.cargo/config.toml`）はそのまま残してある。
+- 開発タスクの入口は `justfile`。`just` でレシピ一覧、`just dev` で起動、`just check` でコミット前チェック一式（fmt / clippy / test / UI lint）、`just bump X.Y.Z` でバージョン更新。`ci.yml` の各ステップも同じレシピを呼ぶ（fmt / clippy / test をステップごとに分けて呼ぶので、失敗箇所はステップ単位で分かる）。
+  - just は cargo の薄いファサードで、cargo から直接叩いても同じ。`cargo dev` の alias（`.cargo/config.toml`）でも起動できる。
   - justfile 先頭の `set windows-shell` は必須。just の Windows 既定シェル `sh -c` は PATH に無く、PATH 上の `bash` は WSL ランチャ（`C:\Windows\System32\bash.exe`）で Windows 側の cargo / tauri が見えないため、Git Bash を明示している。Git を別の場所に入れている環境は `just --shell <bash へのパス>` で上書きする。
   - `release.yml` は just を経由しない。ビルドは `tauri-action` と PowerShell スクリプトが主体で、レシピに寄せても重複が減らないため。
 - `cargo dev`（= `just dev`）で起動（リポジトリ直下 / src-tauri のどちらからでも可。`.cargo/config.toml` の alias で `cargo tauri dev --config tauri.dev.conf.json` に展開される）。dev config は identifier を `...musql.debug` に上書きし、インストール版とウィンドウ状態（`tauri-plugin-window-state`）・アプリデータを分離する。
@@ -62,17 +62,15 @@ Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`
 
 ## コミット前チェック
 
-**コミットの前は、変更の規模に応じて次を実行し、指摘を反映してからコミットする。**
+**コミットの前は、変更の種類に応じて次を実行し、指摘を反映してからコミットする。**
 
-| 変更の規模 | 実行するもの |
+| 変更の種類 | 実行するもの |
 |---|---|
-| ある程度の規模の実装・修正 | `/code-review` → `simplify` → `just check` |
-| 軽微なコード修正 | `simplify` → `just check`（自明な 1 行修正などは直接コミットしてもよい） |
+| コードの変更 | ユーザーレベルの `rules/quality-check.md` に従ったレビュー → `just check`（規模の判定、`/simplify` と `/code-review` の順序、effort の指定は `rules/quality-check.md` を正とする） |
 | ドキュメントのみ（`README.md` / `docs/manual/` / `CHANGELOG.md`） | 「ドキュメント校正ルール」の校正 |
 | バージョン bump のみ | 何も要らない |
 
-- **順序を守る**。`/code-review`（バグ探索）で挙がったものを直してから `simplify`（再利用・単純化・効率・抽象度の品質整理）を回す。simplify はバグを探さないので、先に回しても直すべきコードを整えるだけになる
-- どちらもコードを書き換えるため、必ず**ユーザーの動作確認より前**に実行する（ユーザーは適用後のコードを試す）
+- レビューで生じた書き換え（`/simplify` の適用と `/code-review` の指摘の反映）は、必ず**ユーザーの動作確認より前**に済ませる（ユーザーは適用後のコードを試す）
 - `/code-review` はユーザーがコマンドを打つこともある
 
 ## Git workflow
