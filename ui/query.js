@@ -786,10 +786,8 @@ function updateWindowTitle() {
   if (currentProfileName) parts.push(currentProfileName);
   if (currentDb) parts.push(currentDb);
   const title = parts.length > 0 ? parts.join(" / ") + " — muSQL" : "muSQL Query";
-  const win = window.__TAURI__ && window.__TAURI__.webviewWindow;
-  if (win) {
-    win.getCurrentWebviewWindow().setTitle(title).catch(() => {});
-  }
+  // Through Rust, not the JS setTitle: the dev build marker is added there.
+  safeInvoke("set_window_title", { title }).catch((e) => console.warn("set_window_title failed:", e));
 }
 
 // ── Export utilities ──

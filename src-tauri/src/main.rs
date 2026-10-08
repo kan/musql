@@ -2771,6 +2771,40 @@ fn open_external(url: String) -> Result<(), String> {
     open_in_browser(&url)
 }
 
+// ── Dev build marker ──
+
+/// Whether this is a dev build. `debug_assertions` alone misses a release-profile build
+/// made with `tauri.dev.conf.json`, so the `.debug` identifier counts too.
+fn is_debug_build(app: &AppHandle) -> bool {
+    cfg!(debug_assertions) || is_debug_identifier(&app.config().identifier)
+}
+
+/// `tauri.dev.conf.json` overrides the identifier with a `.debug` suffix.
+fn is_debug_identifier(identifier: &str) -> bool {
+    identifier.ends_with(".debug")
+}
+
+/// Marks a window title on dev builds so they can be told apart from the installed app.
+fn decorate_title(base: &str, debug: bool) -> String {
+    if debug {
+        format!("[DEBUG] {base}")
+    } else {
+        base.to_string()
+    }
+}
+
+/// Sets a window title from its undecorated form. Every title change goes through
+/// here so the dev marker is applied in one place.
+fn apply_window_title(window: &tauri::WebviewWindow, base: &str) -> tauri::Result<()> {
+    window.set_title(&decorate_title(base, is_debug_build(window.app_handle())))
+}
+
+/// Sets the calling window's title. The UI calls this instead of the JS `setTitle`.
+#[tauri::command]
+fn set_window_title(window: tauri::WebviewWindow, title: String) -> Result<(), String> {
+    apply_window_title(&window, &title).map_err(|e| e.to_string())
+}
+
 fn ml<'a>(lang: &str, key: &'a str) -> &'a str {
     match (lang, key) {
         ("ja", "file") => "ファイル",
@@ -3375,6 +3409,15 @@ fn main() {
     builder
         .setup(|app| {
             setup_menus(app.handle())?;
+            // The titles in tauri.conf.json are the release ones; mark them on dev builds.
+            // Runs once, while every title is still the undecorated one from the config.
+            if is_debug_build(app.handle()) {
+                for win in app.webview_windows().values() {
+                    if let Ok(title) = win.title() {
+                        let _ = apply_window_title(win, &title);
+                    }
+                }
+            }
             #[cfg(feature = "docker")]
             {
                 tauri::async_runtime::spawn(async {
@@ -3570,7 +3613,8 @@ fn main() {
             op_read_secret,
             op_list_items,
             op_list_fields,
-            open_external
+            open_external,
+            set_window_title
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {
@@ -3803,6 +3847,21 @@ Host myserver
         assert!(matches!(p, AiProvider::OpenAi));
         let p: AiProvider = serde_json::from_str("\"gemini\"").unwrap();
         assert!(matches!(p, AiProvider::Gemini));
+    }
+
+    // ── decorate_title ───────────────────────────────────────────────
+
+    #[test]
+    fn decorate_title_marks_only_debug_builds() {
+        assert_eq!(decorate_title("muSQL", true), "[DEBUG] muSQL");
+        assert_eq!(decorate_title("muSQL", false), "muSQL");
+    }
+
+    #[test]
+    fn is_debug_identifier_matches_the_dev_config_suffix() {
+        // Keep in step with the identifier in tauri.dev.conf.json.
+        assert!(is_debug_identifier("jp.co.communitylinks.musql.debug"));
+        assert!(!is_debug_identifier("jp.co.communitylinks.musql"));
     }
 
     // ── build_ai_prompt ──────────────────────────────────────────────

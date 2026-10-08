@@ -7,6 +7,7 @@
 - **settings** (`ui/settings.html`, `ui/settings.js`): プロファイル編集・接続テスト。
 - **query** (`ui/query.html`, `ui/query.js`): DB エクスプローラ（テーブル一覧・Data/Schema/SQL タブ・AI アシスト）。タブはドラッグで並び替え可。全タブ状態（SQL 内容・テーブルタブ・表示順・アクティブタブ）を localStorage に永続化。
 - ウィンドウは `tauri.conf.json` で事前定義、show/hide パターンで管理。
+- **ウィンドウタイトルを変えるときは `safeInvoke("set_window_title", { title })` を呼ぶ。** JS の `setTitle` は使わない（dev 版の `[DEBUG]` の目印を Rust 側で付けるため。capabilities から `core:window:allow-set-title` を外してあるので、呼ぶと権限エラーになる。#120）。
 
 ## 機能ごとの実装メモ
 - **AI アシスト**: チャット形式モーダル。ユーザーが自然言語でプロンプト → `ai_assist` コマンドで SQL 生成。スキーマは `SCHEMA_CACHE` でキャッシュ。Claude / OpenAI / Gemini 対応。チャット履歴は DB 毎に localStorage で保持（最大 50 件）。生成 SQL はコピー / エディタ挿入可。
