@@ -1213,28 +1213,23 @@ async fn call_ai_api(
                 .ok_or_else(|| "OpenAI API: no content in response".to_string())
         }
         AiProvider::Gemini => {
+            // The key goes in a header, not the query string, so it cannot end up in a URL
+            // that reqwest errors, proxies or logs echo back.
             let url = format!(
-                "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-                model, api_key
+                "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
+                model
             );
             let body = serde_json::json!({
                 "contents": [{"parts": [{"text": prompt}]}]
             });
             let resp = client
                 .post(&url)
+                .header("x-goog-api-key", api_key)
                 .header("content-type", "application/json")
                 .json(&body)
                 .send()
                 .await
-                .map_err(|e| {
-                    // Sanitise: reqwest errors may include the full URL containing the API key.
-                    let msg = e.to_string();
-                    if msg.contains("key=") {
-                        "Gemini API request failed: network error".to_string()
-                    } else {
-                        format!("Gemini API request failed: {msg}")
-                    }
-                })?;
+                .map_err(|e| format!("Gemini API request failed: {e}"))?;
             let status = resp.status();
             let json: serde_json::Value = resp
                 .json()

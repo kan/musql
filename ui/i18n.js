@@ -489,7 +489,10 @@
       var iconName = el.getAttribute("data-i18n-icon");
       var iconSize = el.getAttribute("data-i18n-icon-size");
       if (iconName && typeof icon === "function") {
-        el.innerHTML = icon(iconName, iconSize ? Number(iconSize) : undefined) + " " + t(key);
+        // Only the icon is markup. The label goes in as a text node: t() returns the key
+        // itself when a translation is missing, and that must never be parsed as HTML.
+        el.innerHTML = icon(iconName, iconSize ? Number(iconSize) : undefined);
+        el.appendChild(document.createTextNode(" " + t(key)));
       } else {
         el.textContent = t(key);
       }

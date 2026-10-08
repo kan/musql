@@ -979,7 +979,8 @@ async function generateMarkdownSchema(tableName, newline) {
       const defVal = row[ci["Default"]];
       const defaultStr = (defVal === null || defVal === undefined) ? "" : String(defVal);
       const extra = row[ci["Extra"]] || "";
-      const comment = (colComments[field] || "").replace(/\|/g, "\\|");
+      // Backslashes first: otherwise a comment ending in "\" would un-escape the pipe.
+      const comment = (colComments[field] || "").replace(/\\/g, "\\\\").replace(/\|/g, "\\|");
 
       const children = (fkChildren[field] || []).map(c => "[" + c.table + "](" + c.table + ".md)").join(" ");
       const parents = (fkParents[field] || []).map(p => "[" + p.table + "](" + p.table + ".md)").join(" ");
