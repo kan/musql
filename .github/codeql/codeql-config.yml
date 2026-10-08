@@ -1,0 +1,6 @@
+name: muSQL CodeQL config
+
+# vendor したライブラリ (CodeMirror / sql-formatter) は自分のコードではないので解析しない。
+# Biome の lint (biome.json) と同じ除外。
+paths-ignore:
+  - ui/lib/**
