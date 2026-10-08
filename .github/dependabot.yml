@@ -1,10 +1,20 @@
 version: 2
 updates:
+  # 更新は ecosystem ごとに 1 つの PR にまとめる。cargo の PR は全部が同じ Cargo.lock を
+  # 触るので、個別に出すと 1 件取り込むたびに残りが衝突して作り直しになる。
   - package-ecosystem: cargo
     directory: /src-tauri
     schedule:
       interval: weekly
+    groups:
+      cargo:
+        patterns:
+          - "*"
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - "*"
