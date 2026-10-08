@@ -13,7 +13,7 @@ Rust 側を触るときに読む。`src-tauri/src/main.rs` に全ロジックを
 
 ## Docker 連携
 - **Docker 連携**: `bollard` クレートで Docker API に接続（名前付きパイプ → TCP `127.0.0.1:2375/2376` フォールバック、WSL2 dockerd 対応）。running コンテナから MySQL コンテナを自動検出（exposed port 3306 or `musql.enable=true` ラベル）。ports バインドなしのコンテナには `alpine/socat` 一時コンテナで TCP トンネルを作成（`auto_remove: true`、ラベル `musql.tunnel=true`）。トンネルコンテナは検出一覧から除外。アプリ起動時・終了時・query ウィンドウ close 時にトンネルをクリーンアップ。資格情報はコンテナ毎に保持（user/ssl_mode は localStorage、パスワードは keyring）。Cargo feature `docker`（デフォルト有効）で `bollard`/`futures-util` 依存を分離。
-- **Docker のラベルカスタマイズ**: `musql.name`（表示名）/ `musql.user` / `musql.password` / `musql.port` をコンテナのラベルに付けると、検出結果と資格情報の初期値に反映される。
+- **Docker のラベルカスタマイズ**: `musql.name`（表示名）/ `musql.user` / `musql.password` / `musql.port` / `musql.ssl-mode` をコンテナのラベルに付けると、検出結果と資格情報の初期値に反映される。
 
 ## ウィンドウとメニュー
 - **メニュー**: ハンバーガーボタン → `popup_menu()`。アクセラレータは非表示メニューバーで保持。

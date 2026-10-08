@@ -3047,7 +3047,7 @@ if (eventApi && eventApi.listen) {
         database: null,
         username: info.user,
         password: info.password,
-        ssl_mode: info.ssl_mode || "DISABLED",
+        ssl_mode: info.ssl_mode || "REQUIRED",
         tls_ca_cert_path: null,
         save_password: true,
       },

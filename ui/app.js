@@ -1033,6 +1033,9 @@ async function showDockerModal() {
 var DOCKER_CRED_KEY = "musql:docker-creds";
 var DOCKER_LAST_KEY = "musql:docker-last-cred";
 var DOCKER_LAST_ID = "__last__";
+// REQUIRED skips certificate verification, so it works with a container's self-signed
+// cert and also satisfies servers running with require_secure_transport=ON.
+var DOCKER_DEFAULT_SSL_MODE = "REQUIRED";
 
 function loadDockerCreds() {
   try { return JSON.parse(localStorage.getItem(DOCKER_CRED_KEY) || "{}"); } catch (_) { return {}; }
@@ -1091,11 +1094,11 @@ async function getDockerCred(containerId) {
 }
 
 async function showDockerCredPrompt(container) {
-  // Restore saved values: per-container > last-used > label > defaults
+  // Initial values: label > saved (per-container, else last-used) > defaults
   var saved = await getDockerCred(container.id);
   dockerCredUser.value = container.label_user || (saved && saved.user) || "root";
   dockerCredPassword.value = container.label_password || (saved && saved.password) || "";
-  dockerCredSsl.value = (saved && saved.ssl_mode) || "DISABLED";
+  dockerCredSsl.value = container.label_ssl_mode || (saved && saved.ssl_mode) || DOCKER_DEFAULT_SSL_MODE;
   dockerCredModal.classList.remove("hidden");
   return new Promise(function(resolve) {
     dockerCredResolve = resolve;
@@ -1124,19 +1127,18 @@ async function connectToDockerContainer(container) {
   if (container.label_user && container.label_password) {
     user = container.label_user;
     password = container.label_password;
-    // Use saved ssl_mode if available, otherwise default
-    var saved = await getDockerCred(container.id);
-    sslMode = (saved && saved.ssl_mode) || "DISABLED";
+    // No prompt on this path, so nothing here is the user's choice: saved values are
+    // not read (they would carry another container's mode over) and nothing is saved.
+    sslMode = container.label_ssl_mode || DOCKER_DEFAULT_SSL_MODE;
   } else {
     var creds = await showDockerCredPrompt(container);
     if (!creds) return;
     user = creds.user;
     password = creds.password;
     sslMode = creds.ssl_mode;
+    // Persist credentials for this container
+    await saveDockerCred(container.id, { user: user, password: password, ssl_mode: sslMode });
   }
-
-  // Persist credentials for this container
-  await saveDockerCred(container.id, { user: user, password: password, ssl_mode: sslMode });
 
   var host, port;
   var tunnelContainerId = null;

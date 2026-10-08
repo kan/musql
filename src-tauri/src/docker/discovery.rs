@@ -15,6 +15,15 @@ pub struct DockerContainer {
     pub label_user: Option<String>,
     pub label_password: Option<String>,
     pub label_name: Option<String>,
+    pub label_ssl_mode: Option<String>,
+}
+
+/// Normalises a `musql.ssl-mode` label value. Only DISABLED and REQUIRED are accepted:
+/// a Docker connection has no CA path and targets 127.0.0.1, so the verifying modes
+/// cannot succeed. Anything else is dropped and the UI default applies.
+fn parse_ssl_mode_label(value: &str) -> Option<String> {
+    let mode = value.trim().to_ascii_uppercase();
+    matches!(mode.as_str(), "DISABLED" | "REQUIRED").then_some(mode)
 }
 
 pub async fn discover_mysql_containers(docker: &Docker) -> Result<Vec<DockerContainer>, String> {
@@ -110,6 +119,9 @@ pub async fn discover_mysql_containers(docker: &Docker) -> Result<Vec<DockerCont
 
         let label_user = labels.and_then(|l| l.get("musql.user")).cloned();
         let label_password = labels.and_then(|l| l.get("musql.password")).cloned();
+        let label_ssl_mode = labels
+            .and_then(|l| l.get("musql.ssl-mode"))
+            .and_then(|v| parse_ssl_mode_label(v));
 
         result.push(DockerContainer {
             id,
@@ -122,8 +134,36 @@ pub async fn discover_mysql_containers(docker: &Docker) -> Result<Vec<DockerCont
             label_user,
             label_password,
             label_name,
+            label_ssl_mode,
         });
     }
 
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_ssl_mode_label_normalises_known_modes() {
+        assert_eq!(
+            parse_ssl_mode_label("DISABLED").as_deref(),
+            Some("DISABLED")
+        );
+        assert_eq!(
+            parse_ssl_mode_label(" required ").as_deref(),
+            Some("REQUIRED")
+        );
+    }
+
+    #[test]
+    fn parse_ssl_mode_label_drops_unknown_values() {
+        // The verifying modes cannot work over a Docker connection (no CA path).
+        assert_eq!(parse_ssl_mode_label("VERIFY_CA"), None);
+        assert_eq!(parse_ssl_mode_label("VERIFY_IDENTITY"), None);
+        assert_eq!(parse_ssl_mode_label(""), None);
+        assert_eq!(parse_ssl_mode_label("true"), None);
+        assert_eq!(parse_ssl_mode_label("PREFERRED"), None);
+    }
 }
