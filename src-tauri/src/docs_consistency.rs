@@ -36,6 +36,9 @@ const EXTERNAL_NAMES: &[&str] = &[
     // A general Tauri pattern from the article rust.md cites (tracking focus in app
     // state). muSQL has no such type.
     "AppState",
+    // JSON fields of `gh release list` / `gh release view`, named by the release skill.
+    "isDraft",
+    "isLatest",
     // This module's own identifiers. It is left out of the corpus (its allow lists and
     // tests name things that do not exist), so the notes that describe it need these.
     "EXTERNAL_NAMES",
@@ -117,10 +120,18 @@ fn files_in(files: &[String], dir: &str, exts: &[&str]) -> Vec<String> {
     out
 }
 
-/// CLAUDE.md and the rule files: the notes whose names are meant to point at real code.
+/// CLAUDE.md, the rule files and the skills: the notes whose names are meant to point at
+/// real code.
 fn note_files(files: &[String]) -> Vec<String> {
     let mut notes = vec!["CLAUDE.md".to_owned()];
     notes.extend(files_in(files, ".claude/rules", &[".md"]));
+    // Skills sit one directory deeper (`.claude/skills/<name>/SKILL.md`).
+    notes.extend(
+        files
+            .iter()
+            .filter(|f| f.starts_with(".claude/skills/") && f.ends_with(".md"))
+            .cloned(),
+    );
     notes
 }
 

@@ -33,11 +33,18 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "muSQL ${{ github.ref_name }}"
           releaseBody: "See the assets below to download and install."
-          releaseDraft: false
+          # ドラフトで作る (#111)。公開は、アセットを確認してリリースノートを書いたあとに
+          # 手で行う (`.claude/skills/release/SKILL.md`)。ドラフトは releases/latest に
+          # ならないので、公開するまでセルフアップデータには配られない。
+          releaseDraft: true
           prerelease: false
           uploadUpdaterJson: true
 
   build-store:
+    # build のあとに走らせる。ドラフトの Release を作るのは build の tauri-action で、
+    # こちらはそこへアセットを足すだけ。並列だと、先に終わった側が Release を作ることに
+    # なり、どちらが作るかで公開状態が変わってしまう。
+    needs: build
     runs-on: windows-latest
     permissions:
       contents: write
@@ -85,11 +92,13 @@ jobs:
             -ExePath  "src-tauri\target\release\musql.exe" `
             -OutputPath "muSQL-store-x64.msix"
 
-      - name: Upload to release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
-        with:
-          files: |
-            muSQL-store-x64.exe
-            muSQL-store-x64.msix
+      # gh はタグ名からドラフトの Release も引ける。Release が無ければ失敗する
+      # (新しく作らない) ので、build が作ったドラフト以外へ上げてしまうことが無い。
+      - name: Upload to the draft release
+        shell: pwsh
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.ref_name }}" `
+            muSQL-store-x64.exe muSQL-store-x64.msix `
+            --clobber --repo "$env:GITHUB_REPOSITORY"

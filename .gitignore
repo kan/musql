@@ -3,9 +3,10 @@ src-tauri/target/
 rustup-init.exe
 src-tauri/gen/
 
-# ~/.gitignore が .claude/ ごと除外しているので、rules だけ追跡対象に戻す
+# ~/.gitignore が .claude/ ごと除外しているので、rules と skills だけ追跡対象に戻す
 !.claude/
 .claude/*
 !.claude/rules/
+!.claude/skills/
 .claude/settings.local.json
 *.msix
