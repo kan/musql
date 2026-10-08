@@ -1213,12 +1213,20 @@ const eventApi = window.__TAURI__ && window.__TAURI__.event ? window.__TAURI__.e
 if (eventApi && eventApi.listen) {
   eventApi.listen("profiles:changed", () => { refreshProfiles().catch(() => {}); });
 
-  // Update banner
+  // Update banner. Rust checks at startup and then every hour (#114), and reports the
+  // outcome of every check, so the banner follows the latest answer: a newer version
+  // replaces the one shown, and "no update" takes the banner away. Nothing is touched
+  // while an install is running. A failed check sends no event, so a version found
+  // earlier stays.
+  var updateInstalling = false;
   eventApi.listen("update-available", (event) => {
     var version = event.payload && event.payload.version;
-    if (!version) return;
+    if (!version || updateInstalling) return;
     var existing = document.querySelector(".update-banner");
-    if (existing) return;
+    if (existing) {
+      existing.querySelector(".update-banner-text").textContent = t("update_available", { version: version });
+      return;
+    }
     var banner = document.createElement("div");
     banner.className = "update-banner";
     var textEl = document.createElement("span");
@@ -1228,9 +1236,11 @@ if (eventApi && eventApi.listen) {
     var btn = document.createElement("button");
     btn.textContent = t("update_install");
     btn.addEventListener("click", function() {
+      updateInstalling = true;
       btn.disabled = true;
       btn.textContent = t("update_installing");
       safeInvoke("install_update").catch(function(e) {
+        updateInstalling = false;
         btn.disabled = false;
         btn.textContent = t("update_install");
         alert(String(e));
@@ -1239,6 +1249,11 @@ if (eventApi && eventApi.listen) {
     banner.appendChild(btn);
     var main = document.querySelector("main");
     main.insertBefore(banner, main.children[1]);
+  });
+  eventApi.listen("update-none", () => {
+    if (updateInstalling) return;
+    var existing = document.querySelector(".update-banner");
+    if (existing) existing.remove();
   });
 
   eventApi.listen("menu:action", (event) => {

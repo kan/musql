@@ -3269,23 +3269,37 @@ async fn fetch_update(app: &AppHandle) -> Result<Option<tauri_plugin_updater::Up
         Ok(updater) => updater.check().await.map_err(|e| e.to_string()),
         Err(e) => Err(e.to_string()),
     };
-    result.inspect_err(|e| log::warn!("update check failed: {e}"))
+    // Throttled: the periodic check repeats the same failure every hour while offline.
+    result.inspect_err(|e| {
+        app_log::warn_throttled(app_log::LONG, &format!("update check failed: {e}"))
+    })
 }
 
+/// How often a running app looks for a newer version (#114). A database client tends to
+/// stay open for days, so checking only at startup misses whatever ships meanwhile.
+#[cfg(feature = "self-updater")]
+const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(60 * 60);
+
+/// Checks for an update and tells the UI the outcome, whichever it is:
+/// `update-available` with the version, or `update-none`. The UI replaces what it shows
+/// on every check, so it follows the latest answer instead of the first one it got.
+///
+/// A failed check emits nothing: an update found earlier stays on screen.
 #[cfg(feature = "self-updater")]
 #[tauri::command]
 async fn check_update(app: AppHandle) -> Result<bool, String> {
-    let update = fetch_update(&app).await?;
-    if let Some(update) = update {
-        let _ = app.emit(
-            "update-available",
-            serde_json::json!({
-              "version": update.version
-            }),
-        );
-        Ok(true)
-    } else {
-        Ok(false)
+    match fetch_update(&app).await? {
+        Some(update) => {
+            let _ = app.emit(
+                "update-available",
+                serde_json::json!({ "version": update.version }),
+            );
+            Ok(true)
+        }
+        None => {
+            let _ = app.emit("update-none", ());
+            Ok(false)
+        }
     }
 }
 
@@ -3508,8 +3522,12 @@ fn main() {
                 tauri::async_runtime::spawn(async move {
                     // Delay to avoid slowing down app startup
                     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-                    // Emits `update-available` when there is one; a failure is logged.
-                    let _ = check_update(handle).await;
+                    // Then for as long as the app runs. Each check tells the UI its
+                    // outcome; a failure is logged and leaves the UI as it was.
+                    loop {
+                        let _ = check_update(handle.clone()).await;
+                        tokio::time::sleep(UPDATE_CHECK_INTERVAL).await;
+                    }
                 });
             }
             Ok(())
@@ -3555,39 +3573,15 @@ fn main() {
                 "main:check-update" => {
                     let handle = app.clone();
                     tauri::async_runtime::spawn(async move {
-                        use tauri_plugin_updater::UpdaterExt;
-                        match handle.updater() {
-                            Ok(updater) => match updater.check().await {
-                                Ok(Some(update)) => {
-                                    let _ = handle.emit(
-                                        "update-available",
-                                        serde_json::json!({
-                                          "version": update.version
-                                        }),
-                                    );
-                                }
-                                Ok(None) => {
-                                    let _ = handle.emit_to(
-                                        EventTarget::webview_window(WIN_MAIN),
-                                        "menu:action",
-                                        "no-update",
-                                    );
-                                }
-                                Err(_) => {
-                                    let _ = handle.emit_to(
-                                        EventTarget::webview_window(WIN_MAIN),
-                                        "menu:action",
-                                        "no-update",
-                                    );
-                                }
-                            },
-                            Err(_) => {
-                                let _ = handle.emit_to(
-                                    EventTarget::webview_window(WIN_MAIN),
-                                    "menu:action",
-                                    "no-update",
-                                );
-                            }
+                        // A newer version announces itself (`update-available`). Both
+                        // "up to date" and a failed check are "no update" to the user,
+                        // as before; the failure is in the log.
+                        if !matches!(check_update(handle.clone()).await, Ok(true)) {
+                            let _ = handle.emit_to(
+                                EventTarget::webview_window(WIN_MAIN),
+                                "menu:action",
+                                "no-update",
+                            );
                         }
                     });
                 }
