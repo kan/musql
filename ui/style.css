@@ -33,6 +33,19 @@
   --shadow-overlay: rgba(0,0,0,0.35);
   --sql-error-bg: rgba(210,74,74,0.15);
   --sql-error-underline: #d24a4a;
+  /* Editor bands and text selection (#121), matched to pike's editor. Two fills only:
+     the cursor line, and the selection one clear step stronger. Text must stay
+     readable on the stronger one. Opaque on purpose: a translucent colour shifts with
+     what is under it.
+     Light: pike's "Default Light" values as they are (same white background).
+     Dark (below): pike's "One Dark" lightens its background by a fixed amount for each
+     band; the same amounts are applied to this editor's background. */
+  --active-line-bg: #e8e6f4;
+  --selection-bg: #bfb9ec;
+  --selection-inactive-bg: #dddbe8;
+  /* The statement the cursor is in is marked with a bar at the left edge, not a fill
+     (see .cm-statement-highlight). */
+  --statement-bar: rgba(0, 97, 213, 0.55);
 }
 
 html.dark {
@@ -70,6 +83,22 @@ html.dark {
   --shadow-overlay: rgba(0,0,0,0.55);
   --sql-error-bg: rgba(224,85,85,0.2);
   --sql-error-underline: #e05555;
+  --active-line-bg: #253049;
+  --selection-bg: #3e507c;
+  --selection-inactive-bg: #303d57;
+  --statement-bar: rgba(77, 154, 255, 0.6);
+}
+
+/* Text selected outside the editor (inputs, textareas, result cells) follows the theme
+   too. Only the background is set, so the text keeps its own colour. */
+::selection {
+  background: var(--selection-bg);
+}
+/* Code blocks are dark with light text in both themes (--pre-bg), so the light theme's
+   pale selection would wash the text out. They always take the dark theme's colour. */
+pre::selection,
+pre *::selection {
+  background: #3e507c;
 }
 
 * { box-sizing: border-box; }
@@ -1544,14 +1573,41 @@ pre {
   color: var(--ink);
 }
 
-/* ── CodeMirror active statement highlight ── */
+/* ── CodeMirror active statement marker ──
+   The statement the cursor is in (what Ctrl+Enter runs) gets a bar at the left edge of
+   its lines. **Not a fill** (#121): a tinted band under the cursor line and the
+   selection ate their contrast, and CodeMirror puts this class and the cursor-line
+   class on the *same* element, so two `background`s would fight (the dark theme's did,
+   and the cursor line lost). A box-shadow and a background do not collide. */
 .cm-statement-highlight {
-  background: rgba(59, 130, 246, 0.07);
+  box-shadow: inset 3px 0 0 var(--statement-bar);
 }
 
-/* ── CodeMirror active line ── */
-.CodeMirror-activeline-background {
-  background: var(--hover-bg);
+/* ── CodeMirror cursor line and selection (#121) ──
+   **Every selector here carries an extra `.CodeMirror`.** The vendored
+   lib/codemirror/codemirror.css is loaded *after* this file and styles the same
+   elements with one class, so a plain `.CodeMirror-activeline-background` here loses
+   to it on source order (it did: the light theme showed the library's colour, not
+   ours). One more class wins on specificity, whatever the load order.
+
+   The selection is drawn above the cursor line (the library puts it on a higher
+   layer), so it only needs to differ from it, not blend with it. As in pike, the line
+   numbers are left alone. */
+.CodeMirror .CodeMirror-activeline-background {
+  background: var(--active-line-bg);
+}
+.CodeMirror .CodeMirror-selected {
+  background: var(--selection-inactive-bg);
+}
+.CodeMirror.CodeMirror-focused .CodeMirror-selected {
+  background: var(--selection-bg);
+}
+/* The library also colours the native selection inside a line, in these three forms.
+   Leaving one out would leave its default colour showing through. */
+.CodeMirror .CodeMirror-line::selection,
+.CodeMirror .CodeMirror-line > span::selection,
+.CodeMirror .CodeMirror-line > span > span::selection {
+  background: var(--selection-bg);
 }
 
 /* ── CodeMirror dark overrides ── */
@@ -1568,16 +1624,6 @@ html.dark .CodeMirror-linenumber {
 }
 html.dark .CodeMirror-cursor {
   border-left-color: var(--ink);
-}
-html.dark .CodeMirror-selected,
-html.dark .CodeMirror-focused .CodeMirror-selected {
-  background: #2a3a5a;
-}
-html.dark .cm-statement-highlight {
-  background: rgba(59, 130, 246, 0.12);
-}
-html.dark .CodeMirror-activeline-background {
-  background: #293754;
 }
 html.dark .cm-s-default .cm-keyword { color: #c792ea; }
 html.dark .cm-s-default .cm-atom { color: #f78c6c; }
