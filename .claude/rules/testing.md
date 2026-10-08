@@ -2,6 +2,7 @@
 
 ## 何をどこで担保するか
 - **Rust のユニットテスト**（`just test`）が自動テストの本体。`src-tauri/src/main.rs` 末尾の `mod tests`、`onepassword.rs` の `mod tests`、`docker/discovery.rs` の `mod tests`、`app_log.rs` の `mod tests` に置く。純関数（プロファイルのサニタイズ、同期の merge、AI プロンプト組み立て、op の出力パース、Docker ラベルの正規化、ログの間引きと整形）を対象にする。
+- **ドキュメントと実装の乖離**は `src-tauri/src/docs_consistency.rs` が見る（#115。`just check-docs` で単独実行、`just test` にも含まれる）。`main.rs` から `#[cfg(test)]` で取り込むユニットテストにしてある。`tests/` ディレクトリを作って統合テストにしないこと（cargo が本体の `musql.exe` までビルドし、`just dev` の起動中はその exe がロックされていて失敗する）。「実在する」は git に聞く（追跡中、または未追跡で ignore されていないファイル）。ディスクを見ると、生成物や ignore 済みのファイルのせいで手元だけ通って CI で落ちる。開発ノートが挙げるパスとシンボルの実在、ヘルプボタンのアンカー、マニュアルの画像とリンクを照合する。見出しの slug は `ui/manual.js` の `makeSlugger` と同じ規則を持つので、あちらを変えたらテストの `heading_slugs` も合わせる（テストが自動で知らせるのは slug の文字クラスを変えたときだけ。見出しやコードフェンスの判定、`stripInline`、重複時の連番を変えたときは手で合わせる）。
 - **GUI の挙動は自動テストで担保しない**。接続・タブ操作・メニューは実際に `just dev` で触って確認する。コミット前にユーザーの動作確認 OK を取るのはこのため（CLAUDE.md「Git workflow」参照）。
 - **UI の静的検査**は Biome（`just lint-ui`）のみ。JS のユニットテストは持たない（Node.js を要求しない方針のため）。
 

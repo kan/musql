@@ -64,6 +64,11 @@ test:
 test-ignored:
     cargo test -- --ignored
 
+# ドキュメントと実装の乖離の検査だけを回す（just test にも含まれる。#115）
+[working-directory('src-tauri')]
+check-docs:
+    cargo test docs_consistency::
+
 # 静的 UI（ui/*.js）の Biome lint
 lint-ui:
     if command -v biome >/dev/null 2>&1; then biome lint --error-on-warnings; else npx --yes @biomejs/biome@{{biome_version}} lint --error-on-warnings; fi

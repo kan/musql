@@ -14,6 +14,8 @@ use tauri::{AppHandle, Emitter, EventTarget, Manager, Window, Wry};
 mod app_log;
 #[cfg(feature = "docker")]
 mod docker;
+#[cfg(test)]
+mod docs_consistency;
 mod onepassword;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
