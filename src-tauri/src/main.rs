@@ -3487,6 +3487,27 @@ fn open_docker_query_window(_app: AppHandle, _info: DockerConnectionInfo) -> Res
     Ok(())
 }
 
+/// Ends the app: from the menu's Exit, and when the main window is closed.
+fn quit(app: &AppHandle) {
+    // std::process::exit bypasses the plugin's save-on-exit hook,
+    // so persist window state explicitly first (#42).
+    {
+        use tauri_plugin_window_state::{AppHandleExt, StateFlags};
+        let _ = app.save_window_state(StateFlags::all());
+    }
+    #[cfg(feature = "docker")]
+    {
+        tauri::async_runtime::spawn(async {
+            if let Ok(docker) = connect_docker().await {
+                let _ = crate::docker::tunnel::cleanup_all_tunnels(&docker).await;
+            }
+            std::process::exit(0);
+        });
+    }
+    #[cfg(not(feature = "docker"))]
+    std::process::exit(0);
+}
+
 fn main() {
     // `mut` is only used when the self-updater feature adds another plugin below.
     #[allow(unused_mut)]
@@ -3550,25 +3571,7 @@ fn main() {
         .on_menu_event(|app, event| {
             let id = event.id().0.as_str();
             match id {
-                "main:exit" => {
-                    // std::process::exit bypasses the plugin's save-on-exit hook,
-                    // so persist window state explicitly first (#42).
-                    {
-                        use tauri_plugin_window_state::{AppHandleExt, StateFlags};
-                        let _ = app.save_window_state(StateFlags::all());
-                    }
-                    #[cfg(feature = "docker")]
-                    {
-                        tauri::async_runtime::spawn(async {
-                            if let Ok(docker) = connect_docker().await {
-                                let _ = crate::docker::tunnel::cleanup_all_tunnels(&docker).await;
-                            }
-                            std::process::exit(0);
-                        });
-                    }
-                    #[cfg(not(feature = "docker"))]
-                    std::process::exit(0);
-                }
+                "main:exit" => quit(app),
                 "main:github" => {
                     let _ = open_in_browser("https://github.com/kan/musql");
                 }
@@ -3637,6 +3640,12 @@ fn main() {
                         *label = window.label().to_owned();
                     }
                 }
+            }
+            // Closing main ends the app. Without this the process lives on: the settings
+            // and query windows are only ever hidden, and Tauri exits by itself only
+            // once every window is gone.
+            tauri::WindowEvent::CloseRequested { .. } if window.label() == WIN_MAIN => {
+                quit(window.app_handle());
             }
             tauri::WindowEvent::CloseRequested { api, .. } if window.label() != WIN_MAIN => {
                 api.prevent_close();
