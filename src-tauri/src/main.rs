@@ -1078,7 +1078,10 @@ fn fetch_schema(pool: &Pool, database: &str) -> Result<SchemaInfo, String> {
 
 // ── AI prompt building ──
 
-fn build_ai_prompt(schema: &SchemaInfo, text_before: &str, text_after: &str) -> String {
+// Upper bound in bytes for the schema text sent to the AI provider.
+const AI_SCHEMA_TEXT_MAX: usize = 8000;
+
+fn schema_text_for_prompt(schema: &SchemaInfo) -> String {
     let mut schema_text = String::new();
     for table in &schema.tables {
         schema_text.push_str(&format!("-- {}\n", table.name));
@@ -1096,10 +1099,24 @@ fn build_ai_prompt(schema: &SchemaInfo, text_before: &str, text_after: &str) -> 
         }
     }
     // Truncate schema text if too long
-    if schema_text.len() > 8000 {
-        schema_text.truncate(8000);
+    if schema_text.len() > AI_SCHEMA_TEXT_MAX {
+        // String::truncate panics off a char boundary, and identifiers can be multibyte.
+        let mut end = AI_SCHEMA_TEXT_MAX;
+        while !schema_text.is_char_boundary(end) {
+            end -= 1;
+        }
+        // Prefer ending on a whole line so the model never sees a half identifier.
+        if let Some(nl) = schema_text[..end].rfind('\n') {
+            end = nl + 1;
+        }
+        schema_text.truncate(end);
         schema_text.push_str("\n-- (truncated)\n");
     }
+    schema_text
+}
+
+fn build_ai_prompt(schema: &SchemaInfo, text_before: &str, text_after: &str) -> String {
+    let schema_text = schema_text_for_prompt(schema);
 
     format!(
         "You are a MySQL query assistant. Given the database schema below and the SQL context, \
@@ -1289,26 +1306,7 @@ fn build_ai_assist_prompt(
     editor_content: &str,
     conversation_context: &str,
 ) -> String {
-    let mut schema_text = String::new();
-    for table in &schema.tables {
-        schema_text.push_str(&format!("-- {}\n", table.name));
-        for col in &table.columns {
-            let key_info = match col.column_key.as_str() {
-                "PRI" => " PK",
-                "MUL" => " FK",
-                "UNI" => " UQ",
-                _ => "",
-            };
-            schema_text.push_str(&format!(
-                "--   {} {}{}\n",
-                col.name, col.data_type, key_info
-            ));
-        }
-    }
-    if schema_text.len() > 8000 {
-        schema_text.truncate(8000);
-        schema_text.push_str("\n-- (truncated)\n");
-    }
+    let schema_text = schema_text_for_prompt(schema);
 
     let mut parts = format!(
         "You are a MySQL query assistant. Given the database schema below, \
@@ -3856,6 +3854,46 @@ Host myserver
         };
         let prompt = build_ai_prompt(&schema, "SELECT ", "");
         assert!(prompt.contains("(truncated)"));
+    }
+
+    #[test]
+    fn build_ai_prompt_truncation_multibyte() {
+        // 3-byte chars put the 8000-byte cut inside a character.
+        let schema = SchemaInfo {
+            database: "bigdb".to_string(),
+            tables: vec![SchemaTable {
+                name: "顧客".repeat(2000),
+                columns: vec![],
+            }],
+        };
+        let prompt = build_ai_prompt(&schema, "SELECT ", "");
+        assert!(prompt.contains("(truncated)"));
+        let prompt = build_ai_assist_prompt(&schema, "list", "", "");
+        assert!(prompt.contains("(truncated)"));
+
+        // A single over-long line has no earlier newline, so the cut lands on the
+        // nearest char boundary at or below the limit.
+        let text = schema_text_for_prompt(&schema);
+        let kept = text.strip_suffix("\n-- (truncated)\n").unwrap().len();
+        assert!((AI_SCHEMA_TEXT_MAX - 2..=AI_SCHEMA_TEXT_MAX).contains(&kept));
+    }
+
+    #[test]
+    fn schema_text_for_prompt_cuts_on_line_boundary() {
+        let schema = SchemaInfo {
+            database: "bigdb".to_string(),
+            tables: (0..1000)
+                .map(|i| SchemaTable {
+                    name: format!("table_{i}"),
+                    columns: vec![],
+                })
+                .collect(),
+        };
+        let text = schema_text_for_prompt(&schema);
+        let kept = text.strip_suffix("\n-- (truncated)\n").unwrap();
+        assert!(kept.len() <= AI_SCHEMA_TEXT_MAX);
+        assert!(kept.ends_with('\n'));
+        assert!(kept.lines().all(|l| l.starts_with("-- table_")));
     }
 
     // ── 1Password resolution gating (#80) ────────────────────────────

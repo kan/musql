@@ -718,8 +718,7 @@ function runQuery(sql, maxRows, tabId) {
 
 // ── Long-running query completion notification (#43) ──
 // Notify (desktop toast) when a query that ran longer than the threshold finishes
-// while the window is unfocused. Web Notification API first (supports click-to-focus),
-// tauri-plugin-notification as fallback (no click handling), matching pike.
+// while the window is unfocused. Notifier order and the reason are at resolveNotifier().
 const NOTIFY_THRESHOLD_MS = 5000;
 
 function isNotifyEnabled() {
