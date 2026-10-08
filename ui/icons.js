@@ -1,4 +1,5 @@
-// Lucide icon SVG path data (https://lucide.dev, MIT license)
+// Lucide icon SVG path data (https://lucide.dev, ISC license: ui/lib/lucide/LICENSE).
+// Lucide is listed in "About muSQL" through VENDORED in src-tauri/src/credits.rs.
 // Each value is the inner SVG elements for a 24x24 viewBox, stroke-based icon.
 const ICONS = {
   'plus': '<path d="M5 12h14"/><path d="M12 5v14"/>',

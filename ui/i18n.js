@@ -187,6 +187,16 @@
       manual_load_error: "Failed to load the manual. Check your network connection.",
       help_open_manual: "Open manual",
 
+      // ── About ──
+      about_licenses: "Open source licenses",
+      about_licenses_note: "muSQL is built with the following open source software. Select an entry to read its license.",
+      about_filter: "Filter by name or license",
+      about_count: "{shown} of {total}",
+      about_standard_text: "Standard license text; the package does not ship its own.",
+      about_contributors: "the {name} contributors",
+      about_authors: "Authors: {authors}",
+      about_load_error: "Could not load the license list.",
+
       // ── AI ──
       ai_settings: "AI Settings",
       ai_provider: "Provider",
@@ -399,6 +409,16 @@
       manual_load_error: "マニュアルを読み込めませんでした。ネットワーク接続を確認してください。",
       help_open_manual: "マニュアルを開く",
 
+      // ── About ──
+      about_licenses: "オープンソースライセンス",
+      about_licenses_note: "muSQL は次のオープンソースソフトウェアを利用しています。項目を選ぶとライセンスの本文を表示します。",
+      about_filter: "名前またはライセンスで絞り込み",
+      about_count: "{total} 件中 {shown} 件",
+      about_standard_text: "ライセンスの標準文です（このパッケージは本文を同梱していません）。",
+      about_contributors: "{name} の開発者",
+      about_authors: "著作者: {authors}",
+      about_load_error: "ライセンスの一覧を読み込めませんでした。",
+
       // ── AI ──
       ai_settings: "AI 設定",
       ai_provider: "プロバイダ",
@@ -450,7 +470,8 @@
     if (str === undefined) return key;
     if (params) {
       Object.keys(params).forEach(function (k) {
-        str = str.replace(new RegExp("\\{" + k + "\\}", "g"), params[k]);
+        // A function, so that "$&" and the like in a value are not expanded.
+        str = str.replace(new RegExp("\\{" + k + "\\}", "g"), function () { return String(params[k]); });
       });
     }
     return str;

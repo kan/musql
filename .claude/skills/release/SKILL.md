@@ -46,6 +46,8 @@ just bump X.Y.Z
 
 `src-tauri/Cargo.toml` と `src-tauri/tauri.conf.json` の `version` を更新し、`cargo check` で `Cargo.lock` の `musql` エントリまで追従させる。**手で編集しない**（lockfile の drift が残り、後から同期コミットが必要になる）。
 
+`just bump` は、先に `just credits` を回して `ui/credits.json`（「muSQL について」に出す依存のライセンス一覧）を作り直す。照合のテストは版を比べないので（dependabot の PR をそのままマージできるようにするため）、ここで作り直さないと、出荷する一覧に古い版の番号が残る。**`just bump` を使わずに版を上げた場合は、`just credits` を手で回す。** 標準文の取得でネットワークへ出ることがある。
+
 `store/AppxManifest.xml` は `Version="{{VERSION}}"` のプレースホルダで、CI がタグから流し込むので編集しない。
 
 ## 3. 検証してコミット
@@ -53,9 +55,11 @@ just bump X.Y.Z
 `just check`（fmt / clippy / test / UI lint）を通してから:
 
 ```
-git add CHANGELOG.md src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json
+git add CHANGELOG.md src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json ui/credits.json
 git commit -m "Bump version to X.Y.Z"
 ```
+
+`ui/credits.json` は、差分が無ければ `git add` しても何も起きない。
 
 ## 4. push とタグ
 

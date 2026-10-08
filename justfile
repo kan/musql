@@ -89,6 +89,12 @@ verify-docker:
 verify-toast:
     cargo test verify::verify_toast -- --ignored --nocapture
 
+# 依存のライセンス一覧（ui/credits.json）を作り直す（#119。依存を変えたら回してコミットする。
+# just bump からも呼ばれる。本文を同梱していないクレートの標準文を取りに、ネットワークへ出ることがある）
+[working-directory('src-tauri')]
+credits:
+    cargo test credits::generate -- --ignored --nocapture
+
 # ドキュメントと実装の乖離の検査だけを回す（just test にも含まれる。#115）
 [working-directory('src-tauri')]
 check-docs:
@@ -115,8 +121,10 @@ audit:
 
 # --- リリース ---
 
-# バージョンを上げる（Cargo.toml / tauri.conf.json + Cargo.lock）。CHANGELOG は手で書く
-bump VERSION:
+# バージョンを上げる（Cargo.toml / tauri.conf.json + Cargo.lock）。CHANGELOG は手で書く。
+# 先にライセンス一覧を作り直す（照合のテストは版を比べないので、ここで作り直さないと
+# 出荷する一覧に古い版の番号が残る）
+bump VERSION: credits
     sed -i -E '0,/^version = /s|^version = ".*"|version = "{{VERSION}}"|' src-tauri/Cargo.toml
     sed -i -E '0,/"version":/s|"version": ".*"|"version": "{{VERSION}}"|' src-tauri/tauri.conf.json
     cd src-tauri && cargo check --quiet

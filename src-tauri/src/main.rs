@@ -14,6 +14,8 @@ use tauri::menu::{CheckMenuItemBuilder, Menu, MenuItem, PredefinedMenuItem, Subm
 use tauri::{AppHandle, Emitter, EventTarget, Manager, Window, Wry};
 
 mod app_log;
+#[cfg(test)]
+mod credits;
 #[cfg(feature = "docker")]
 mod docker;
 #[cfg(test)]
@@ -2875,6 +2877,7 @@ fn ml<'a>(lang: &str, key: &'a str) -> &'a str {
         ("ja", "github") => "GitHub リポジトリ",
         ("ja", "manual") => "マニュアル",
         ("ja", "open_logs") => "ログフォルダを開く",
+        ("ja", "about") => "muSQL について",
         ("ja", "check_update") => "アップデートを確認...",
         ("ja", "settings") => "設定",
         ("ja", "new_sql_tab") => "新規 SQL タブ",
@@ -2911,6 +2914,7 @@ fn ml<'a>(lang: &str, key: &'a str) -> &'a str {
         (_, "github") => "GitHub Repository",
         (_, "manual") => "Manual",
         (_, "open_logs") => "Open Log Folder",
+        (_, "about") => "About muSQL",
         (_, "check_update") => "Check for Updates...",
         (_, "new_sql_tab") => "New SQL Tab",
         (_, "close_window") => "Close Window",
@@ -3063,6 +3067,9 @@ fn build_main_menu(handle: &AppHandle<Wry>, lang: &str, theme: &str) -> tauri::R
         true,
         None::<&str>,
     )?;
+    let about_sep = PredefinedMenuItem::separator(handle)?;
+    let about_item =
+        MenuItem::with_id(handle, "main:about", ml(lang, "about"), true, None::<&str>)?;
     #[cfg(feature = "self-updater")]
     let help_menu = {
         let check_update_item = MenuItem::with_id(
@@ -3083,6 +3090,8 @@ fn build_main_menu(handle: &AppHandle<Wry>, lang: &str, theme: &str) -> tauri::R
                 &manual_item,
                 &github_item,
                 &open_logs_item,
+                &about_sep,
+                &about_item,
             ],
         )?
     };
@@ -3091,7 +3100,13 @@ fn build_main_menu(handle: &AppHandle<Wry>, lang: &str, theme: &str) -> tauri::R
         handle,
         ml(lang, "help"),
         true,
-        &[&manual_item, &github_item, &open_logs_item],
+        &[
+            &manual_item,
+            &github_item,
+            &open_logs_item,
+            &about_sep,
+            &about_item,
+        ],
     )?;
     Menu::with_items(handle, &[&file_menu, &edit_menu, &view_menu, &help_menu])
 }
@@ -3567,6 +3582,13 @@ fn main() {
                         EventTarget::webview_window(WIN_MAIN),
                         "menu:action",
                         "manual",
+                    );
+                }
+                "main:about" => {
+                    let _ = app.emit_to(
+                        EventTarget::webview_window(WIN_MAIN),
+                        "menu:action",
+                        "about",
                     );
                 }
                 #[cfg(feature = "self-updater")]

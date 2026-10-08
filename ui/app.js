@@ -1264,6 +1264,7 @@ if (eventApi && eventApi.listen) {
       case "export": exportProfiles(); break;
       case "sync-settings": openSyncModal(); break;
       case "manual": window.openManual(); break;
+      case "about": window.openAbout(); break;
       case "theme-light": setTheme("light"); break;
       case "theme-dark": setTheme("dark"); break;
       case "lang-en": setLang("en"); break;

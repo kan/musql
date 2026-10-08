@@ -1949,3 +1949,118 @@ html.dark .CodeMirror-hint-active {
 .modal-heading-row .help-btn {
   margin-bottom: 12px;
 }
+
+/* ── About dialog (#119). The frame reuses the manual's (.manual-box, .manual-header). ── */
+.about-overlay {
+  z-index: 940; /* below the manual, which F1 can open on top of this */
+}
+.about-title {
+  font-size: 16px;
+}
+.about-version {
+  color: var(--sub);
+  font-size: 13px;
+}
+.about-link {
+  color: var(--accent);
+  font-size: 13px;
+  text-decoration: none;
+  cursor: pointer;
+}
+.about-link:hover {
+  text-decoration: underline;
+}
+.about-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 16px 24px 20px;
+}
+.about-heading {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+.about-note {
+  margin: 0 0 12px;
+  color: var(--sub);
+  font-size: 13px;
+}
+.about-tools {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.about-filter {
+  flex: 1;
+}
+.about-count,
+.about-pkg-version,
+.about-pkg-license,
+.about-pkg-note {
+  color: var(--sub);
+  font-size: 12px;
+}
+.about-count {
+  white-space: nowrap;
+}
+.about-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 13px;
+}
+.about-pkg + .about-pkg {
+  border-top: 1px solid var(--line);
+}
+.about-pkg-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+.about-pkg-summary:hover {
+  background: var(--row-hover-bg);
+}
+.about-pkg[open] > .about-pkg-summary {
+  background: var(--hover-bg);
+}
+.about-pkg-name {
+  font-weight: 600;
+  color: var(--ink);
+}
+.about-pkg-license {
+  margin-left: auto;
+  text-align: right;
+}
+.about-pkg-body {
+  padding: 8px 12px 12px;
+}
+.about-pkg-note {
+  margin: 6px 0 0;
+}
+/* Licence texts are long prose, not code: a plain block in the theme's colours, wrapped,
+   instead of the dark code block every other <pre> gets. */
+.about-license-text {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  background: var(--input-bg);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 320px;
+  overflow-y: auto;
+}
+/* Back to the theme's selection colour: the rule for dark code blocks would otherwise
+   apply here too (see `pre::selection`). */
+.about-license-text::selection {
+  background: var(--selection-bg);
+}

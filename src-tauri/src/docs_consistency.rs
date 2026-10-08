@@ -359,6 +359,8 @@ fn vouches_for_names(file: &str) -> bool {
     let skipped_ext = [".md", ".png", ".jpg", ".svg", ".ico", ".icns", ".lock"];
     !skipped_ext.iter().any(|ext| lower.ends_with(ext))
         && !file.starts_with("ui/lib/")
+        // Generated, and nearly all of it is the licence texts of other projects.
+        && file != "ui/credits.json"
         && !file.ends_with("docs_consistency.rs")
 }
 
@@ -670,6 +672,7 @@ fn vendored_code_and_notes_do_not_vouch_for_names() {
     assert!(vouches_for_names("ui/query.js"));
     assert!(vouches_for_names(".github/workflows/release.yml"));
     assert!(!vouches_for_names("ui/lib/codemirror/codemirror.min.js"));
+    assert!(!vouches_for_names("ui/credits.json"));
     assert!(!vouches_for_names("CLAUDE.md"));
     assert!(!vouches_for_names("src-tauri/Cargo.lock"));
     assert!(!vouches_for_names("src-tauri/src/docs_consistency.rs"));
