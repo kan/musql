@@ -84,6 +84,11 @@ verify-mysql:
 verify-docker:
     cargo test verify::verify_docker -- --ignored --nocapture
 
+# 通知を 1 件出し、クリックが返るかを確かめる（MUSQL_VERIFY_TOAST=1。数値なら待ち秒数。#113）
+[working-directory('src-tauri')]
+verify-toast:
+    cargo test verify::verify_toast -- --ignored --nocapture
+
 # ドキュメントと実装の乖離の検査だけを回す（just test にも含まれる。#115）
 [working-directory('src-tauri')]
 check-docs:

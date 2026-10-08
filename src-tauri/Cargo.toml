@@ -32,6 +32,26 @@ encoding_rs = "0.8"
 bollard = { version = "0.21", optional = true }
 futures-util = { version = "0.3", optional = true }
 
+# クリックで戻れるデスクトップ通知（#113、`src/toast.rs`）。
+# - tauri-winrt-notification は tauri-plugin-notification 経由（notify-rust → これ）で
+#   既に依存ツリーにいるので、直接依存へ上げてもビルドは増えない。プラグインを使わない
+#   のは、あちらに desktop のクリックを受ける口が無いため
+# - windows はスタートメニューのショートカットに AUMID を書くのに使う。tauri が引く版と
+#   同じ 0.62 に揃えてある
+tauri-winrt-notification = "0.7"
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    # パッケージ化されているか（Store 版か）の判定
+    "Win32_Storage_Packaging_Appx",
+    "Win32_System_Com",
+    # PROPVARIANT の手組み（VT_LPWSTR）
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
+    # IShellLinkW / IPropertyStore
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_PropertiesSystem",
+] }
+
 # 文字列まわりの無駄を常時検査する（#116）。`just clippy` は `-D warnings` なので、
 # ここの warn は CI ではエラーになる。
 [lints.clippy]

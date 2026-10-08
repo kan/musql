@@ -19,6 +19,7 @@ mod docker;
 #[cfg(test)]
 mod docs_consistency;
 mod onepassword;
+mod toast;
 #[cfg(test)]
 mod verify;
 
@@ -3688,7 +3689,8 @@ fn main() {
             op_list_fields,
             open_external,
             set_window_title,
-            app_log::log_frontend
+            app_log::log_frontend,
+            toast::toast_notify
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {

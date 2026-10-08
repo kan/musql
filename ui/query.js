@@ -718,8 +718,18 @@ function runQuery(sql, maxRows, tabId) {
 
 // ── Long-running query completion notification (#43) ──
 // Notify (desktop toast) when a query that ran longer than the threshold finishes
-// while the window is unfocused. Notifier order and the reason are at resolveNotifier().
+// while the window is unfocused. Three ways are tried in order (maybeNotifyQueryDone):
+// a clickable toast shown by Rust, then the plugin, then the Web Notification.
 const NOTIFY_THRESHOLD_MS = 5000;
+
+// Counts the tab sets of this window. Closing the window or switching database drops
+// every tab (`tabManager.removeAll`), and the next set reuses the same ids ("sql-1").
+// A toast from an earlier set must not activate the new tab of the same name, so its
+// token carries the number the query *started* under.
+let notifySession = 0;
+// Set once Rust has said it cannot show a clickable toast (the Store build), so the
+// call is not repeated for every notification.
+let clickableToastUnavailable = false;
 
 function isNotifyEnabled() {
   return localStorage.getItem("musql:notify-query") !== "0"; // default ON
@@ -735,8 +745,9 @@ function webNotifier() {
 // tauri-plugin-notification first: it uses the app's identity, so the title is correct on
 // the installed app (WebView2's Web Notification instead shows the launching process —
 // "powershell" in dev; installed builds show muSQL). Web Notification is only a fallback.
-// Click-to-focus is intentionally not wired: WebView2 does not deliver Web Notification
-// `onclick`, and notify_rust has no click callback on Windows desktop.
+// Neither can be clicked through: WebView2 does not deliver Web Notification `onclick`,
+// and notify_rust has no click callback on Windows desktop. These two are what is left
+// when the clickable toast (`toast_notify`) is not available.
 async function resolveNotifier() {
   if (_notifier) return _notifier; // only a successful notifier is cached; retry after failure
   const resolved = await (async () => {
@@ -761,15 +772,33 @@ async function resolveNotifier() {
   return resolved;
 }
 
-async function maybeNotifyQueryDone(elapsedMs, body) {
+// `session` is `notifySession` as it was when the query started.
+async function maybeNotifyQueryDone(elapsedMs, body, tabId, session) {
   if (!isNotifyEnabled() || elapsedMs < NOTIFY_THRESHOLD_MS) return;
+  // The tab that ran the query is gone (window closed, database switched). Its result
+  // has nowhere to be shown, and the title below would name the wrong database.
+  if (session !== notifySession) return;
   if (document.hasFocus()) return; // user is already looking at the window
+  const title = sidebarDbName.textContent || "muSQL";
+  // A toast that can be clicked (#113): Rust shows it, and when it is clicked sends the
+  // token back in `toast:activated`. It answers false on the Store build, which cannot
+  // do that; a rejection means it should have worked. Either way the plugin below
+  // still shows a plain toast.
+  if (!clickableToastUnavailable) {
+    try {
+      const token = session + ":" + tabId;
+      if (await safeInvoke("toast_notify", { token, title, body })) return;
+      clickableToastUnavailable = true;
+    } catch (e) {
+      console.warn("toast_notify failed:", e);
+    }
+  }
   const notify = await resolveNotifier();
   if (!notify) return;
   // Re-check focus: resolving may have shown a permission prompt that the user
   // dismissed by refocusing the window.
   if (document.hasFocus()) return;
-  try { notify(sidebarDbName.textContent || "muSQL", body); }
+  try { notify(title, body); }
   catch (_) { /* notification backend unavailable */ }
 }
 
@@ -1815,6 +1844,9 @@ const tabManager = {
   },
 
   removeAll() {
+    // Every path that drops all tabs starts a new notification session (closing the
+    // window, switching database): the ids are about to be reused.
+    notifySession++;
     this.tabs.forEach((t) => {
       t.el.remove();
       t.paneEl.remove();
@@ -2575,6 +2607,7 @@ function addSqlTab(initialContent, tabNum) {
     }
 
     async function executeStatements(statements) {
+      const session = notifySession; // for the completion toast, see maybeNotifyQueryDone
       resultArea.innerHTML = "";
       lastColumns = [];
       lastRows = [];
@@ -2652,7 +2685,7 @@ function addSqlTab(initialContent, tabNum) {
       } finally {
         setExecuting(false);
         if (!cancelled && notifyBody) {
-          maybeNotifyQueryDone(performance.now() - execStart, notifyBody);
+          maybeNotifyQueryDone(performance.now() - execStart, notifyBody, tabId, session);
         }
       }
     }
@@ -3075,6 +3108,16 @@ if (eventApi && eventApi.listen) {
 
   eventApi.listen("query:reset", () => {
     resetExplorer();
+  });
+
+  // A query-done toast was clicked (#113). Rust has already focused the window; the tab
+  // may have been closed since the toast was shown.
+  eventApi.listen("toast:activated", (event) => {
+    const token = String(event.payload);
+    const sep = token.indexOf(":");
+    if (Number(token.slice(0, sep)) !== notifySession) return; // from an earlier session
+    const tabId = token.slice(sep + 1);
+    if (tabManager.has(tabId)) tabManager.activate(tabId);
   });
 
   eventApi.listen("menu:action", (event) => {

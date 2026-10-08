@@ -2958,7 +2958,9 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-updater",
  "tauri-plugin-window-state",
+ "tauri-winrt-notification",
  "tokio",
+ "windows 0.62.2",
 ]
 
 [[package]]

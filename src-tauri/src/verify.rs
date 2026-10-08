@@ -204,6 +204,82 @@ fn verify_mysql() {
     );
 }
 
+/// Shows a real toast and waits for it to be clicked (#113).
+///
+/// A toast cannot be checked from code: whether a banner appears, and whether the click
+/// comes back, is only visible on the desktop. Run this, click the banner within the
+/// time limit, and it reports what happened. It uses the dev AUMID and the dev Start
+/// Menu shortcut, the same ones `just dev` uses.
+///
+/// Set `MUSQL_VERIFY_TOAST=1` to run it; a number is taken as the seconds to wait
+/// (anything else, 30).
+#[test]
+#[ignore]
+fn verify_toast() {
+    let Some(setting) = env("MUSQL_VERIFY_TOAST") else {
+        println!("verify_toast: skipped (set MUSQL_VERIFY_TOAST=1)");
+        return;
+    };
+    let wait = Duration::from_secs(setting.parse().ok().filter(|s| *s > 1).unwrap_or(30));
+    // The identifier `just dev` runs with (tauri.dev.conf.json).
+    let aumid = "jp.co.communitylinks.musql.debug";
+
+    use std::sync::mpsc::RecvTimeoutError;
+    // COM has to be initialised on the thread that shows the toast, and the test
+    // harness thread is not ours to initialise.
+    //
+    // **The wait happens on that same thread.** The click handler belongs to the
+    // apartment of the thread that showed the toast; if the thread ended first, the
+    // handler would be released and the click would have nowhere to go.
+    let clicked = std::thread::spawn(move || {
+        assert!(toast::init_com(), "CoInitializeEx failed");
+        let (clicked_tx, clicked_rx) = std::sync::mpsc::channel::<()>();
+        // The dev shortcut should point at the dev app, not at this test binary
+        // (`target/debug/deps/musql-<hash>.exe`, whose name changes with every build).
+        let this_exe = std::env::current_exe().expect("current_exe");
+        let dev_exe = this_exe
+            .parent()
+            .and_then(|deps| deps.parent())
+            .map(|debug| debug.join("musql.exe"))
+            .filter(|exe| exe.is_file())
+            .unwrap_or(this_exe);
+        unsafe {
+            toast::ensure_shortcut(aumid, &dev_exe)
+                .unwrap_or_else(|e| panic!("preparing the shortcut failed: {e}"));
+            toast::show(
+                aumid,
+                "muSQL verify_toast",
+                "Click this banner while it is on screen.",
+                move || {
+                    let _ = clicked_tx.send(());
+                },
+            )
+            .unwrap_or_else(|e| panic!("showing the toast failed: {e}"));
+        }
+        println!(
+            "verify_toast: toast shown (shortcut: {}). Click the banner within {}s...",
+            toast::link_name(aumid),
+            wait.as_secs()
+        );
+        clicked_rx.recv_timeout(wait)
+    })
+    .join()
+    .expect("the toast thread panicked (see the message above)");
+
+    match clicked {
+        Ok(()) => println!("verify_toast: ok, the click came back"),
+        Err(RecvTimeoutError::Timeout) => panic!(
+            "no click within {}s. If no banner appeared, check Focus Assist / Do Not Disturb \
+             and that notifications are allowed for \"muSQL (dev)\" in Windows settings.",
+            wait.as_secs()
+        ),
+        // The handler was dropped without being called: Windows let go of the toast.
+        Err(RecvTimeoutError::Disconnected) => {
+            panic!("the click handler was released before any click could arrive")
+        }
+    }
+}
+
 /// Reaches the Docker API and lists the MySQL containers muSQL would offer.
 #[cfg(feature = "docker")]
 #[test]
