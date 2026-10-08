@@ -34,7 +34,7 @@ fn op_binary() -> Option<String> {
     OP_BINARY
         .get_or_init(|| {
             if run_raw("op", &["--version"]).is_ok() {
-                return Some("op".to_string());
+                return Some("op".to_owned());
             }
             let candidates = [
                 std::env::var("LOCALAPPDATA")
@@ -102,7 +102,7 @@ fn run_raw(program: &str, args: &[&str]) -> Result<String, String> {
                 if start.elapsed() > OP_TIMEOUT {
                     let _ = child.kill();
                     let _ = child.wait(); // reap; Child does not do this on drop
-                    return Err("1Password CLI timed out".to_string());
+                    return Err("1Password CLI timed out".to_owned());
                 }
                 std::thread::sleep(interval);
                 interval = (interval * 2).min(Duration::from_millis(100));
@@ -123,7 +123,7 @@ fn run_raw(program: &str, args: &[&str]) -> Result<String, String> {
         Err(if msg.is_empty() {
             format!("{program} exited with {status}")
         } else {
-            msg.to_string()
+            msg.to_owned()
         })
     }
 }
@@ -134,17 +134,17 @@ fn run_raw(program: &str, args: &[&str]) -> Result<String, String> {
 fn validate_reference(reference: &str) -> Result<&str, String> {
     let r = reference.trim();
     if r.is_empty() {
-        return Err("1Password reference is empty".to_string());
+        return Err("1Password reference is empty".to_owned());
     }
     if !r.starts_with("op://") {
         return Err(
             "1Password reference must start with op:// (copy it from 1Password with \
              \"Copy Secret Reference\")"
-                .to_string(),
+                .to_owned(),
         );
     }
     if r.contains(['\n', '\r']) {
-        return Err("1Password reference contains a line break".to_string());
+        return Err("1Password reference contains a line break".to_owned());
     }
     Ok(r)
 }
@@ -160,7 +160,7 @@ pub fn read_secret(reference: &str) -> Result<String, String> {
     let bin = op_binary().ok_or_else(|| {
         "1Password CLI (op) not found. Install it and enable \"Integrate with 1Password CLI\" \
          in the 1Password desktop app."
-            .to_string()
+            .to_owned()
     })?;
     let value = run_raw(&bin, &["read", "--no-newline", reference]).inspect_err(log_cli_failure)?;
     if value.is_empty() {
@@ -247,7 +247,7 @@ fn run_op(args: &[&str]) -> Result<String, String> {
     let bin = op_binary().ok_or_else(|| {
         "1Password CLI (op) not found. Install it and enable \"Integrate with 1Password CLI\" \
          in the 1Password desktop app."
-            .to_string()
+            .to_owned()
     })?;
     run_raw(&bin, args).inspect_err(log_cli_failure)
 }
@@ -287,7 +287,7 @@ pub fn list_items(refresh: bool) -> Result<Vec<OpItem>, String> {
 /// The referenceable fields of one item. Values are discarded during parsing.
 pub fn list_fields(item_id: &str) -> Result<Vec<OpField>, String> {
     if item_id.is_empty() || !item_id.chars().all(|c| c.is_ascii_alphanumeric()) {
-        return Err("Invalid 1Password item id".to_string());
+        return Err("Invalid 1Password item id".to_owned());
     }
     let out = run_op(&["item", "get", item_id, "--format", "json"])?;
     parse_fields(&out)
@@ -318,7 +318,7 @@ fn parse_fields(json: &str) -> Result<Vec<OpField>, String> {
             let reference = f.reference?;
             Some(OpField {
                 label: if f.label.is_empty() {
-                    reference.rsplit('/').next().unwrap_or("").to_string()
+                    reference.rsplit('/').next().unwrap_or("").to_owned()
                 } else {
                     f.label
                 },
@@ -465,6 +465,6 @@ mod tests {
     fn read_optional_none_when_unset() {
         assert!(read_optional(None).is_none());
         assert!(read_optional(Some(&String::new())).is_none());
-        assert!(read_optional(Some(&"   ".to_string())).is_none());
+        assert!(read_optional(Some(&"   ".to_owned())).is_none());
     }
 }

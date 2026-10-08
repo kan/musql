@@ -28,7 +28,7 @@ pub async fn ensure_socat_image(docker: &Docker) -> Result<(), String> {
 
     // Pull the image
     let options = CreateImageOptions {
-        from_image: Some(SOCAT_IMAGE.to_string()),
+        from_image: Some(SOCAT_IMAGE.to_owned()),
         ..Default::default()
     };
 
@@ -82,10 +82,10 @@ pub async fn create_tunnel(
         format!("TCP-LISTEN:{target_port},fork,reuseaddr TCP-CONNECT:{target_ip}:{target_port}");
 
     let mut labels = HashMap::new();
-    labels.insert("musql.tunnel".to_string(), "true".to_string());
+    labels.insert("musql.tunnel".to_owned(), "true".to_owned());
 
     let port_binding = PortBinding {
-        host_ip: Some("127.0.0.1".to_string()),
+        host_ip: Some("127.0.0.1".to_owned()),
         host_port: Some(local_port.to_string()),
     };
 
@@ -100,7 +100,7 @@ pub async fn create_tunnel(
     };
 
     let config = ContainerCreateBody {
-        image: Some(SOCAT_IMAGE.to_string()),
+        image: Some(SOCAT_IMAGE.to_owned()),
         cmd: Some(socat_cmd.split_whitespace().map(String::from).collect()),
         labels: Some(labels),
         exposed_ports: Some(vec![format!("{target_port}/tcp")]),
@@ -128,12 +128,12 @@ pub async fn create_tunnel(
 
     // Register tunnel
     if let Ok(mut tunnels) = DOCKER_TUNNELS.lock() {
-        tunnels.insert(target_id.to_string(), created.id.clone());
+        tunnels.insert(target_id.to_owned(), created.id.clone());
     }
 
     Ok(TunnelInfo {
         container_id: created.id,
-        local_host: "127.0.0.1".to_string(),
+        local_host: "127.0.0.1".to_owned(),
         local_port,
     })
 }
@@ -159,7 +159,7 @@ pub async fn stop_tunnel(docker: &Docker, tunnel_container_id: &str) -> Result<(
 
 pub async fn cleanup_all_tunnels(docker: &Docker) -> Result<(), String> {
     let mut filters = HashMap::new();
-    filters.insert("label".to_string(), vec!["musql.tunnel=true".to_string()]);
+    filters.insert("label".to_owned(), vec!["musql.tunnel=true".to_owned()]);
 
     let options = ListContainersOptions {
         filters: Some(filters),

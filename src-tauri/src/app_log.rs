@@ -55,7 +55,7 @@ fn should_log(
     if seen.len() >= MAX_THROTTLE_KEYS {
         seen.clear();
     }
-    seen.insert(message.to_string(), now);
+    seen.insert(message.to_owned(), now);
     true
 }
 
@@ -128,7 +128,7 @@ fn log_panics() {
 
 fn plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
     let mut targets = vec![Target::new(TargetKind::LogDir {
-        file_name: Some(FILE_NAME.to_string()),
+        file_name: Some(FILE_NAME.to_owned()),
     })];
     if cfg!(debug_assertions) {
         targets.push(Target::new(TargetKind::Stdout));

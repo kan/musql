@@ -1,0 +1,5 @@
+# Rust の整形設定（#116）。`just fmt` / `just fmt-fix` と CI がこれを読む。
+#
+# max_width は rustfmt の既定と同じ 100。値を書いてあるのは既定に頼らないためで、
+# 変えるときは全体を整形し直すコミットが要る。
+max_width = 100

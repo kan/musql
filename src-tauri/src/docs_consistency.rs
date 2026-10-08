@@ -84,7 +84,7 @@ fn repo_files() -> Vec<String> {
         // The index still lists a file removed with plain `rm`. Drop those, or a
         // leftover reference to it would only be caught after the commit, on CI.
         .filter(|f| !f.is_empty() && root().join(f).exists())
-        .map(str::to_string)
+        .map(str::to_owned)
         .collect()
 }
 
@@ -119,14 +119,14 @@ fn files_in(files: &[String], dir: &str, exts: &[&str]) -> Vec<String> {
 
 /// CLAUDE.md and the rule files: the notes whose names are meant to point at real code.
 fn note_files(files: &[String]) -> Vec<String> {
-    let mut notes = vec!["CLAUDE.md".to_string()];
+    let mut notes = vec!["CLAUDE.md".to_owned()];
     notes.extend(files_in(files, ".claude/rules", &[".md"]));
     notes
 }
 
 /// README and the manual pages: what a user reads.
 fn doc_files(files: &[String]) -> Vec<String> {
-    let mut docs = vec!["README.md".to_string()];
+    let mut docs = vec!["README.md".to_owned()];
     docs.extend(files_in(files, "docs/manual", &[".md"]));
     docs
 }
@@ -362,7 +362,7 @@ fn corpus_names(files: &[String]) -> HashSet<String> {
         names.extend(
             body.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
                 .filter(|token| !token.is_empty())
-                .map(str::to_string),
+                .map(str::to_owned),
         );
     }
     names

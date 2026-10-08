@@ -32,6 +32,22 @@ encoding_rs = "0.8"
 bollard = { version = "0.21", optional = true }
 futures-util = { version = "0.3", optional = true }
 
+# 文字列まわりの無駄を常時検査する（#116）。`just clippy` は `-D warnings` なので、
+# ここの warn は CI ではエラーになる。
+[lints.clippy]
+# `&str` に `to_string()` を呼ばない。生成コードは `to_owned()` と同じで速さは変わらないが、
+# 綴りが混ざると「どちらが安いのか」を毎回考えることになる
+str_to_string = "warn"
+# `&&T`（T: Display）の `to_string()`。`Display` の blanket impl を通るので、memcpy 1 回では
+# 済まず `fmt::Formatter` を回る
+inefficient_to_string = "warn"
+# 所有している値への `to_vec()` / `to_owned()`
+implicit_clone = "warn"
+# `s.push_str(&format!(…))`（`write!` なら中間の String を作らない）
+format_push_string = "warn"
+# `replace("'", …)` のような 1 文字の文字列パターン
+single_char_pattern = "warn"
+
 [features]
 default = ["self-updater", "docker"]
 self-updater = ["tauri-plugin-updater"]

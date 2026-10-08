@@ -28,7 +28,7 @@ fn parse_ssl_mode_label(value: &str) -> Option<String> {
 
 pub async fn discover_mysql_containers(docker: &Docker) -> Result<Vec<DockerContainer>, String> {
     let mut filters = HashMap::new();
-    filters.insert("status".to_string(), vec!["running".to_string()]);
+    filters.insert("status".to_owned(), vec!["running".to_owned()]);
 
     let options = ListContainersOptions {
         filters: Some(filters),
@@ -103,7 +103,7 @@ pub async fn discover_mysql_containers(docker: &Docker) -> Result<Vec<DockerCont
             c.names
                 .as_ref()
                 .and_then(|n| n.first())
-                .map(|n| n.trim_start_matches('/').to_string())
+                .map(|n| n.trim_start_matches('/').to_owned())
                 .unwrap_or_else(|| id[..12].to_string())
         };
 

@@ -56,7 +56,7 @@ Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`
   - justfile 先頭の `set windows-shell` は必須。just の Windows 既定シェル `sh -c` は PATH に無く、PATH 上の `bash` は WSL ランチャ（`C:\Windows\System32\bash.exe`）で Windows 側の cargo / tauri が見えないため、Git Bash を明示している。Git を別の場所に入れている環境は `just --shell <bash へのパス>` で上書きする。
   - `release.yml` は just を経由しない。ビルドは `tauri-action` と PowerShell スクリプトが主体で、レシピに寄せても重複が減らないため。
 - `cargo dev`（= `just dev`）で起動（リポジトリ直下 / src-tauri のどちらからでも可。`.cargo/config.toml` の alias で `cargo tauri dev --config tauri.dev.conf.json` に展開される）。dev config は identifier を `...musql.debug` に上書きし、インストール版とウィンドウ状態（`tauri-plugin-window-state`）・アプリデータを分離する。
-- `cargo check` / `cargo test` / `cargo fmt --check` / `cargo clippy --all-targets -- -D warnings`。
+- `cargo check` / `cargo test` / `cargo fmt --check` / `cargo clippy --all-targets -- -D warnings`。clippy で常時当てる追加の lint は `src-tauri/Cargo.toml` の `[lints.clippy]`（文字列まわり。`&str` には `.to_string()` ではなく `.to_owned()`、`push_str(&format!(…))` ではなく `write!`）、整形の設定は `src-tauri/rustfmt.toml`。
 - UI (`ui/*.js`) の lint: `just lint-ui`（= `npx @biomejs/biome@2.4.10 lint --error-on-warnings`。Biome、package.json 不要。設定は `biome.json`、`ui/lib/**` の vendor は除外）。CI は `setup-biome` が入れた `biome` を使うため、レシピは PATH にあればそちらを優先し、無ければ npx にフォールバックする。
 
 ## Architecture

@@ -4,6 +4,8 @@ use mysql::{prelude::Queryable, OptsBuilder, Pool, Row, SslOpts, Value};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
+// For `write!` into a `String` (which cannot fail).
+use std::fmt::Write as _;
 use std::io;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -44,11 +46,11 @@ struct MySqlConfig {
 }
 
 fn default_ssl_mode() -> String {
-    "DISABLED".to_string()
+    "DISABLED".to_owned()
 }
 
 fn default_ssh_auth_method() -> String {
-    "key".to_string()
+    "key".to_owned()
 }
 
 fn default_true() -> bool {
@@ -375,7 +377,7 @@ async fn get_or_create_pool_async(
     let (target_host, target_port, tunnel) = match &request.ssh {
         Some(ssh) if ssh.enabled => {
             let tunnel = start_ssh_tunnel(ssh, &request.mysql.host, request.mysql.port).await?;
-            ("127.0.0.1".to_string(), tunnel.local_port, Some(tunnel))
+            ("127.0.0.1".to_owned(), tunnel.local_port, Some(tunnel))
         }
         _ => (request.mysql.host.clone(), request.mysql.port, None),
     };
@@ -410,7 +412,7 @@ async fn get_or_create_pool_async(
 fn build_opts(mysql: &MySqlConfig, host: &str, port: u16) -> OptsBuilder {
     let mut builder = OptsBuilder::new();
     builder = builder
-        .ip_or_hostname(Some(host.to_string()))
+        .ip_or_hostname(Some(host.to_owned()))
         .tcp_port(port)
         .user(Some(mysql.username.clone()))
         .pass(Some(mysql.password.clone()))
@@ -495,7 +497,7 @@ fn load_profiles(app: &AppHandle) -> Result<ConnectionProfileStore, String> {
             } else {
                 "VERIFY_IDENTITY"
             }
-            .to_string();
+            .to_owned();
             m.tls_enabled = false;
             m.tls_skip_verify = false;
             ssl_migrated = true;
@@ -550,7 +552,7 @@ fn read_sync_path(app: &AppHandle) -> String {
         Ok(p) => std::fs::read_to_string(p)
             .unwrap_or_default()
             .trim()
-            .to_string(),
+            .to_owned(),
         Err(_) => String::new(),
     }
 }
@@ -575,7 +577,7 @@ fn sanitized_store_json(store: &ConnectionProfileStore) -> Result<String, serde_
     let mut clone = store.clone();
     // Stamp this build's version so another machine can tell who last wrote the file and
     // refuse to overwrite it with an older musql that would drop fields it doesn't know (#81).
-    clone.app_version = Some(APP_VERSION.to_string());
+    clone.app_version = Some(APP_VERSION.to_owned());
     for item in clone.items.iter_mut() {
         item.request.mysql.password = String::new();
         if let Some(ssh) = item.request.ssh.as_mut() {
@@ -779,7 +781,7 @@ fn sync_export(app: AppHandle) -> Result<bool, String> {
     // A manual export must not clobber a file a newer musql wrote (#81). Unlike the silent
     // auto-mirror, tell the user why their explicit action was refused.
     if sync_file_written_by_newer(&path) {
-        return Err(SYNC_BLOCKED_NEWER.to_string());
+        return Err(SYNC_BLOCKED_NEWER.to_owned());
     }
     let store = load_profiles(&app)?;
     write_sync_file(&path, &store)?;
@@ -984,7 +986,7 @@ async fn resolve_credentials(
     profile_id: Option<&str>,
 ) -> Result<(), String> {
     let mut owned = request.clone();
-    let id = profile_id.map(str::to_string);
+    let id = profile_id.map(str::to_owned);
     let resolved = tauri::async_runtime::spawn_blocking(move || {
         resolve_password(&mut owned, id.as_deref())?;
         resolve_ssh_passphrase(&mut owned, id.as_deref())?;
@@ -1001,9 +1003,9 @@ async fn resolve_credentials(
 
 fn ai_keyring_key(provider: &AiProvider) -> String {
     match provider {
-        AiProvider::Claude => "ai:claude".to_string(),
-        AiProvider::OpenAi => "ai:openai".to_string(),
-        AiProvider::Gemini => "ai:gemini".to_string(),
+        AiProvider::Claude => "ai:claude".to_owned(),
+        AiProvider::OpenAi => "ai:openai".to_owned(),
+        AiProvider::Gemini => "ai:gemini".to_owned(),
     }
 }
 
@@ -1020,7 +1022,7 @@ async fn resolve_ai_api_key(
         return Ok(key);
     }
     let Some(reference) = op_ref.filter(|s| !s.trim().is_empty()) else {
-        return Err("AI API key not configured".to_string());
+        return Err("AI API key not configured".to_owned());
     };
     let provider = provider.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -1099,7 +1101,7 @@ fn fetch_schema(pool: &Pool, database: &str) -> Result<SchemaInfo, String> {
         .collect();
 
     Ok(SchemaInfo {
-        database: database.to_string(),
+        database: database.to_owned(),
         tables,
     })
 }
@@ -1112,7 +1114,7 @@ const AI_SCHEMA_TEXT_MAX: usize = 8000;
 fn schema_text_for_prompt(schema: &SchemaInfo) -> String {
     let mut schema_text = String::new();
     for table in &schema.tables {
-        schema_text.push_str(&format!("-- {}\n", table.name));
+        let _ = writeln!(schema_text, "-- {}", table.name);
         for col in &table.columns {
             let key_info = match col.column_key.as_str() {
                 "PRI" => " PK",
@@ -1120,10 +1122,11 @@ fn schema_text_for_prompt(schema: &SchemaInfo) -> String {
                 "UNI" => " UQ",
                 _ => "",
             };
-            schema_text.push_str(&format!(
-                "--   {} {}{}\n",
+            let _ = writeln!(
+                schema_text,
+                "--   {} {}{}",
                 col.name, col.data_type, key_info
-            ));
+            );
         }
     }
     // Truncate schema text if too long
@@ -1217,8 +1220,8 @@ async fn send_ai_request(
             }
             json["content"][0]["text"]
                 .as_str()
-                .map(|s| s.to_string())
-                .ok_or_else(|| "Claude API: no text in response".to_string())
+                .map(|s| s.to_owned())
+                .ok_or_else(|| "Claude API: no text in response".to_owned())
         }
         AiProvider::OpenAi => {
             let body = serde_json::json!({
@@ -1245,8 +1248,8 @@ async fn send_ai_request(
             }
             json["choices"][0]["message"]["content"]
                 .as_str()
-                .map(|s| s.to_string())
-                .ok_or_else(|| "OpenAI API: no content in response".to_string())
+                .map(|s| s.to_owned())
+                .ok_or_else(|| "OpenAI API: no content in response".to_owned())
         }
         AiProvider::Gemini => {
             // The key goes in a header, not the query string, so it cannot end up in a URL
@@ -1277,8 +1280,8 @@ async fn send_ai_request(
             }
             json["candidates"][0]["content"]["parts"][0]["text"]
                 .as_str()
-                .map(|s| s.to_string())
-                .ok_or_else(|| "Gemini API: no text in response".to_string())
+                .map(|s| s.to_owned())
+                .ok_or_else(|| "Gemini API: no text in response".to_owned())
         }
     }
 }
@@ -1305,7 +1308,7 @@ async fn ai_complete(
         let guard = state.lock().map_err(|e| format!("Lock error: {e}"))?;
         match guard.as_ref() {
             Some(cached) => (cached.pool.clone(), cached.fingerprint.clone()),
-            None => return Err("Not connected".to_string()),
+            None => return Err("Not connected".to_owned()),
         }
     };
 
@@ -1337,7 +1340,7 @@ async fn ai_complete(
 
     let prompt = build_ai_prompt(&schema, &text_before, &text_after);
     let result = call_ai_api(&ai_provider, &model, &api_key, &prompt).await?;
-    Ok(result.trim().to_string())
+    Ok(result.trim().to_owned())
 }
 
 fn build_ai_assist_prompt(
@@ -1358,15 +1361,12 @@ fn build_ai_assist_prompt(
     );
 
     if !editor_content.trim().is_empty() {
-        parts.push_str(&format!("\nCurrent SQL in editor:\n{}\n", editor_content));
+        let _ = writeln!(parts, "\nCurrent SQL in editor:\n{}", editor_content);
     }
     if !conversation_context.trim().is_empty() {
-        parts.push_str(&format!(
-            "\nPrevious conversation:\n{}\n",
-            conversation_context
-        ));
+        let _ = writeln!(parts, "\nPrevious conversation:\n{}", conversation_context);
     }
-    parts.push_str(&format!("\nUser request: {}", prompt));
+    let _ = write!(parts, "\nUser request: {}", prompt);
     parts
 }
 
@@ -1393,7 +1393,7 @@ async fn ai_assist(
         let guard = state.lock().map_err(|e| format!("Lock error: {e}"))?;
         match guard.as_ref() {
             Some(cached) => (cached.pool.clone(), cached.fingerprint.clone()),
-            None => return Err("Not connected".to_string()),
+            None => return Err("Not connected".to_owned()),
         }
     };
 
@@ -1433,9 +1433,9 @@ async fn ai_assist(
             .trim_start_matches("```SQL")
             .trim_start_matches("```")
             .trim_end_matches("```");
-        inner.trim().to_string()
+        inner.trim().to_owned()
     } else {
-        trimmed.to_string()
+        trimmed.to_owned()
     };
 
     Ok(cleaned)
@@ -1478,7 +1478,7 @@ fn parse_ssh_config_hosts(content: &str) -> Vec<String> {
         {
             for pattern in rest.split_whitespace() {
                 if !pattern.contains('*') && !pattern.contains('?') {
-                    hosts.push(pattern.to_string());
+                    hosts.push(pattern.to_owned());
                 }
             }
         }
@@ -1560,26 +1560,26 @@ fn parse_ssh_config_host(
             .trim();
 
         if lower.starts_with("hostname") && hostname.is_none() {
-            hostname = Some(value.to_string());
+            hostname = Some(value.to_owned());
         } else if lower.starts_with("port") && port.is_none() {
             port = value.parse().ok();
         } else if lower.starts_with("user")
             && !lower.starts_with("userknownhostsfile")
             && user.is_none()
         {
-            user = Some(value.to_string());
+            user = Some(value.to_owned());
         } else if lower.starts_with("identityfile") && identity_file.is_none() {
             let expanded = if value.starts_with("~/") || value == "~" {
-                value.replacen("~", home, 1)
+                value.replacen('~', home, 1)
             } else {
-                value.to_string()
+                value.to_owned()
             };
             identity_file = Some(expanded);
         }
     }
 
     (
-        hostname.unwrap_or_else(|| alias.to_string()),
+        hostname.unwrap_or_else(|| alias.to_owned()),
         port.unwrap_or(22),
         user,
         identity_file,
@@ -1591,12 +1591,12 @@ fn resolve_ssh_config_host(alias: &str) -> (String, u16, Option<String>, Option<
         .or_else(|_| std::env::var("HOME"))
         .unwrap_or_default();
     if home.is_empty() {
-        return (alias.to_string(), 22, None, None);
+        return (alias.to_owned(), 22, None, None);
     }
     let path = std::path::Path::new(&home).join(".ssh").join("config");
     let content = match std::fs::read_to_string(&path) {
         Ok(c) => c,
-        Err(_) => return (alias.to_string(), 22, None, None),
+        Err(_) => return (alias.to_owned(), 22, None, None),
     };
     parse_ssh_config_host(&content, alias, &home)
 }
@@ -1651,7 +1651,7 @@ async fn authenticate_ssh(
     // 2. Try SSH agent (with .pub hint for 1Password key selection)
     let pub_key_hint = key_path.and_then(|path| {
         let pub_path = if path.ends_with(".pub") {
-            path.to_string()
+            path.to_owned()
         } else {
             format!("{path}.pub")
         };
@@ -1810,8 +1810,7 @@ async fn authenticate_ssh(
     }
 
     Err(
-    "SSH authentication failed: no valid key found. Specify a private key path in SSH settings."
-      .to_string(),
+    "SSH authentication failed: no valid key found. Specify a private key path in SSH settings.".to_owned(),
   )
 }
 
@@ -1871,7 +1870,7 @@ async fn start_ssh_tunnel(
     )
     .await?;
     if !authenticated {
-        return Err("SSH authentication failed".to_string());
+        return Err("SSH authentication failed".to_owned());
     }
 
     // Create local TCP listener on a free port
@@ -1884,7 +1883,7 @@ async fn start_ssh_tunnel(
         .port();
 
     // Spawn forwarding task
-    let mysql_host = mysql_host.to_string();
+    let mysql_host = mysql_host.to_owned();
     let task = tokio::spawn(async move {
         loop {
             let (mut tcp_stream, _) = match listener.accept().await {
@@ -2019,7 +2018,7 @@ async fn run_connection_test(
     let (target_host, target_port, _tunnel) = match &request.ssh {
         Some(ssh) if ssh.enabled => {
             let tunnel = start_ssh_tunnel(ssh, &request.mysql.host, request.mysql.port).await?;
-            ("127.0.0.1".to_string(), tunnel.local_port, Some(tunnel))
+            ("127.0.0.1".to_owned(), tunnel.local_port, Some(tunnel))
         }
         _ => (request.mysql.host.clone(), request.mysql.port, None),
     };
@@ -2034,7 +2033,7 @@ async fn run_connection_test(
             .map_err(|e| format!("Failed to connect MySQL: {e}"))?;
         conn.query_drop("SELECT 1")
             .map_err(|e| format!("MySQL ping failed: {e}"))?;
-        Ok("Connection succeeded.".to_string())
+        Ok("Connection succeeded.".to_owned())
     })
     .await
     .map_err(|e| format!("Task error: {e}"))?
@@ -2050,7 +2049,7 @@ async fn run_query(
     state: tauri::State<'_, Arc<Mutex<Option<ConnectionCache>>>>,
 ) -> Result<QueryResult, String> {
     if query.trim().is_empty() {
-        return Err("Query is empty".to_string());
+        return Err("Query is empty".to_owned());
     }
 
     resolve_credentials(&mut request, profile_id.as_deref()).await?;
@@ -2068,7 +2067,7 @@ async fn run_query(
         })?;
 
     let db = request.mysql.database.clone();
-    let tab_key = tab_id.unwrap_or_else(|| "__internal__".to_string());
+    let tab_key = tab_id.unwrap_or_else(|| "__internal__".to_owned());
     let tab_key_cleanup = tab_key.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let mut conn = pool
@@ -2134,7 +2133,7 @@ async fn run_query(
 
 #[tauri::command]
 async fn cancel_query(tab_id: Option<String>) -> Result<(), String> {
-    let tab_key = tab_id.unwrap_or_else(|| "__internal__".to_string());
+    let tab_key = tab_id.unwrap_or_else(|| "__internal__".to_owned());
     let entry = {
         let map = RUNNING_QUERIES
             .lock()
@@ -2497,7 +2496,7 @@ fn save_profile(
     mut profile: ConnectionProfile,
 ) -> Result<ProfileListResponse, String> {
     if profile.name.trim().is_empty() {
-        return Err("Profile name is empty".to_string());
+        return Err("Profile name is empty".to_owned());
     }
     if profile.id.trim().is_empty() {
         profile.id = generate_profile_id();
@@ -2591,7 +2590,7 @@ fn save_group(
     name: String,
 ) -> Result<ProfileListResponse, String> {
     if name.trim().is_empty() {
-        return Err("Group name is empty".to_string());
+        return Err("Group name is empty".to_owned());
     }
     let mut store = load_profiles(&app)?;
     if let Some(existing_id) = id {
@@ -2599,7 +2598,7 @@ fn save_group(
         if let Some(group) = store.groups.iter_mut().find(|g| g.id == existing_id) {
             group.name = name;
         } else {
-            return Err("Group not found".to_string());
+            return Err("Group not found".to_owned());
         }
     } else {
         // Create new group
@@ -2841,7 +2840,7 @@ fn decorate_title(base: &str, debug: bool) -> String {
     if debug {
         format!("[DEBUG] {base}")
     } else {
-        base.to_string()
+        base.to_owned()
     }
 }
 
@@ -3350,7 +3349,7 @@ async fn connect_docker() -> Result<bollard::Docker, String> {
             }
         }
     }
-    Err("Docker is not reachable".to_string())
+    Err("Docker is not reachable".to_owned())
 }
 
 #[cfg(feature = "docker")]
@@ -3611,12 +3610,12 @@ fn main() {
             }
         })
         .manage(Arc::new(Mutex::new(None::<ConnectionCache>)))
-        .manage(ActiveWindow(Mutex::new(WIN_MAIN.to_string())))
+        .manage(ActiveWindow(Mutex::new(WIN_MAIN.to_owned())))
         .on_window_event(|window, event| match event {
             tauri::WindowEvent::Focused(true) => {
                 if let Some(state) = window.try_state::<ActiveWindow>() {
                     if let Ok(mut label) = state.0.lock() {
-                        *label = window.label().to_string();
+                        *label = window.label().to_owned();
                     }
                 }
             }
@@ -3815,12 +3814,12 @@ Host myserver
     ) -> ConnectionRequest {
         ConnectionRequest {
             mysql: MySqlConfig {
-                host: host.to_string(),
+                host: host.to_owned(),
                 port,
                 database: None,
-                username: user.to_string(),
+                username: user.to_owned(),
                 password: String::new(),
-                ssl_mode: "DISABLED".to_string(),
+                ssl_mode: "DISABLED".to_owned(),
                 tls_ca_cert_path: None,
                 save_password: true,
                 op_ref: None,
@@ -3843,13 +3842,13 @@ Host myserver
     fn fingerprint_with_ssh_manual() {
         let ssh = SshConfig {
             enabled: true,
-            host: "bastion.example.com".to_string(),
+            host: "bastion.example.com".to_owned(),
             port: 22,
-            username: "deploy".to_string(),
-            private_key_path: Some("/keys/id_rsa".to_string()),
+            username: "deploy".to_owned(),
+            private_key_path: Some("/keys/id_rsa".to_owned()),
             config_host: None,
             passphrase: String::new(),
-            auth_method: "key".to_string(),
+            auth_method: "key".to_owned(),
             ssh_password: String::new(),
             save_ssh_password: true,
             save_ssh_passphrase: true,
@@ -3942,21 +3941,21 @@ Host myserver
     #[test]
     fn build_ai_prompt_basic() {
         let schema = SchemaInfo {
-            database: "testdb".to_string(),
+            database: "testdb".to_owned(),
             tables: vec![SchemaTable {
-                name: "users".to_string(),
+                name: "users".to_owned(),
                 columns: vec![
                     SchemaColumn {
-                        name: "id".to_string(),
-                        data_type: "int".to_string(),
-                        column_key: "PRI".to_string(),
-                        is_nullable: "NO".to_string(),
+                        name: "id".to_owned(),
+                        data_type: "int".to_owned(),
+                        column_key: "PRI".to_owned(),
+                        is_nullable: "NO".to_owned(),
                     },
                     SchemaColumn {
-                        name: "name".to_string(),
-                        data_type: "varchar".to_string(),
-                        column_key: "".to_string(),
-                        is_nullable: "YES".to_string(),
+                        name: "name".to_owned(),
+                        data_type: "varchar".to_owned(),
+                        column_key: "".to_owned(),
+                        is_nullable: "YES".to_owned(),
                     },
                 ],
             }],
@@ -3973,16 +3972,16 @@ Host myserver
     #[test]
     fn build_ai_prompt_truncation() {
         let schema = SchemaInfo {
-            database: "bigdb".to_string(),
+            database: "bigdb".to_owned(),
             tables: (0..200)
                 .map(|i| SchemaTable {
                     name: format!("table_{i}"),
                     columns: (0..20)
                         .map(|j| SchemaColumn {
                             name: format!("column_{j}_with_a_longer_name"),
-                            data_type: "varchar".to_string(),
-                            column_key: "".to_string(),
-                            is_nullable: "YES".to_string(),
+                            data_type: "varchar".to_owned(),
+                            column_key: "".to_owned(),
+                            is_nullable: "YES".to_owned(),
                         })
                         .collect(),
                 })
@@ -3996,7 +3995,7 @@ Host myserver
     fn build_ai_prompt_truncation_multibyte() {
         // 3-byte chars put the 8000-byte cut inside a character.
         let schema = SchemaInfo {
-            database: "bigdb".to_string(),
+            database: "bigdb".to_owned(),
             tables: vec![SchemaTable {
                 name: "顧客".repeat(2000),
                 columns: vec![],
@@ -4017,7 +4016,7 @@ Host myserver
     #[test]
     fn schema_text_for_prompt_cuts_on_line_boundary() {
         let schema = SchemaInfo {
-            database: "bigdb".to_string(),
+            database: "bigdb".to_owned(),
             tables: (0..1000)
                 .map(|i| SchemaTable {
                     name: format!("table_{i}"),
@@ -4045,9 +4044,9 @@ Host myserver
     fn ssh_with_refs(enabled: bool, auth_method: &str) -> SshConfig {
         let mut ssh = make_ssh(None);
         ssh.enabled = enabled;
-        ssh.auth_method = auth_method.to_string();
-        ssh.op_passphrase_ref = Some(NO_SUCH_REF.to_string());
-        ssh.op_password_ref = Some(NO_SUCH_REF.to_string());
+        ssh.auth_method = auth_method.to_owned();
+        ssh.op_passphrase_ref = Some(NO_SUCH_REF.to_owned());
+        ssh.op_password_ref = Some(NO_SUCH_REF.to_owned());
         ssh
     }
 
@@ -4083,7 +4082,7 @@ Host myserver
     fn resolve_password_skips_op_when_not_persisting() {
         // Nowhere to cache the result means 1Password would be hit on every connection.
         let mut req = make_request("127.0.0.1", 3306, "root", None);
-        req.mysql.op_ref = Some(NO_SUCH_REF.to_string());
+        req.mysql.op_ref = Some(NO_SUCH_REF.to_owned());
         req.mysql.save_password = false;
         resolve_password(&mut req, Some(UNUSED_ID)).unwrap();
         assert!(req.mysql.password.is_empty());
@@ -4093,8 +4092,8 @@ Host myserver
     fn resolve_password_prefers_a_value_already_on_the_request() {
         // What the per-connection prompt collected wins over both keyring and 1Password.
         let mut req = make_request("127.0.0.1", 3306, "root", None);
-        req.mysql.op_ref = Some(NO_SUCH_REF.to_string());
-        req.mysql.password = "typed-at-the-prompt".to_string();
+        req.mysql.op_ref = Some(NO_SUCH_REF.to_owned());
+        req.mysql.password = "typed-at-the-prompt".to_owned();
         resolve_password(&mut req, Some(UNUSED_ID)).unwrap();
         assert_eq!(req.mysql.password, "typed-at-the-prompt");
     }
@@ -4111,13 +4110,13 @@ Host myserver
     fn make_ssh(private_key_path: Option<&str>) -> SshConfig {
         SshConfig {
             enabled: true,
-            host: "bastion.example.com".to_string(),
+            host: "bastion.example.com".to_owned(),
             port: 22,
-            username: "deploy".to_string(),
-            private_key_path: private_key_path.map(str::to_string),
-            config_host: Some("myserver".to_string()),
+            username: "deploy".to_owned(),
+            private_key_path: private_key_path.map(str::to_owned),
+            config_host: Some("myserver".to_owned()),
             passphrase: String::new(),
-            auth_method: "key".to_string(),
+            auth_method: "key".to_owned(),
             ssh_password: String::new(),
             save_ssh_password: true,
             save_ssh_passphrase: true,
@@ -4128,7 +4127,7 @@ Host myserver
 
     fn make_profile(id: &str, ssh: Option<SshConfig>) -> ConnectionProfile {
         ConnectionProfile {
-            id: id.to_string(),
+            id: id.to_owned(),
             name: format!("profile {id}"),
             group_id: None,
             order: 0,
@@ -4147,8 +4146,7 @@ Host myserver
             "p1",
             Some(make_ssh(Some("C:\\Users\\alice\\.ssh\\id_ed25519"))),
         );
-        profile.request.mysql.tls_ca_cert_path =
-            Some("C:\\Users\\alice\\certs\\ca.pem".to_string());
+        profile.request.mysql.tls_ca_cert_path = Some("C:\\Users\\alice\\certs\\ca.pem".to_owned());
         let store = ConnectionProfileStore {
             version: 1,
             app_version: None,
@@ -4169,10 +4167,10 @@ Host myserver
     #[test]
     fn sanitized_store_json_strips_secrets() {
         let mut profile = make_profile("p1", Some(make_ssh(None)));
-        profile.request.mysql.password = "mysql-secret".to_string();
+        profile.request.mysql.password = "mysql-secret".to_owned();
         let ssh = profile.request.ssh.as_mut().unwrap();
-        ssh.passphrase = "passphrase-secret".to_string();
-        ssh.ssh_password = "ssh-secret".to_string();
+        ssh.passphrase = "passphrase-secret".to_owned();
+        ssh.ssh_password = "ssh-secret".to_owned();
         let store = ConnectionProfileStore {
             version: 1,
             app_version: None,
@@ -4187,14 +4185,14 @@ Host myserver
     #[test]
     fn scrub_incoming_profile_clears_secrets_and_flags() {
         let mut profile = make_profile("p1", Some(make_ssh(None)));
-        profile.request.mysql.password = "pw".to_string();
+        profile.request.mysql.password = "pw".to_owned();
         profile.clear_password = true;
         profile.clear_ssh_passphrase = true;
         profile.clear_ssh_password = true;
         {
             let ssh = profile.request.ssh.as_mut().unwrap();
-            ssh.passphrase = "pp".to_string();
-            ssh.ssh_password = "sp".to_string();
+            ssh.passphrase = "pp".to_owned();
+            ssh.ssh_password = "sp".to_owned();
         }
 
         scrub_incoming_profile(&mut profile);
@@ -4211,7 +4209,7 @@ Host myserver
     #[test]
     fn carry_over_keeps_local_paths() {
         let mut local = make_profile("p1", Some(make_ssh(Some("/home/local/.ssh/id_rsa"))));
-        local.request.mysql.tls_ca_cert_path = Some("/home/local/ca.pem".to_string());
+        local.request.mysql.tls_ca_cert_path = Some("/home/local/ca.pem".to_owned());
         // The sync file has these stripped, so the incoming side is empty.
         let mut incoming = make_profile("p1", Some(make_ssh(None)));
 
@@ -4246,7 +4244,7 @@ Host myserver
     fn carry_over_clears_when_local_has_no_path() {
         let local = make_profile("p1", Some(make_ssh(None)));
         let mut incoming = make_profile("p1", Some(make_ssh(Some("/home/other/id_rsa"))));
-        incoming.request.mysql.tls_ca_cert_path = Some("/home/other/ca.pem".to_string());
+        incoming.request.mysql.tls_ca_cert_path = Some("/home/other/ca.pem".to_owned());
 
         carry_over_machine_local_paths(&local, &mut incoming);
 
@@ -4295,9 +4293,9 @@ Host myserver
     fn sync_roundtrip_preserves_local_paths_and_applies_remote_edits() {
         let mut on_machine_a =
             make_profile("p1", Some(make_ssh(Some("C:\\Users\\alice\\id_ed25519"))));
-        on_machine_a.name = "renamed on A".to_string();
-        on_machine_a.request.mysql.host = "db.example.com".to_string();
-        on_machine_a.request.mysql.tls_ca_cert_path = Some("C:\\Users\\alice\\ca.pem".to_string());
+        on_machine_a.name = "renamed on A".to_owned();
+        on_machine_a.request.mysql.host = "db.example.com".to_owned();
+        on_machine_a.request.mysql.tls_ca_cert_path = Some("C:\\Users\\alice\\ca.pem".to_owned());
         let store_a = ConnectionProfileStore {
             version: 1,
             app_version: None,
@@ -4311,7 +4309,7 @@ Host myserver
 
         let mut on_machine_b =
             make_profile("p1", Some(make_ssh(Some("/home/bob/.ssh/id_ed25519"))));
-        on_machine_b.request.mysql.tls_ca_cert_path = Some("/home/bob/ca.pem".to_string());
+        on_machine_b.request.mysql.tls_ca_cert_path = Some("/home/bob/ca.pem".to_owned());
 
         let mut merged = incoming.items.into_iter().next().unwrap();
         scrub_incoming_profile(&mut merged);
@@ -4367,7 +4365,7 @@ Host myserver
     fn newer_check_with_version(name: &str, version: Option<&str>) -> bool {
         let store = ConnectionProfileStore {
             version: 2,
-            app_version: version.map(str::to_string),
+            app_version: version.map(str::to_owned),
             groups: vec![],
             items: vec![],
         };
