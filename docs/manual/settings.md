@@ -37,7 +37,7 @@
 muSQL は、接続の失敗や内部エラーをログファイルに記録します。不具合を報告するときの手がかりになります。
 
 - **開き方**：メイン画面のハンバーガーメニュー（≡）→ **ヘルプ → ログフォルダを開く**
-- **場所**：GitHub Releases 版は `%LOCALAPPDATA%\jp.co.communitylinks.musql\logs\muSQL.log`。Microsoft Store 版は、アプリ専用の領域に保存されるため、別の場所になる場合があります
+- **場所**：GitHub Releases 版は `%LOCALAPPDATA%\jp.co.communitylinks.musql\logs\muSQL.log`。Microsoft Store 版は、Windows がアプリ専用の領域へ保存先を振り替えるため、`%LOCALAPPDATA%\Packages\` の下の muSQL のフォルダになります。どちらの版でも、上のメニューから開くのが確実です
 - **大きさ**：1 ファイルは約 1MB までで、古いものは 2 世代まで残ります
 
 記録するのは、接続や接続テストの失敗、同期ファイルの読み書きの失敗、アップデート確認の失敗、AI アシストや 1Password の呼び出しの失敗、画面側の予期しないエラーです。接続の失敗には、接続先のホスト名とユーザー名が含まれます。

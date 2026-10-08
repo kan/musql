@@ -21,6 +21,7 @@
 //! diagnostic aid, not a record.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager, Window};
@@ -107,6 +108,10 @@ pub fn init(app: &AppHandle) {
         app.package_info().version,
         app.config().identifier
     );
+    // Where the file really is; on the Store build this is not `app_log_dir` (#124).
+    if let Ok(dir) = app.path().app_log_dir() {
+        log::info!("log directory: {}", real_log_dir(&dir).display());
+    }
 }
 
 /// Also record panics in the log. Stderr is not read by anyone on an installed build.
@@ -171,12 +176,44 @@ pub fn log_frontend(window: Window, message: String) {
     log::error!(target: "webview", "[{}] {message}", window.label());
 }
 
+/// Turns the `\\?\` form that `canonicalize` returns on Windows back into a path the
+/// shell accepts (`\\?\C:\x` → `C:\x`, `\\?\UNC\host\share` → `\\host\share`).
+fn strip_verbatim_prefix(path: &Path) -> PathBuf {
+    let text = path.to_string_lossy();
+    if let Some(unc) = text.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{unc}"))
+    } else if let Some(rest) = text.strip_prefix(r"\\?\") {
+        PathBuf::from(rest)
+    } else {
+        path.to_path_buf()
+    }
+}
+
+/// The directory the log file is really in (#124).
+///
+/// The Store (MSIX) build runs packaged: Windows redirects what it creates under
+/// `%LOCALAPPDATA%` to `…\Packages\<package>\LocalCache\Local\…`. Inside the app both
+/// paths work, but Explorer is outside the package and only sees the real one, so
+/// handing it `app_log_dir` opens an empty folder. `canonicalize` asks Windows for the
+/// final path of an existing file, which is the redirected one.
+///
+/// The file is resolved before the directory: redirection is per file, and a directory
+/// left behind by the installer build can be real while the new log inside it is not.
+fn real_log_dir(dir: &Path) -> PathBuf {
+    std::fs::canonicalize(dir.join(format!("{FILE_NAME}.log")))
+        .ok()
+        .and_then(|file| file.parent().map(Path::to_path_buf))
+        .or_else(|| std::fs::canonicalize(dir).ok())
+        .map(|real| strip_verbatim_prefix(&real))
+        .unwrap_or_else(|| dir.to_path_buf())
+}
+
 /// Opens the log directory in the file manager. Created first, so it opens even before
 /// the first line is written.
 pub fn open_dir(app: &AppHandle) -> Result<(), String> {
     let dir = app.path().app_log_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    tauri_plugin_opener::open_path(&dir, None::<&str>).map_err(|e| e.to_string())
+    tauri_plugin_opener::open_path(real_log_dir(&dir), None::<&str>).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -233,6 +270,29 @@ mod tests {
             indent_continuation("TypeError: x\r\n    at f\n[2026-10-08][ERROR] forged"),
             "TypeError: x\n        at f\n    [2026-10-08][ERROR] forged"
         );
+    }
+
+    #[test]
+    fn strip_verbatim_prefix_gives_a_path_the_shell_accepts() {
+        let strip = |s: &str| {
+            strip_verbatim_prefix(Path::new(s))
+                .to_string_lossy()
+                .into_owned()
+        };
+        assert_eq!(strip(r"\\?\C:\Users\me\logs"), r"C:\Users\me\logs");
+        assert_eq!(strip(r"\\?\UNC\host\share\logs"), r"\\host\share\logs");
+        assert_eq!(strip(r"C:\Users\me\logs"), r"C:\Users\me\logs");
+    }
+
+    #[test]
+    fn real_log_dir_resolves_an_existing_directory_and_falls_back_otherwise() {
+        let existing = std::env::temp_dir();
+        let resolved = real_log_dir(&existing);
+        assert!(resolved.is_dir());
+        assert!(!resolved.to_string_lossy().starts_with(r"\\?\"));
+
+        let missing = existing.join("musql-no-such-log-dir-124");
+        assert_eq!(real_log_dir(&missing), missing);
     }
 
     #[test]
