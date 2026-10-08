@@ -46,6 +46,8 @@ windows = { version = "0.62", features = [
     "Win32_System_Com",
     # PROPVARIANT の手組み（VT_LPWSTR）
     "Win32_System_Com_StructuredStorage",
+    # 名前付き mutex（ほかに muSQL が動いているかの判定。#126）
+    "Win32_System_Threading",
     "Win32_System_Variant",
     # IShellLinkW / IPropertyStore
     "Win32_UI_Shell",

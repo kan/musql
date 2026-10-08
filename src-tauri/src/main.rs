@@ -22,6 +22,7 @@ mod docker;
 mod docs_consistency;
 mod onepassword;
 mod toast;
+mod vdesk;
 #[cfg(test)]
 mod verify;
 
@@ -3495,6 +3496,7 @@ fn quit(app: &AppHandle) {
         use tauri_plugin_window_state::{AppHandleExt, StateFlags};
         let _ = app.save_window_state(StateFlags::all());
     }
+    vdesk::on_quit(app, &[WIN_MAIN, WIN_QUERY]);
     #[cfg(feature = "docker")]
     {
         tauri::async_runtime::spawn(async {
@@ -3535,6 +3537,10 @@ fn main() {
             // First, so that failures in the rest of setup are written too.
             app_log::init(app.handle());
             setup_menus(app.handle())?;
+            // Back to the virtual desktop main was last on (#126).
+            if let Some(main_win) = app.get_webview_window(WIN_MAIN) {
+                vdesk::restore(app.handle(), &main_win);
+            }
             // The titles in tauri.conf.json are the release ones; mark them on dev builds.
             // Runs once, while every title is still the undecorated one from the config.
             if is_debug_build(app.handle()) {
