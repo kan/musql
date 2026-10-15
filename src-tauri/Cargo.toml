@@ -29,6 +29,13 @@ tauri-plugin-log = "2"
 log = "0.4"
 reqwest = { version = "0.13", default-features = false, features = ["json", "native-tls"] }
 encoding_rs = "0.8"
+# Redis への接続（#98）。同期の API を spawn_blocking で呼ぶ（mysql と同じ形）。TLS は rustls:
+# native-tls の構成では独自の CA 証明書を渡せない（`build_with_tls` が rustls 専用）ため。
+# 証明書の検証を飛ばす SSL モード（REQUIRED）に `tls-rustls-insecure` が要る
+redis = { version = "1.7", default-features = false, features = ["tls-rustls", "tls-rustls-insecure"] }
+# redis が使う rustls の暗号プロバイダー。コードからは呼ばない。ring は更新機能（reqwest）経由でも
+# 有効になるが、更新機能を外した Store 版では何も有効にならず、Redis の TLS 接続が実行時に失敗する
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 # メニューの項目（`MenuAction`）と id の文字列の行き来（#131）
 strum = { version = "0.28", features = ["derive"] }
 bollard = { version = "0.21", optional = true }

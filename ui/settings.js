@@ -379,6 +379,45 @@ function updateCaCertVisibility() {
 }
 sslModeSelect.addEventListener("change", updateCaCertVisibility);
 
+// Per-engine defaults and labels (#98). The database field is the DB number on Redis.
+// Every engine Rust knows has an entry (a test in main.rs checks the keys); only an engine
+// from a newer version falls back to MySQL's.
+const MYSQL_FIELDS = { port: 3306, user: "root", dbLabel: "database", dbPlaceholder: "optional" };
+const ENGINE_FIELDS = {
+  mysql: MYSQL_FIELDS,
+  mariadb: MYSQL_FIELDS,
+  redis: { port: 6379, user: "", dbLabel: "redis_db_number", dbPlaceholder: "redis_db_placeholder" },
+};
+function engineFields(engine) {
+  return Object.hasOwn(ENGINE_FIELDS, engine) ? ENGINE_FIELDS[engine] : MYSQL_FIELDS;
+}
+const dbLabel = document.getElementById("mysql-db-label");
+const dbInput = document.getElementById("mysql-db");
+let shownEngine = "mysql";
+
+// Relabels the fields for the selected engine. On a switch, a port or user still at the
+// previous engine's default moves to the new one; anything typed in is left alone.
+function applyEngineFields(switching) {
+  const fields = engineFields(dbEngineSelect.value);
+  if (switching) {
+    const previous = engineFields(shownEngine);
+    const portInput = document.getElementById("mysql-port");
+    const userInput = document.getElementById("mysql-user");
+    if (Number(portInput.value) === previous.port) portInput.value = fields.port;
+    if (userInput.value === previous.user) userInput.value = fields.user;
+    // A database name is not a DB number (and the reverse), so a value whose meaning
+    // changes is cleared rather than carried over.
+    if (fields.dbLabel !== previous.dbLabel) dbInput.value = "";
+  }
+  // Through the data-i18n attributes, so a language switch relabels them too.
+  dbLabel.setAttribute("data-i18n", fields.dbLabel);
+  dbLabel.textContent = t(fields.dbLabel);
+  dbInput.setAttribute("data-i18n-placeholder", fields.dbPlaceholder);
+  dbInput.placeholder = t(fields.dbPlaceholder);
+  shownEngine = dbEngineSelect.value;
+}
+dbEngineSelect.addEventListener("change", () => applyEngineFields(true));
+
 // A value this version does not know (from a hand edit, or a newer version through the
 // sync file) gets an option of its own, labelled with `labelKey`. Without one the select
 // would go blank and saving would replace the value with "" (#131). Connecting still
@@ -448,11 +487,12 @@ function collectRequest() {
 
 function applyRequest(request) {
   document.getElementById("mysql-host").value = request.mysql.host || "";
-  document.getElementById("mysql-port").value = request.mysql.port || 3306;
+  document.getElementById("mysql-port").value = request.mysql.port || engineFields(request.engine).port;
   document.getElementById("mysql-db").value = request.mysql.database || "";
   document.getElementById("mysql-user").value = request.mysql.username || "";
   document.getElementById("mysql-pass").value = request.mysql.password || "";
   setSelectKeepingUnknown(dbEngineSelect, request.engine, "db_engine_unknown");
+  applyEngineFields(false);
   setSelectKeepingUnknown(sslModeSelect, request.mysql.ssl_mode || "DISABLED", "ssl_mode_unknown");
   caCertInput.value = request.mysql.tls_ca_cert_path || "";
   mysqlSavePasswordCheck.checked = request.mysql.save_password !== false;
@@ -724,9 +764,9 @@ function clearForm() {
     engine: "mysql",
     mysql: {
       host: "127.0.0.1",
-      port: 3306,
+      port: MYSQL_FIELDS.port,
       database: null,
-      username: "root",
+      username: MYSQL_FIELDS.user,
       password: "",
       ssl_mode: "DISABLED",
       tls_ca_cert_path: null,

@@ -114,7 +114,7 @@ function confirmDialog(message, opts) {
 
 // Display names of the connection engines (#132). Must match `Engine::display_name` in
 // main.rs. An engine this version does not know shows as stored.
-const ENGINE_NAMES = { mysql: "MySQL", mariadb: "MariaDB" };
+const ENGINE_NAMES = { mysql: "MySQL", mariadb: "MariaDB", redis: "Redis" };
 
 function getItemHint(item) {
   // MySQL is the default and goes unlabelled; any other engine prefixes the hint. Rust

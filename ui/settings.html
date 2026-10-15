@@ -54,11 +54,12 @@
             <select id="db-engine">
               <option value="mysql" selected>MySQL</option>
               <option value="mariadb">MariaDB</option>
+              <option value="redis">Redis</option>
             </select>
           </label>
           <label><span data-i18n="host">Host</span> <input id="mysql-host" value="127.0.0.1" /></label>
           <label><span data-i18n="port">Port</span> <input id="mysql-port" type="number" value="3306" /></label>
-          <label><span data-i18n="database">Database</span> <input id="mysql-db" data-i18n-placeholder="optional" placeholder="optional" /></label>
+          <label><span id="mysql-db-label" data-i18n="database">Database</span> <input id="mysql-db" data-i18n-placeholder="optional" placeholder="optional" /></label>
           <label><span data-i18n="user">User</span> <input id="mysql-user" value="root" /></label>
           <label><span data-i18n="password">Password</span>
             <div class="input-with-btn">
@@ -158,6 +159,6 @@
     <script src="./theme.js"></script>
     <script src="./manual.js"></script>
     <script src="./op-picker.js"></script>
-    <script src="./settings.js?v=11"></script>
+    <script src="./settings.js?v=12"></script>
   </body>
 </html>

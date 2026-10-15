@@ -62,7 +62,7 @@ Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`
 - UI (`ui/*.js`) の lint: `just lint-ui`（= `npx @biomejs/biome@2.4.10 lint --error-on-warnings`。Biome、package.json 不要。設定は `biome.json`、`ui/lib/**` の vendor は除外）。CI は `setup-biome` が入れた `biome` を使うため、レシピは PATH にあればそちらを優先し、無ければ npx にフォールバックする。
 
 ## Architecture
-- Rust のロジックの中心は `src-tauri/src/main.rs`。Docker 連携、1Password 連携、ログ、通知、仮想デスクトップは別のファイルに分けてある（一覧は `.claude/rules/rust.md` の冒頭）。
+- Rust のロジックの中心は `src-tauri/src/main.rs`。Docker 連携、1Password 連携、ログ、通知、仮想デスクトップ、Redis への接続は別のファイルに分けてある（一覧は `.claude/rules/rust.md` の冒頭）。
 - UI は `ui/` の 3 画面（main = プロファイル一覧 / settings = プロファイル編集 / query = DB エクスプローラ）。ウィンドウは `tauri.conf.json` で事前定義し、show/hide パターンで管理する。
 - Cargo feature で機能を分離：`self-updater`（デフォルト有効、Store ビルドでは無効）、`docker`（デフォルト有効、`bollard` / `futures-util` 依存を分離）。
 

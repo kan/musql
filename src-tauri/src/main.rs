@@ -23,6 +23,7 @@ mod docker;
 #[cfg(test)]
 mod docs_consistency;
 mod onepassword;
+mod redis_client;
 mod toast;
 mod vdesk;
 #[cfg(test)]
@@ -149,6 +150,8 @@ enum Engine {
     Mysql,
     /// Speaks the MySQL protocol; only the name differs (display, AI prompt).
     Mariadb,
+    /// A key-value store (#98): its own connection (`redis_client`) and window.
+    Redis,
     /// An engine this version does not know, such as one a later version added. Its
     /// spelling is kept so that saving does not turn it into MySQL, and nothing connects
     /// to it as MySQL.
@@ -160,6 +163,7 @@ impl From<String> for Engine {
         match name.as_str() {
             "mysql" => Self::Mysql,
             "mariadb" => Self::Mariadb,
+            "redis" => Self::Redis,
             _ => Self::Unknown(name),
         }
     }
@@ -170,6 +174,7 @@ impl From<Engine> for String {
         match engine {
             Engine::Mysql => "mysql".to_owned(),
             Engine::Mariadb => "mariadb".to_owned(),
+            Engine::Redis => "redis".to_owned(),
             Engine::Unknown(name) => name,
         }
     }
@@ -181,25 +186,44 @@ impl Engine {
         match self {
             Engine::Mysql => "MySQL",
             Engine::Mariadb => "MariaDB",
+            Engine::Redis => "Redis",
             Engine::Unknown(name) => name,
+        }
+    }
+
+    /// How muSQL talks to this engine. Everything that depends on the engine beyond its
+    /// name (the window, the connection) goes through here, so an engine is placed once.
+    fn protocol(&self) -> Result<Protocol, String> {
+        match self {
+            Engine::Mysql | Engine::Mariadb => Ok(Protocol::Mysql),
+            Engine::Redis => Ok(Protocol::Redis),
+            Engine::Unknown(name) => Err(unknown_engine_error(name)),
         }
     }
 
     /// The window that opens a profile of this engine.
     fn window(&self) -> Result<&'static str, String> {
-        match self {
-            Engine::Mysql | Engine::Mariadb => Ok(WIN_QUERY),
-            Engine::Unknown(name) => Err(unknown_engine_error(name)),
+        match self.protocol()? {
+            Protocol::Mysql => Ok(WIN_QUERY),
+            // The Redis window comes with the next step of #98.
+            Protocol::Redis => Err("Opening Redis connections is not available yet.".to_owned()),
         }
     }
 
     /// Ok when the MySQL client can connect to this engine.
     fn ensure_mysql_protocol(&self) -> Result<(), String> {
-        match self {
-            Engine::Mysql | Engine::Mariadb => Ok(()),
-            Engine::Unknown(name) => Err(unknown_engine_error(name)),
+        match self.protocol()? {
+            Protocol::Mysql => Ok(()),
+            Protocol::Redis => Err("This is a Redis connection, not a MySQL one.".to_owned()),
         }
     }
+}
+
+/// The wire protocols muSQL speaks; several engines can share one (MySQL and MariaDB).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Protocol {
+    Mysql,
+    Redis,
 }
 
 fn unknown_engine_error(name: &str) -> String {
@@ -433,6 +457,9 @@ static SCHEMA_CACHE: std::sync::LazyLock<Mutex<HashMap<String, SchemaInfo>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
 // Window label constants — must match the labels in tauri.conf.json.
+/// How long to wait for a server to answer when connecting: the SSH host, and Redis.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
+
 const WIN_MAIN: &str = "main";
 const WIN_QUERY: &str = "query";
 const WIN_SETTINGS: &str = "settings";
@@ -558,31 +585,36 @@ fn build_opts(mysql: &MySqlConfig, host: &str, port: u16) -> Result<OptsBuilder,
             ));
         }
         SslMode::VerifyCa => {
-            let mut ssl = SslOpts::default().with_danger_skip_domain_validation(true);
-            if let Some(p) = &mysql.tls_ca_cert_path {
-                if !p.trim().is_empty() {
-                    ssl = ssl.with_root_cert_path(Some(PathBuf::from(p)));
-                }
-            }
-            builder = builder.ssl_opts(Some(ssl));
-        }
-        SslMode::VerifyIdentity => {
-            let mut ssl = SslOpts::default();
-            if let Some(p) = &mysql.tls_ca_cert_path {
-                if !p.trim().is_empty() {
-                    ssl = ssl.with_root_cert_path(Some(PathBuf::from(p)));
-                }
-            }
-            builder = builder.ssl_opts(Some(ssl));
-        }
-        SslMode::Unknown(name) => {
-            return Err(format!(
-                "Unknown SSL mode \"{name}\" in this connection. Choose one in the connection settings."
+            let ssl = SslOpts::default().with_danger_skip_domain_validation(true);
+            builder = builder.ssl_opts(Some(
+                ssl.with_root_cert_path(mysql.ca_cert_path().map(PathBuf::from)),
             ));
         }
+        SslMode::VerifyIdentity => {
+            builder = builder.ssl_opts(Some(
+                SslOpts::default().with_root_cert_path(mysql.ca_cert_path().map(PathBuf::from)),
+            ));
+        }
+        SslMode::Unknown(name) => return Err(unknown_ssl_mode_error(name)),
     }
 
     Ok(builder)
+}
+
+fn unknown_ssl_mode_error(name: &str) -> String {
+    format!(
+        "Unknown SSL mode \"{name}\" in this connection. Choose one in the connection settings."
+    )
+}
+
+impl MySqlConfig {
+    /// The CA certificate to check the server against; a blank path means none.
+    fn ca_cert_path(&self) -> Option<&str> {
+        self.tls_ca_cert_path
+            .as_deref()
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+    }
 }
 
 fn profiles_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -1955,7 +1987,7 @@ async fn start_ssh_tunnel(
     // Connect via russh (with timeout)
     let config = Arc::new(russh::client::Config::default());
     let mut session = tokio::time::timeout(
-        Duration::from_secs(8),
+        CONNECT_TIMEOUT,
         russh::client::connect(
             config,
             (host.as_str(), port),
@@ -2132,7 +2164,8 @@ async fn run_connection_test(
     mut request: ConnectionRequest,
     profile_id: Option<String>,
 ) -> Result<String, String> {
-    request.engine.ensure_mysql_protocol()?;
+    // Before the credentials: resolving them can run the 1Password CLI.
+    let protocol = request.engine.protocol()?;
     resolve_credentials(&mut request, profile_id.as_deref()).await?;
 
     // Set up SSH tunnel if needed (async)
@@ -2144,16 +2177,23 @@ async fn run_connection_test(
         _ => (request.mysql.host.clone(), request.mysql.port, None),
     };
 
-    // MySQL connection test (blocking)
+    // The connection test itself (blocking)
     let mysql = request.mysql.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let opts = build_opts(&mysql, &target_host, target_port)?;
-        let pool = Pool::new(opts).map_err(|e| format!("Failed to build pool: {e}"))?;
-        let mut conn = pool
-            .get_conn()
-            .map_err(|e| format!("Failed to connect MySQL: {e}"))?;
-        conn.query_drop("SELECT 1")
-            .map_err(|e| format!("MySQL ping failed: {e}"))?;
+        match protocol {
+            Protocol::Mysql => {
+                let opts = build_opts(&mysql, &target_host, target_port)?;
+                let pool = Pool::new(opts).map_err(|e| format!("Failed to build pool: {e}"))?;
+                let mut conn = pool
+                    .get_conn()
+                    .map_err(|e| format!("Failed to connect MySQL: {e}"))?;
+                conn.query_drop("SELECT 1")
+                    .map_err(|e| format!("MySQL ping failed: {e}"))?;
+            }
+            Protocol::Redis => {
+                redis_client::ping(&redis_client::client(&mysql, &target_host, target_port)?)?;
+            }
+        }
         Ok("Connection succeeded.".to_owned())
     })
     .await
@@ -4105,20 +4145,20 @@ Host myserver
     // connected to as MySQL.
     #[test]
     fn unknown_engine_round_trips_and_opens_nothing() {
-        let engine: Engine = serde_json::from_str("\"redis\"").unwrap();
-        assert_eq!(engine, Engine::Unknown("redis".to_owned()));
-        assert_eq!(serde_json::to_string(&engine).unwrap(), "\"redis\"");
+        let engine: Engine = serde_json::from_str("\"postgres\"").unwrap();
+        assert_eq!(engine, Engine::Unknown("postgres".to_owned()));
+        assert_eq!(serde_json::to_string(&engine).unwrap(), "\"postgres\"");
         assert!(engine.window().is_err());
         assert!(engine.ensure_mysql_protocol().is_err());
     }
 
     /// Every engine this version knows, with its stored name.
     fn known_engines() -> Vec<(String, Engine)> {
-        let engines = [Engine::Mysql, Engine::Mariadb];
+        let engines = [Engine::Mysql, Engine::Mariadb, Engine::Redis];
         for engine in &engines {
             // No wildcard: a new variant stops this compiling until it is listed above.
             match engine {
-                Engine::Mysql | Engine::Mariadb | Engine::Unknown(_) => {}
+                Engine::Mysql | Engine::Mariadb | Engine::Redis | Engine::Unknown(_) => {}
             }
         }
         engines
@@ -4186,6 +4226,24 @@ Host myserver
         })
         .collect();
         assert_eq!(options, expected, "the DB Engine choices in settings.html");
+
+        // `const ENGINE_FIELDS = { mysql: ..., ... };` in settings.js: the per-engine
+        // defaults. An engine missing here would quietly get MySQL's port and labels.
+        let settings = read_ui("settings.js");
+        // The keys at the top level of the object; an entry may span lines.
+        let mut fields: Vec<String> = Vec::new();
+        let mut depth = 0;
+        for line in between(&settings, "const ENGINE_FIELDS = {", "\n};").lines() {
+            if depth == 0 {
+                if let Some((id, _)) = line.trim().split_once(':') {
+                    fields.push(id.trim().to_owned());
+                }
+            }
+            depth += line.matches('{').count();
+            depth -= line.matches('}').count();
+        }
+        let ids: Vec<String> = expected.into_iter().map(|(id, _)| id).collect();
+        assert_eq!(fields, ids, "ENGINE_FIELDS in settings.js");
     }
 
     // ── SslMode ────────────────────────────────────────────────────
