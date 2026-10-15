@@ -2950,6 +2950,80 @@ enum MenuAction {
     LangJa,
 }
 
+impl MenuAction {
+    /// The windows whose menu has this item. `menu_item` checks the menus against it,
+    /// and `on_menu_event` ignores an id that pairs the item with another window.
+    fn windows(self) -> &'static [&'static str] {
+        use MenuAction::*;
+        match self {
+            NewProfile | NewGroup | Import | Export | SyncSettings | Exit | CheckUpdate
+            | Manual | Github | OpenLogs | About => &[WIN_MAIN],
+            NewSqlTab | Close | SwitchDb | AiSettings | ToggleNotify | Run | RunAll | Cancel
+            | Format => &[WIN_QUERY],
+            TestConnection | Connect | Save | Delete => &[WIN_SETTINGS],
+            ThemeLight | ThemeDark | LangEn | LangJa => &[WIN_MAIN, WIN_QUERY, WIN_SETTINGS],
+        }
+    }
+
+    /// What Rust does for this item, or `None` when the window's UI handles it (sent as
+    /// `menu:action`). One exhaustive match, so a new item cannot compile until it picks
+    /// a side, and an item for Rust cannot be left without its handler.
+    fn rust_handler(self) -> Option<fn(&AppHandle)> {
+        use MenuAction::*;
+        match self {
+            Exit => Some(quit),
+            Github => Some(|_| {
+                let _ = open_in_browser("https://github.com/kan/musql");
+            }),
+            OpenLogs => Some(|app| {
+                if let Err(e) = app_log::open_dir(app) {
+                    log::warn!("failed to open the log directory: {e}");
+                }
+            }),
+            // Not in the Store build's menu.
+            #[cfg(not(feature = "self-updater"))]
+            CheckUpdate => Some(|_| {}),
+            #[cfg(feature = "self-updater")]
+            CheckUpdate => Some(|app| {
+                let handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    // A newer version announces itself (`update-available`). Both "up to
+                    // date" and a failed check are "no update" to the user, as before;
+                    // the failure is in the log.
+                    if !matches!(check_update(handle.clone()).await, Ok(true)) {
+                        let _ = handle.emit_to(
+                            EventTarget::webview_window(WIN_MAIN),
+                            "menu:action",
+                            "no-update",
+                        );
+                    }
+                });
+            }),
+            Close => Some(|app| {
+                if let Some(w) = app.get_webview_window(WIN_QUERY) {
+                    let _ = w.emit("query:reset", ());
+                    let _ = w.hide();
+                }
+                if let Some(w) = app.get_webview_window(WIN_MAIN) {
+                    let _ = w.show();
+                    let _ = w.set_focus();
+                }
+            }),
+            NewProfile | NewGroup | Import | Export | SyncSettings | Manual | About | NewSqlTab
+            | SwitchDb | AiSettings | ToggleNotify | Run | RunAll | Cancel | Format
+            | TestConnection | Connect | Save | Delete | ThemeLight | ThemeDark | LangEn
+            | LangJa => None,
+        }
+    }
+
+    /// Whether the window's UI handles this item. A test checks it against the `case`s in
+    /// each window's script.
+    #[cfg(test)]
+    fn handled_by_ui(self) -> bool {
+        self.rust_handler().is_none()
+    }
+}
+
 /// A submenu of the menu bar / popup menu.
 #[derive(Clone, Copy)]
 enum MenuTitle {
@@ -3028,10 +3102,15 @@ fn menu_id(window: &str, item: MenuAction) -> String {
     format!("{window}:{item}")
 }
 
-/// The reverse of `menu_id`. `None` for ids that are not ours (the predefined items).
+/// The reverse of `menu_id`. `None` for ids that are not ours (the predefined items) and
+/// for an item paired with a window whose menu does not have it.
 fn parse_menu_id(id: &str) -> Option<(&str, MenuAction)> {
     let (window, item) = id.split_once(':')?;
-    Some((window, item.parse().ok()?))
+    let action: MenuAction = item.parse().ok()?;
+    action
+        .windows()
+        .contains(&window)
+        .then_some((window, action))
 }
 
 fn menu_item(
@@ -3041,6 +3120,10 @@ fn menu_item(
     item: MenuAction,
     accelerator: Option<&str>,
 ) -> tauri::Result<MenuItem<Wry>> {
+    debug_assert!(
+        item.windows().contains(&window),
+        "{item:?} in the {window} menu"
+    );
     MenuItem::with_id(
         handle,
         menu_id(window, item),
@@ -3057,6 +3140,10 @@ fn check_menu_item(
     item: MenuAction,
     checked: bool,
 ) -> tauri::Result<CheckMenuItem<Wry>> {
+    debug_assert!(
+        item.windows().contains(&window),
+        "{item:?} in the {window} menu"
+    );
     CheckMenuItemBuilder::with_id(menu_id(window, item), menu_label(lang, item))
         .checked(checked)
         .build(handle)
@@ -3563,52 +3650,10 @@ fn main() {
             let Some((window_label, action)) = parse_menu_id(event.id().0.as_str()) else {
                 return;
             };
-            use MenuAction::*;
-            match action {
-                Exit => quit(app),
-                Github => {
-                    let _ = open_in_browser("https://github.com/kan/musql");
-                }
-                OpenLogs => {
-                    if let Err(e) = app_log::open_dir(app) {
-                        log::warn!("failed to open the log directory: {e}");
-                    }
-                }
-                // Not in the Store build's menu.
-                #[cfg(not(feature = "self-updater"))]
-                CheckUpdate => {}
-                #[cfg(feature = "self-updater")]
-                CheckUpdate => {
-                    let handle = app.clone();
-                    tauri::async_runtime::spawn(async move {
-                        // A newer version announces itself (`update-available`). Both
-                        // "up to date" and a failed check are "no update" to the user,
-                        // as before; the failure is in the log.
-                        if !matches!(check_update(handle.clone()).await, Ok(true)) {
-                            let _ = handle.emit_to(
-                                EventTarget::webview_window(WIN_MAIN),
-                                "menu:action",
-                                "no-update",
-                            );
-                        }
-                    });
-                }
-                Close => {
-                    if let Some(w) = app.get_webview_window(WIN_QUERY) {
-                        let _ = w.emit("query:reset", ());
-                        let _ = w.hide();
-                    }
-                    if let Some(w) = app.get_webview_window(WIN_MAIN) {
-                        let _ = w.show();
-                        let _ = w.set_focus();
-                    }
-                }
-                // Handled by the UI of the window the menu belongs to. Listed one by
-                // one so that a new item has to pick a side.
-                NewProfile | NewGroup | Import | Export | SyncSettings | Manual | About
-                | NewSqlTab | SwitchDb | AiSettings | ToggleNotify | Run | RunAll | Cancel
-                | Format | TestConnection | Connect | Save | Delete | ThemeLight | ThemeDark
-                | LangEn | LangJa => {
+            match action.rust_handler() {
+                Some(handle) => handle(app),
+                // The UI of the window the menu belongs to handles it.
+                None => {
                     let _ = app.emit_to(
                         EventTarget::webview_window(window_label),
                         "menu:action",
@@ -3891,57 +3936,67 @@ Host myserver
 
     // ── Menus ──────────────────────────────────────────────────────
 
-    // The UI's `menu:action` handlers (app.js / query.js / settings.js) match these
-    // strings, so renaming a variant must not change them silently.
+    /// The `case "..."` labels of a script's `menu:action` listener: from the listener
+    /// to the end of its `switch` (the first line that closes a block at its indent).
+    fn menu_action_cases(script: &str) -> std::collections::BTreeSet<String> {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../ui")
+            .join(script);
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+        let start = text
+            .find("listen(\"menu:action\"")
+            .unwrap_or_else(|| panic!("{script} has no menu:action listener"));
+        let listener = &text[start..];
+        // The indent of the line the listener starts on.
+        let line = &text[text[..start].rfind('\n').map_or(0, |i| i + 1)..start];
+        let indent = line.len() - line.trim_start_matches(' ').len();
+        let end = listener
+            .find(&format!("\n{}}});", " ".repeat(indent)))
+            .unwrap_or_else(|| panic!("cannot find the end of {script}'s listener"));
+        listener[..end]
+            .split("case \"")
+            .skip(1)
+            .filter_map(|rest| rest.split_once('"').map(|(label, _)| label.to_owned()))
+            .collect()
+    }
+
+    // Each window's script must handle exactly the items its menu hands to the UI. A
+    // menu item with no `case` does nothing when chosen, and a `case` no item sends is
+    // dead code, typically left by a rename on one side only.
     #[test]
-    fn menu_actions_keep_the_ids_the_ui_handles() {
+    fn ui_scripts_handle_the_menu_items_they_are_sent() {
         use strum::IntoEnumIterator;
-        let ids: Vec<&'static str> = MenuAction::iter().map(<&'static str>::from).collect();
-        assert_eq!(
-            ids,
-            [
-                "new-profile",
-                "new-group",
-                "import",
-                "export",
-                "sync-settings",
-                "exit",
-                "check-update",
-                "manual",
-                "github",
-                "open-logs",
-                "about",
-                "new-sql-tab",
-                "close",
-                "switch-db",
-                "ai-settings",
-                "toggle-notify",
-                "run",
-                "run-all",
-                "cancel",
-                "format",
-                "test-connection",
-                "connect",
-                "save",
-                "delete",
-                "theme-light",
-                "theme-dark",
-                "lang-en",
-                "lang-ja",
-            ]
-        );
+        for (window, script, extra) in [
+            // Sent by `on_menu_event` after a manual update check finds nothing.
+            (WIN_MAIN, "app.js", &["no-update"][..]),
+            (WIN_QUERY, "query.js", &[][..]),
+            (WIN_SETTINGS, "settings.js", &[][..]),
+        ] {
+            let mut expected: std::collections::BTreeSet<String> = MenuAction::iter()
+                .filter(|a| a.handled_by_ui() && a.windows().contains(&window))
+                .map(|a| <&'static str>::from(a).to_owned())
+                .collect();
+            expected.extend(extra.iter().map(|s| (*s).to_owned()));
+            assert_eq!(menu_action_cases(script), expected, "{script}");
+        }
     }
 
     #[test]
     fn menu_ids_round_trip() {
         use strum::IntoEnumIterator;
         for action in MenuAction::iter() {
-            let id = menu_id(WIN_QUERY, action);
-            assert_eq!(parse_menu_id(&id), Some((WIN_QUERY, action)), "{id}");
+            for window in action.windows() {
+                let id = menu_id(window, action);
+                assert_eq!(parse_menu_id(&id), Some((*window, action)), "{id}");
+            }
         }
         // The predefined items (undo, copy, ...) carry ids that are not ours.
         assert_eq!(parse_menu_id("undo"), None);
         assert_eq!(parse_menu_id("main:no-such-item"), None);
+        // An item paired with a window whose menu does not have it.
+        assert_eq!(parse_menu_id("settings:exit"), None);
+        assert_eq!(parse_menu_id("main:close"), None);
     }
 
     // ── SslMode ────────────────────────────────────────────────────
