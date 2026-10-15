@@ -868,7 +868,7 @@ connectBtn.addEventListener("click", async () => {
       await eventApi.emit("profiles:changed");
     }
     const profileId = result.saved_id || selectedProfileId;
-    await safeInvoke("open_query_window", { id: profileId });
+    await safeInvoke("open_connection_window", { id: profileId });
     await safeInvoke("hide_window");
   } catch (error) {
     show(String(error));

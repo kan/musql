@@ -5,7 +5,6 @@ const invoke = (window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.co
 const treeEl = document.getElementById("profile-tree");
 const profileNewBtn = document.getElementById("profile-new");
 const groupNewBtn = document.getElementById("group-new");
-const contextMenuEl = document.getElementById("context-menu");
 const filterInput = document.getElementById("filter-input");
 const tagFilterBarEl = document.getElementById("tag-filter-bar");
 const menuBtn = document.getElementById("menu-btn");
@@ -403,7 +402,7 @@ function openSettings(id, groupId) {
 }
 
 function openQuery(id) {
-  safeInvoke("open_query_window", { id })
+  safeInvoke("open_connection_window", { id })
     .catch((error) => alert(String(error)));
 }
 
@@ -465,63 +464,11 @@ async function refreshProfiles() {
   renderTree();
 }
 
-// ── Context menu ──
+// ── Context menu (context-menu.js shows it, and hides it on a click or Escape) ──
 
-function showContextMenu(e, menuItems) {
-  hideContextMenu();
-  contextMenuEl.innerHTML = "";
-  menuItems.forEach((mi) => {
-    if (mi.separator) {
-      const sep = document.createElement("div");
-      sep.className = "context-menu-separator";
-      contextMenuEl.appendChild(sep);
-      return;
-    }
-    const el = document.createElement("div");
-    el.className = "context-menu-item";
-    if (mi.icon) {
-      var iconSpan = document.createElement('span');
-      iconSpan.innerHTML = icon(mi.icon);
-      el.appendChild(iconSpan);
-      el.appendChild(document.createTextNode(' ' + mi.label));
-    } else {
-      el.textContent = mi.label;
-    }
-    if (mi.danger) el.style.color = "var(--danger)";
-    el.addEventListener("click", () => {
-      hideContextMenu();
-      mi.action();
-    });
-    contextMenuEl.appendChild(el);
-  });
-
-  contextMenuEl.classList.remove("hidden");
-  contextMenuEl.style.left = e.clientX + "px";
-  contextMenuEl.style.top = e.clientY + "px";
-
-  // Adjust if overflows viewport
-  requestAnimationFrame(() => {
-    const rect = contextMenuEl.getBoundingClientRect();
-    if (rect.right > window.innerWidth) {
-      contextMenuEl.style.left = (window.innerWidth - rect.width - 4) + "px";
-    }
-    if (rect.bottom > window.innerHeight) {
-      contextMenuEl.style.top = (window.innerHeight - rect.height - 4) + "px";
-    }
-  });
-}
-
-function hideContextMenu() {
-  contextMenuEl.classList.add("hidden");
-}
-
-document.addEventListener("click", hideContextMenu);
 document.addEventListener("contextmenu", (e) => {
   // Only hide if not on a tree node (tree nodes handle their own)
   if (!e.target.closest(".tree-node")) hideContextMenu();
-});
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") hideContextMenu();
 });
 
 // ── Drag & Drop ──

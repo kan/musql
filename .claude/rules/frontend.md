@@ -6,9 +6,10 @@
 - **main** (`ui/index.html`, `ui/app.js`): 接続プロファイル一覧。
 - **settings** (`ui/settings.html`, `ui/settings.js`): プロファイル編集・接続テスト。
 - **query** (`ui/query.html`, `ui/query.js`): DB エクスプローラ（テーブル一覧・Data/Schema/SQL タブ・AI アシスト）。タブはドラッグで並び替え可。全タブ状態（SQL 内容・テーブルタブ・表示順・アクティブタブ）を localStorage に永続化。
+- **redis** (`ui/redis.html`, `ui/redis.js`、#98): Redis のプロファイルを開く画面。左にキーの一覧（`redis_scan`、パターンで絞り込み）、右に CLI タブとキーごとのタブ。接続は Rust が 1 本だけ持つ（`redis_connect`）。CLI の危険なコマンドの判定と現在の DB 番号は Rust が持ち（`rust.md` の「Redis」）、画面は `redis_command` が返す `confirm` を見て確認し、`db` を表示に反映するだけにする（`applyDb`。左上の DB の切り替え（`openDbMenu`）は `redis_databases` で一覧を出し、選んだ DB を `redis_select` で切り替える）。キーの一覧はパターン欄の入力に合わせて読み直し、ワイルドカードの無い文字列は部分一致（`patternFor`）にする。CLI の補完とヘルプは、サーバーの `COMMAND DOCS` から作る（`redis_command_docs`。取れないサーバーでは補完が出ないだけで、CLI は動く）。`menu:action` は `getCurrentWindow().listen` で受ける（素の `listen` は他のウィンドウ宛ても受けるため）。
 - ウィンドウは `tauri.conf.json` で事前定義、show/hide パターンで管理。
-- **`style.css` / `app.js` / `query.js` / `settings.js` / `result-table.js` を変えたら、それを読み込む HTML の `?v=N` を 1 つ上げる**（`<link href="./style.css?v=N">` など。`style.css` は 3 つの HTML すべて）。キャッシュされた古いファイルが使われ続けるのを避けるための番号で、上げ忘れても lint もテストも落ちない。`?v=` の付いていない共有スクリプト（`i18n.js` / `icons.js` / `theme.js` / `manual.js` / `about.js` / `op-picker.js` / `error-log.js`）は対象外。
-- **結果テーブル**（`renderTable` / `renderPagedTable` / `showRowDetailModal`）は `ui/result-table.js` にある。今は query 画面だけが使い、#98 の Redis 画面と共有するために切り出した。`i18n.js` と `icons.js` の後に読み込む。
+- **`style.css` / `app.js` / `query.js` / `settings.js` / `redis.js` / `result-table.js` / `credential-prompt.js` / `export.js` / `context-menu.js` を変えたら、それを読み込む HTML の `?v=N` を 1 つ上げる**（`<link href="./style.css?v=N">` など。`style.css` は 4 つの HTML すべて）。キャッシュされた古いファイルが使われ続けるのを避けるための番号で、上げ忘れても lint もテストも落ちない。`?v=` の付いていない共有スクリプト（`i18n.js` / `icons.js` / `theme.js` / `manual.js` / `about.js` / `op-picker.js` / `error-log.js`）は対象外。
+- **結果テーブル**（`renderTable` / `renderPagedTable` / `showRowDetailModal`）は `ui/result-table.js`、**資格情報の入力**（`promptForCredentials`）は `ui/credential-prompt.js` にあり、query 画面と Redis 画面が共有する。どちらも `i18n.js`（と `icons.js`）の後に読み込む。資格情報の入力のモーダルの HTML（`#pw-prompt-modal` ほか）は、使う画面の側に置く。ウィンドウを閉じるときは `cancelCredentialPrompt` で入力を取り消す（残すと、次に開いたときにその入力が前のプロファイルの接続を始めてしまう）。**エクスポート**（`generateCsv` / `openExportDialog` / `exportRows` / `currentRowsExportItems`）は `ui/export.js` にあり、query 画面と Redis 画面が共有する。画面は `currentRowsExportItems` で表示中の行の項目（CSV / TSV）を得て、自分の項目を後ろに足す。テーブル全体や SQL のエクスポートは MySQL に固有なので `query.js` に残す。**コンテキストメニュー**（`showContextMenu` / `hideContextMenu`）は `ui/context-menu.js` にあり、main / query / Redis の 3 画面が共有する。要素（`#context-menu`）は各画面が持つ。クリックと Escape で隠すリスナーは `context-menu.js` が登録するので、画面側で足さないこと。メニューを開くボタンは、そのクリックが document へ届かないように止める。
 - **ウィンドウタイトルを変えるときは `safeInvoke("set_window_title", { title })` を呼ぶ。** JS の `setTitle` は使わない（dev 版の `[DEBUG]` の目印を Rust 側で付けるため。capabilities から `core:window:allow-set-title` を外してあるので、呼ぶと権限エラーになる。#120）。
 
 ## 機能ごとの実装メモ
@@ -18,7 +19,7 @@
 - **アプリ内マニュアル（#46）**: `ui/manual.js` が `docs/manual/*.md` を raw.githubusercontent.com から fetch し、自前の簡易 Markdown レンダラ（DOM 構築・innerHTML 不使用）でモーダル表示。バンドルしない（main ブランチが正）。入口は F1（全ウィンドウ）/ main ヘルプメニュー「マニュアル」（`main:manual` → `menu:action` "manual"）/ 各画面の `?` ボタン（`data-manual="page.md#anchor"`、動的モーダルは `window.createHelpButton()`）。見出し ID は GitHub slug 互換（`makeSlugger`）。外部リンクは Rust `open_external`（https 限定）。CSP で raw.githubusercontent.com を connect-src / img-src に許可。マニュアルの見出しを変えたら `data-manual` のアンカーも追従すること。
 
 - **「muSQL について」とライセンス一覧（#119）**: `ui/about.js`（main 画面だけが読み込む）。入口は main ヘルプメニュー「muSQL について」（`main:about` → `menu:action` "about" → `window.openAbout()`）。版は `window.__TAURI__.app.getVersion()`、一覧は `ui/credits.json` を初めて開いたときに `fetch` する（約 0.9MB で、起動時には読まない。CSP の `connect-src` に `'self'` があるのはこのため）。各項目の本文は開いたときに DOM を作る。**`ui/credits.json` を手で編集しないこと**（`just credits` が生成する。仕組みは `testing.md`）。**`ui/lib/` のライブラリを追加、更新したとき、または `ui/icons.js` に Lucide のアイコンを足したときは、`src-tauri/src/credits.rs` の `VENDORED` と `ui/lib/` の `LICENSE` ファイルも直し、`just credits` を回す**（vendor の分は手で管理している。テストが検出するのは、項目やライセンスファイルの欠け、CodeMirror の版の食い違い、作り直し忘れまで。sql-formatter と Lucide の版が古いことは検出しない）。
-- **JS エラーのログ（#110）**: `ui/error-log.js` が未捕捉のエラー（`error` / `unhandledrejection`）を `log_frontend` コマンドでログファイルへ送る。3 画面とも**最初の `<script>`** として読み込む（後続スクリプトのエラーを拾うため）。同じエラーは 60 秒に 1 回へ間引く。**書くのは `Error` オブジェクトだけ**で、それ以外の値（`invoke` が reject する Rust の `Err` 文字列など）は型名しか書かない。`catch` を 1 つ書き忘れても SQL がログへ出ないようにするためなので、この制限を外さないこと。**`catch` 済みの失敗を `log_frontend` へ流さないこと**（クエリのエラー文には SQL の一部が入る。ログに書いてよいものの基準は `rust.md`「秘密情報」）。
+- **JS エラーのログ（#110）**: `ui/error-log.js` が未捕捉のエラー（`error` / `unhandledrejection`）を `log_frontend` コマンドでログファイルへ送る。すべての画面の HTML で**最初の `<script>`** として読み込む（後続スクリプトのエラーを拾うため）。同じエラーは 60 秒に 1 回へ間引く。**書くのは `Error` オブジェクトだけ**で、それ以外の値（`invoke` が reject する Rust の `Err` 文字列など）は型名しか書かない。`catch` を 1 つ書き忘れても SQL がログへ出ないようにするためなので、この制限を外さないこと。**`catch` 済みの失敗を `log_frontend` へ流さないこと**（クエリのエラー文には SQL の一部が入る。ログに書いてよいものの基準は `rust.md`「秘密情報」）。
 
 ## localStorage keys
 - `musql:collapsed`, `musql:drafts:<profileId>`, `musql:history:<profileId>`, `musql:theme`, `musql:lang`
@@ -28,6 +29,7 @@
 - `musql:docker-last-cred` — 最後に使った Docker 資格情報（user/ssl_mode のみ。パスワードは keyring `docker:_last` に保存）
 - `musql:export:encoding`, `musql:export:newline` — エクスポートの文字コード / 改行コード設定（既定 utf-8 / lf）
 - `musql:notify-query` — 長時間クエリ完了のデスクトップ通知 ON/OFF（既定 ON、`"0"` で OFF）
+- `musql:redis-history:<profileId>` — Redis の CLI タブのコマンド履歴（最大 100 件。パスワードを含みうる行は `SECRET_WORDS` で除く）
 
 ## Limits
 - 結果行 500 件、ページング 100 件/ページ、SSH タイムアウト 8 秒。

@@ -205,8 +205,7 @@ impl Engine {
     fn window(&self) -> Result<&'static str, String> {
         match self.protocol()? {
             Protocol::Mysql => Ok(WIN_QUERY),
-            // The Redis window comes with the next step of #98.
-            Protocol::Redis => Err("Opening Redis connections is not available yet.".to_owned()),
+            Protocol::Redis => Ok(WIN_REDIS),
         }
     }
 
@@ -462,6 +461,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
 
 const WIN_MAIN: &str = "main";
 const WIN_QUERY: &str = "query";
+const WIN_REDIS: &str = "redis";
 const WIN_SETTINGS: &str = "settings";
 
 /// Tracks the label of the currently focused window.
@@ -524,13 +524,7 @@ async fn get_or_create_pool_async(
     }
 
     // Set up SSH tunnel if needed (async)
-    let (target_host, target_port, tunnel) = match &request.ssh {
-        Some(ssh) if ssh.enabled => {
-            let tunnel = start_ssh_tunnel(ssh, &request.mysql.host, request.mysql.port).await?;
-            ("127.0.0.1".to_owned(), tunnel.local_port, Some(tunnel))
-        }
-        _ => (request.mysql.host.clone(), request.mysql.port, None),
-    };
+    let (target_host, target_port, tunnel) = connect_target(request).await?;
 
     // Build MySQL pool (blocking)
     let mut mysql_no_db = request.mysql.clone();
@@ -1966,6 +1960,20 @@ async fn authenticate_ssh(
   )
 }
 
+/// Where to connect for `request`: its server, or the local end of an SSH tunnel to it.
+/// The tunnel stays open while the returned `SshTunnel` is kept.
+async fn connect_target(
+    request: &ConnectionRequest,
+) -> Result<(String, u16, Option<SshTunnel>), String> {
+    match &request.ssh {
+        Some(ssh) if ssh.enabled => {
+            let tunnel = start_ssh_tunnel(ssh, &request.mysql.host, request.mysql.port).await?;
+            Ok(("127.0.0.1".to_owned(), tunnel.local_port, Some(tunnel)))
+        }
+        _ => Ok((request.mysql.host.clone(), request.mysql.port, None)),
+    }
+}
+
 async fn start_ssh_tunnel(
     ssh: &SshConfig,
     mysql_host: &str,
@@ -2169,13 +2177,7 @@ async fn run_connection_test(
     resolve_credentials(&mut request, profile_id.as_deref()).await?;
 
     // Set up SSH tunnel if needed (async)
-    let (target_host, target_port, _tunnel) = match &request.ssh {
-        Some(ssh) if ssh.enabled => {
-            let tunnel = start_ssh_tunnel(ssh, &request.mysql.host, request.mysql.port).await?;
-            ("127.0.0.1".to_owned(), tunnel.local_port, Some(tunnel))
-        }
-        _ => (request.mysql.host.clone(), request.mysql.port, None),
-    };
+    let (target_host, target_port, _tunnel) = connect_target(&request).await?;
 
     // The connection test itself (blocking)
     let mysql = request.mysql.clone();
@@ -2328,6 +2330,158 @@ fn disconnect_pool(
     let mut guard = state.lock().map_err(|e| format!("Lock error: {e}"))?;
     *guard = None;
     Ok(())
+}
+
+// ── Redis window commands (#98) ──
+
+#[derive(Serialize)]
+struct RedisServer {
+    version: String,
+    db: i64,
+}
+
+/// Opens the Redis window's connection, replacing any earlier one. Credentials and the
+/// SSH tunnel are resolved as for MySQL.
+#[tauri::command]
+async fn redis_connect(
+    mut request: ConnectionRequest,
+    profile_id: Option<String>,
+    state: tauri::State<'_, redis_client::RedisState>,
+) -> Result<RedisServer, String> {
+    if request.engine.protocol()? != Protocol::Redis {
+        return Err("This is not a Redis connection.".to_owned());
+    }
+    // Drop the earlier session first, which also closes its SSH tunnel. The epoch keeps a
+    // connect still running from an earlier open from storing its session after this one.
+    let epoch = drop_redis_session(&state).await?;
+    resolve_credentials(&mut request, profile_id.as_deref()).await?;
+    let (host, port, tunnel) = connect_target(&request).await?;
+    let mysql = request.mysql.clone();
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let client = redis_client::client(&mysql, &host, port)?;
+        let mut session = redis_client::RedisSession::open(client, tunnel)?;
+        let version = redis_client::server_version(&mut session)?;
+        let db = session.db();
+        let mut guard = redis_client::lock(&state);
+        if !redis_client::is_current(epoch) {
+            // Closed, or opened again, while connecting: the session is dropped here.
+            return Err("The connection was cancelled.".to_owned());
+        }
+        *guard = Some(session);
+        Ok(RedisServer { version, db })
+    })
+    .await
+    .map_err(|e| format!("Task error: {e}"))?
+    .inspect_err(|e: &String| log::warn!("Redis connection failed: {e}"))
+}
+
+#[tauri::command]
+async fn redis_disconnect(state: tauri::State<'_, redis_client::RedisState>) -> Result<(), String> {
+    drop_redis_session(&state).await.map(|_| ())
+}
+
+/// Closes the Redis session and starts a new epoch, so a connect still running does not
+/// store its session afterwards. Returns the new epoch. The lock is taken off the async
+/// runtime: a command still running holds it until the server answers (up to the read
+/// timeout). A drop that gets the lock only after a newer connect stored its session
+/// leaves that session alone (waiters on the lock are not served in order).
+async fn drop_redis_session(state: &redis_client::RedisState) -> Result<u64, String> {
+    let epoch = redis_client::next_epoch();
+    let state = state.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut guard = redis_client::lock(&state);
+        if redis_client::is_current(epoch) {
+            *guard = None;
+        }
+    })
+    .await
+    .map_err(|e| format!("Task error: {e}"))?;
+    Ok(epoch)
+}
+
+/// Runs `f` on the open Redis session off the async runtime (the redis calls block).
+/// Nothing here is logged: the errors can carry keys and values.
+async fn with_redis_session<T: Send + 'static>(
+    state: &redis_client::RedisState,
+    f: impl FnOnce(&mut redis_client::RedisSession) -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    let state = state.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut guard = redis_client::lock(&state);
+        let session = guard.as_mut().ok_or("Not connected")?;
+        f(session)
+    })
+    .await
+    .map_err(|e| format!("Task error: {e}"))?
+}
+
+#[tauri::command]
+async fn redis_scan(
+    cursor: String,
+    pattern: String,
+    state: tauri::State<'_, redis_client::RedisState>,
+) -> Result<redis_client::ScanPage, String> {
+    // A string, as `ScanPage` sends it (u64 cursors do not fit a JS number).
+    let cursor: u64 = cursor
+        .parse()
+        .map_err(|_| "Invalid scan cursor.".to_owned())?;
+    // Numbered before waiting for the connection, so a listing already running sees that
+    // this one superseded it. A disconnect or another connect stops it too (the window
+    // was closed or reopened).
+    let epoch = redis_client::next_scan_epoch();
+    let connection = redis_client::current_epoch();
+    with_redis_session(&state, move |s| {
+        redis_client::scan(s, cursor, &pattern, || {
+            redis_client::is_current_scan(epoch) && redis_client::is_current(connection)
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+async fn redis_key(
+    key: String,
+    raw: Option<String>,
+    state: tauri::State<'_, redis_client::RedisState>,
+) -> Result<redis_client::KeyView, String> {
+    // `raw`: the key's bytes in hex, for a key that is not valid UTF-8 (`KeyEntry`).
+    let key = redis_client::key_bytes(&key, raw.as_deref())?;
+    with_redis_session(&state, move |s| redis_client::key_view(s, &key)).await
+}
+
+/// The DB switcher. A failure (a DB number the server does not have) comes back as `Err`.
+#[tauri::command]
+async fn redis_select(
+    db: i64,
+    state: tauri::State<'_, redis_client::RedisState>,
+) -> Result<(), String> {
+    with_redis_session(&state, move |s| s.select(db)).await
+}
+
+#[tauri::command]
+async fn redis_databases(
+    state: tauri::State<'_, redis_client::RedisState>,
+) -> Result<Vec<redis_client::DbInfo>, String> {
+    with_redis_session(&state, redis_client::databases).await
+}
+
+#[tauri::command]
+async fn redis_command_docs(
+    state: tauri::State<'_, redis_client::RedisState>,
+) -> Result<Vec<redis_client::CommandDoc>, String> {
+    with_redis_session(&state, redis_client::command_docs).await
+}
+
+/// Runs one CLI line. A dangerous command comes back unrun with `confirm` set until it is
+/// sent again with `confirmed`.
+#[tauri::command]
+async fn redis_command(
+    line: String,
+    confirmed: bool,
+    state: tauri::State<'_, redis_client::RedisState>,
+) -> Result<redis_client::CommandReply, String> {
+    with_redis_session(&state, move |s| redis_client::command(s, &line, confirmed)).await
 }
 
 // Encode export content to the requested charset. Unmappable characters are
@@ -2919,28 +3073,50 @@ fn open_settings_window(
     Ok(())
 }
 
+/// Opens a profile in the window for its engine (#132); a profile of an unknown engine
+/// opens none.
 #[tauri::command]
-fn open_query_window(app: AppHandle, id: String) -> Result<(), String> {
-    // The window depends on the engine (#132); a profile of an unknown engine opens none.
+fn open_connection_window(app: AppHandle, id: String) -> Result<(), String> {
     let store = load_profiles(&app)?;
     let profile = store
         .items
         .iter()
         .find(|p| p.id == id)
         .ok_or("Profile not found")?;
+    let label = profile.request.engine.window()?;
+    show_connection_window(&app, label, "open", id)
+}
+
+/// Sends `<label>:<event>` (`query:open`, `redis:open`, `query:docker-open`), which only
+/// that window's page listens for, then shows the window in place of the main one. The
+/// other connection window, if open (a profile opened from the settings window), is
+/// closed first: one connection per instance.
+fn show_connection_window(
+    app: &AppHandle,
+    label: &str,
+    event: &str,
+    payload: impl Serialize + Clone,
+) -> Result<(), String> {
+    for other in CONNECTION_WINDOWS.iter().filter(|w| **w != label) {
+        if let Some(window) = app.get_webview_window(other) {
+            if window.is_visible().unwrap_or(false) {
+                let _ = window.emit(&format!("{other}:reset"), ());
+                let _ = window.hide();
+            }
+        }
+    }
     let window = app
-        .get_webview_window(profile.request.engine.window()?)
-        .ok_or("Query window not found")?;
+        .get_webview_window(label)
+        .ok_or("Connection window not found")?;
     window
-        .emit("query:open", id)
-        .map_err(|e| format!("Failed to send query event: {e}"))?;
+        .emit(&format!("{label}:{event}"), payload)
+        .map_err(|e| format!("Failed to send open event: {e}"))?;
     window
         .show()
-        .map_err(|e| format!("Failed to show query window: {e}"))?;
+        .map_err(|e| format!("Failed to show connection window: {e}"))?;
     window
         .set_focus()
-        .map_err(|e| format!("Failed to focus query window: {e}"))?;
-    // Hide main (connections) window
+        .map_err(|e| format!("Failed to focus connection window: {e}"))?;
     if let Some(main_win) = app.get_webview_window(WIN_MAIN) {
         let _ = main_win.hide();
     }
@@ -2968,6 +3144,7 @@ fn show_popup_menu(
         WIN_MAIN => build_main_menu(handle, &lang, &theme),
         WIN_QUERY => build_query_menu(handle, &lang, &theme, notify.unwrap_or(true)),
         WIN_SETTINGS => build_settings_menu(handle, &lang, &theme),
+        WIN_REDIS => build_redis_menu(handle, &lang, &theme),
         _ => return Ok(()),
     }
     .map_err(|e| format!("{e}"))?;
@@ -3079,33 +3256,38 @@ impl MenuAction {
         match self {
             NewProfile | NewGroup | Import | Export | SyncSettings | Exit | CheckUpdate
             | Manual | Github | OpenLogs | About => &[WIN_MAIN],
-            NewSqlTab | Close | SwitchDb | AiSettings | ToggleNotify | Run | RunAll | Cancel
-            | Format => &[WIN_QUERY],
+            NewSqlTab | SwitchDb | AiSettings | ToggleNotify | Run | RunAll | Cancel | Format => {
+                &[WIN_QUERY]
+            }
+            Close => &CONNECTION_WINDOWS,
             TestConnection | Connect | Save | Delete => &[WIN_SETTINGS],
-            ThemeLight | ThemeDark | LangEn | LangJa => &[WIN_MAIN, WIN_QUERY, WIN_SETTINGS],
+            ThemeLight | ThemeDark | LangEn | LangJa => {
+                &[WIN_MAIN, WIN_QUERY, WIN_SETTINGS, WIN_REDIS]
+            }
         }
     }
 
     /// What Rust does for this item, or `None` when the window's UI handles it (sent as
     /// `menu:action`). One exhaustive match, so a new item cannot compile until it picks
-    /// a side, and an item for Rust cannot be left without its handler.
-    fn rust_handler(self) -> Option<fn(&AppHandle)> {
+    /// a side, and an item for Rust cannot be left without its handler. The handler gets
+    /// the label of the window whose menu it came from.
+    fn rust_handler(self) -> Option<fn(&AppHandle, &str)> {
         use MenuAction::*;
         match self {
-            Exit => Some(quit),
-            Github => Some(|_| {
+            Exit => Some(|app, _| quit(app)),
+            Github => Some(|_, _| {
                 let _ = open_in_browser("https://github.com/kan/musql");
             }),
-            OpenLogs => Some(|app| {
+            OpenLogs => Some(|app, _| {
                 if let Err(e) = app_log::open_dir(app) {
                     log::warn!("failed to open the log directory: {e}");
                 }
             }),
             // Not in the Store build's menu.
             #[cfg(not(feature = "self-updater"))]
-            CheckUpdate => Some(|_| {}),
+            CheckUpdate => Some(|_, _| {}),
             #[cfg(feature = "self-updater")]
-            CheckUpdate => Some(|app| {
+            CheckUpdate => Some(|app, _| {
                 let handle = app.clone();
                 tauri::async_runtime::spawn(async move {
                     // A newer version announces itself (`update-available`). Both "up to
@@ -3120,16 +3302,7 @@ impl MenuAction {
                     }
                 });
             }),
-            Close => Some(|app| {
-                if let Some(w) = app.get_webview_window(WIN_QUERY) {
-                    let _ = w.emit("query:reset", ());
-                    let _ = w.hide();
-                }
-                if let Some(w) = app.get_webview_window(WIN_MAIN) {
-                    let _ = w.show();
-                    let _ = w.set_focus();
-                }
-            }),
+            Close => Some(close_connection_window),
             NewProfile | NewGroup | Import | Export | SyncSettings | Manual | About | NewSqlTab
             | SwitchDb | AiSettings | ToggleNotify | Run | RunAll | Cancel | Format
             | TestConnection | Connect | Save | Delete | ThemeLight | ThemeDark | LangEn
@@ -3447,6 +3620,42 @@ fn build_settings_menu(
     Menu::with_items(handle, &[&edit_menu, &view_menu, &settings_menu])
 }
 
+/// The windows that show an open connection: a profile opens in one of them, chosen by
+/// `Engine::window`.
+const CONNECTION_WINDOWS: [&str; 2] = [WIN_QUERY, WIN_REDIS];
+
+/// Closes a connection window: its page drops the connection (`<label>:reset`), the
+/// window hides, and the connections list comes back. From the window's close button
+/// and from its menu alike.
+fn close_connection_window(app: &AppHandle, label: &str) {
+    if let Some(w) = app.get_webview_window(label) {
+        let _ = w.emit(&format!("{label}:reset"), ());
+        let _ = w.hide();
+    }
+    if let Some(w) = app.get_webview_window(WIN_MAIN) {
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+}
+
+fn build_redis_menu(handle: &AppHandle<Wry>, lang: &str, theme: &str) -> tauri::Result<Menu<Wry>> {
+    let file_menu = Submenu::with_items(
+        handle,
+        menu_title(lang, MenuTitle::File),
+        true,
+        &[&menu_item(
+            handle,
+            lang,
+            WIN_REDIS,
+            MenuAction::Close,
+            Some("CmdOrCtrl+W"),
+        )?],
+    )?;
+    let edit_menu = build_edit_submenu(handle, lang)?;
+    let view_menu = build_view_submenu(handle, lang, theme, WIN_REDIS)?;
+    Menu::with_items(handle, &[&file_menu, &edit_menu, &view_menu])
+}
+
 /// Set menus once at startup to register accelerators, then hide menu bars.
 fn setup_menus(handle: &AppHandle<Wry>) -> tauri::Result<()> {
     let main_menu = build_main_menu(handle, "en", "light")?;
@@ -3464,6 +3673,10 @@ fn setup_menus(handle: &AppHandle<Wry>) -> tauri::Result<()> {
     }
     if let Some(w) = handle.get_webview_window(WIN_SETTINGS) {
         let _ = w.set_menu(settings_menu);
+        let _ = w.hide_menu();
+    }
+    if let Some(w) = handle.get_webview_window(WIN_REDIS) {
+        let _ = w.set_menu(build_redis_menu(handle, "en", "light")?);
         let _ = w.hide_menu();
     }
     Ok(())
@@ -3623,22 +3836,7 @@ async fn docker_cleanup_tunnels() -> Result<(), String> {
 #[cfg(feature = "docker")]
 #[tauri::command]
 fn open_docker_query_window(app: AppHandle, info: DockerConnectionInfo) -> Result<(), String> {
-    let window = app
-        .get_webview_window(WIN_QUERY)
-        .ok_or("Query window not found")?;
-    window
-        .emit("query:docker-open", &info)
-        .map_err(|e| format!("Failed to send docker query event: {e}"))?;
-    window
-        .show()
-        .map_err(|e| format!("Failed to show query window: {e}"))?;
-    window
-        .set_focus()
-        .map_err(|e| format!("Failed to focus query window: {e}"))?;
-    if let Some(main_win) = app.get_webview_window(WIN_MAIN) {
-        let _ = main_win.hide();
-    }
-    Ok(())
+    show_connection_window(&app, WIN_QUERY, "docker-open", &info)
 }
 
 // Stubs when docker feature is disabled
@@ -3689,7 +3887,7 @@ fn quit(app: &AppHandle) {
         use tauri_plugin_window_state::{AppHandleExt, StateFlags};
         let _ = app.save_window_state(StateFlags::all());
     }
-    vdesk::on_quit(app, &[WIN_MAIN, WIN_QUERY]);
+    vdesk::on_quit(app, &[&[WIN_MAIN][..], &CONNECTION_WINDOWS].concat());
     #[cfg(feature = "docker")]
     {
         tauri::async_runtime::spawn(async {
@@ -3772,7 +3970,7 @@ fn main() {
                 return;
             };
             match action.rust_handler() {
-                Some(handle) => handle(app),
+                Some(handle) => handle(app, window_label),
                 // The UI of the window the menu belongs to handles it.
                 None => {
                     let _ = app.emit_to(
@@ -3784,6 +3982,7 @@ fn main() {
             }
         })
         .manage(Arc::new(Mutex::new(None::<ConnectionCache>)))
+        .manage(redis_client::RedisState::default())
         .manage(ActiveWindow(Mutex::new(WIN_MAIN.to_owned())))
         .on_window_event(|window, event| match event {
             tauri::WindowEvent::Focused(true) => {
@@ -3801,16 +4000,10 @@ fn main() {
             }
             tauri::WindowEvent::CloseRequested { api, .. } if window.label() != WIN_MAIN => {
                 api.prevent_close();
-                let is_query = window.label() == WIN_QUERY;
-                if is_query {
-                    let _ = window.emit("query:reset", ());
-                }
-                let _ = window.hide();
-                if is_query {
-                    if let Some(main_win) = window.app_handle().get_webview_window(WIN_MAIN) {
-                        let _ = main_win.show();
-                        let _ = main_win.set_focus();
-                    }
+                if CONNECTION_WINDOWS.contains(&window.label()) {
+                    close_connection_window(window.app_handle(), window.label());
+                } else {
+                    let _ = window.hide();
                 }
             }
             _ => {}
@@ -3826,9 +4019,17 @@ fn main() {
             duplicate_profile,
             reorder,
             open_settings_window,
-            open_query_window,
+            open_connection_window,
             hide_window,
             disconnect_pool,
+            redis_connect,
+            redis_disconnect,
+            redis_scan,
+            redis_key,
+            redis_command,
+            redis_select,
+            redis_databases,
+            redis_command_docs,
             cancel_query,
             export_file,
             pick_file,
@@ -4090,6 +4291,7 @@ Host myserver
             (WIN_MAIN, "app.js", &["no-update"][..]),
             (WIN_QUERY, "query.js", &[][..]),
             (WIN_SETTINGS, "settings.js", &[][..]),
+            (WIN_REDIS, "redis.js", &[][..]),
         ] {
             let mut expected: std::collections::BTreeSet<String> = MenuAction::iter()
                 .filter(|a| a.handled_by_ui() && a.windows().contains(&window))

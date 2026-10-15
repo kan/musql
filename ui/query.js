@@ -14,7 +14,6 @@ const tableListEl = document.getElementById("table-list");
 const tabBarTabs = document.getElementById("tab-bar-tabs");
 const tabContent = document.getElementById("tab-content");
 const tabAddBtn = document.getElementById("tab-add-btn");
-const contextMenuEl = document.getElementById("context-menu");
 
 const menuBtn = document.getElementById("menu-btn");
 
@@ -501,7 +500,7 @@ function renderAiMessages() {
       actions.className = "ai-msg-actions";
       const copyBtn = document.createElement("button");
       copyBtn.className = "ghost";
-      copyBtn.innerHTML = icon('copy', 14) + " " + t('ai_assist_copy');
+      copyBtn.innerHTML = icon('copy', 14) + " " + t('copy');
       copyBtn.addEventListener("click", () => {
         navigator.clipboard.writeText(msg.content).catch(() => {});
       });
@@ -621,85 +620,8 @@ async function safeInvoke(command, payload) {
   return invoke(command, payload);
 }
 
-// ── Credential prompt modal ──
-const pwPromptModal = document.getElementById("pw-prompt-modal");
-const pwPromptFields = document.getElementById("pw-prompt-fields");
-const pwPromptError = document.getElementById("pw-prompt-error");
-const pwPromptOk = document.getElementById("pw-prompt-ok");
-const pwPromptCancel = document.getElementById("pw-prompt-cancel");
-
-function promptForCredentials(request) {
-  return new Promise((resolve) => {
-    const fields = [];
-    if (request.mysql.save_password === false) {
-      fields.push({ key: "mysql_password", label: t("password"), type: "password" });
-    }
-    if (request.ssh && request.ssh.enabled) {
-      if (request.ssh.auth_method === "password" && request.ssh.save_ssh_password === false) {
-        fields.push({ key: "ssh_password", label: t("ssh_password_label"), type: "password" });
-      }
-      if (request.ssh.auth_method === "key" && request.ssh.save_ssh_passphrase === false) {
-        fields.push({ key: "ssh_passphrase", label: t("ssh_passphrase"), type: "password" });
-      }
-    }
-    if (fields.length === 0) {
-      resolve(true);
-      return;
-    }
-
-    pwPromptFields.innerHTML = "";
-    pwPromptError.textContent = "";
-    const inputs = {};
-    fields.forEach((f) => {
-      const lbl = document.createElement("label");
-      lbl.style.marginBottom = "10px";
-      const span = document.createElement("span");
-      span.textContent = f.label;
-      const inp = document.createElement("input");
-      inp.type = f.type;
-      inp.style.width = "100%";
-      lbl.appendChild(span);
-      lbl.appendChild(inp);
-      pwPromptFields.appendChild(lbl);
-      inputs[f.key] = inp;
-    });
-
-    pwPromptModal.classList.remove("hidden");
-    const firstInput = Object.values(inputs)[0];
-    if (firstInput) firstInput.focus();
-
-    function cleanup() {
-      pwPromptModal.classList.add("hidden");
-      pwPromptOk.removeEventListener("click", onOk);
-      pwPromptCancel.removeEventListener("click", onCancel);
-      document.removeEventListener("keydown", onKey);
-    }
-    function onOk() {
-      if (inputs.mysql_password) {
-        request.mysql.password = inputs.mysql_password.value;
-      }
-      if (inputs.ssh_password && request.ssh) {
-        request.ssh.ssh_password = inputs.ssh_password.value;
-      }
-      if (inputs.ssh_passphrase && request.ssh) {
-        request.ssh.passphrase = inputs.ssh_passphrase.value;
-      }
-      cleanup();
-      resolve(true);
-    }
-    function onCancel() {
-      cleanup();
-      resolve(false);
-    }
-    function onKey(e) {
-      if (e.key === "Escape") onCancel();
-      if (e.key === "Enter") onOk();
-    }
-    pwPromptOk.addEventListener("click", onOk);
-    pwPromptCancel.addEventListener("click", onCancel);
-    document.addEventListener("keydown", onKey);
-  });
-}
+// The credential prompt (`promptForCredentials`) lives in credential-prompt.js, shared
+// with the Redis window (#98).
 
 async function loadProfile(id) {
   const data = await safeInvoke("list_profiles");
@@ -819,26 +741,7 @@ function updateWindowTitle() {
   safeInvoke("set_window_title", { title }).catch((e) => console.warn("set_window_title failed:", e));
 }
 
-// ── Export utilities ──
-
-function generateCsv(columns, rows, separator, newline) {
-  const escapeField = (val) => {
-    if (val === null || val === undefined) return "";
-    const s = String(val);
-    if (s.includes(separator) || s.includes('"') || s.includes("\n") || s.includes("\r")) {
-      return '"' + s.replace(/"/g, '""') + '"';
-    }
-    return s;
-  };
-  const lines = [];
-  lines.push(columns.map(escapeField).join(separator));
-  rows.forEach((row) => {
-    lines.push(columns.map((_, i) => escapeField(row[i])).join(separator));
-  });
-  // Only the record separator uses the chosen line ending; newlines embedded in
-  // quoted field values are preserved verbatim (data fidelity — see #40 review).
-  return lines.join(newline || "\n");
-}
+// ── Export utilities (CSV and the options dialog are in export.js) ──
 
 function quoteId(name) {
   return '`' + name.replace(/`/g, '``') + '`';
@@ -1084,172 +987,8 @@ async function generateMarkdownSchema(tableName, newline) {
   return lines.join(newline || "\n");
 }
 
-// ── Export options: encoding + line ending + clipboard (#40) ──
-
-const EXPORT_ENCODINGS = [
-  { value: "utf-8", label: "UTF-8" },
-  { value: "utf-8-bom", label: "UTF-8 (BOM)" },
-  { value: "shift_jis", label: "Shift_JIS" },
-  { value: "euc-jp", label: "EUC-JP" },
-];
-const EXPORT_NEWLINES = [
-  { value: "lf", label: "LF" },
-  { value: "crlf", label: "CRLF" },
-];
-
-function getExportPref(key, fallback) {
-  try { return localStorage.getItem("musql:export:" + key) || fallback; } catch (_) { return fallback; }
-}
-function setExportPref(key, val) {
-  try { localStorage.setItem("musql:export:" + key, val); } catch (_) { /* ignore */ }
-}
-
-async function saveFile(content, defaultName, filterName, extensions, encoding) {
-  return safeInvoke("export_file", { content, defaultName, filterName, extensions, encoding: encoding || "utf-8" });
-}
-
-// Opens the export options dialog. `generate` is an async (newline) => content that
-// builds the payload using the chosen record separator; for file save the encoding is
-// applied in Rust. The clipboard path writes Unicode text (encoding is a no-op there).
-function openExportDialog({ defaultName, ext, filterName, generate }) {
-  const overlay = document.createElement("div");
-  overlay.className = "modal-overlay";
-  const box = document.createElement("div");
-  box.className = "modal-box";
-  box.style.maxWidth = "360px";
-
-  const h2 = document.createElement("h2");
-  h2.textContent = t('export_options_title');
-  const headingRow = document.createElement("div");
-  headingRow.className = "modal-heading-row";
-  headingRow.appendChild(h2);
-  headingRow.appendChild(window.createHelpButton("export.md#文字コードと改行コード"));
-  box.appendChild(headingRow);
-
-  function makeSelect(labelText, options, current) {
-    const label = document.createElement("label");
-    const span = document.createElement("span");
-    span.textContent = labelText;
-    label.appendChild(span);
-    const sel = document.createElement("select");
-    options.forEach((o) => {
-      const opt = document.createElement("option");
-      opt.value = o.value;
-      opt.textContent = o.label;
-      sel.appendChild(opt);
-    });
-    sel.value = current;
-    label.appendChild(sel);
-    box.appendChild(label);
-    return sel;
-  }
-
-  const encSel = makeSelect(t('export_charset'), EXPORT_ENCODINGS, getExportPref("encoding", "utf-8"));
-  const nlSel = makeSelect(t('export_newline'), EXPORT_NEWLINES, getExportPref("newline", "lf"));
-
-  const status = document.createElement("p");
-  status.className = "modal-status";
-  box.appendChild(status);
-
-  const actions = document.createElement("div");
-  actions.className = "actions actions-right";
-  actions.style.marginTop = "16px";
-  actions.style.flexWrap = "nowrap"; // keep Cancel / Copy / Save on one row
-  const cancelBtn = document.createElement("button");
-  cancelBtn.className = "ghost";
-  cancelBtn.textContent = t('cancel');
-  const copyBtn = document.createElement("button");
-  copyBtn.className = "ghost";
-  copyBtn.innerHTML = icon('copy', 14) + " " + t('export_copy_clipboard');
-  const saveBtn = document.createElement("button");
-  saveBtn.className = "success";
-  saveBtn.innerHTML = icon('download', 14) + " " + t('export_save_file');
-  actions.appendChild(cancelBtn);
-  actions.appendChild(copyBtn);
-  actions.appendChild(saveBtn);
-  box.appendChild(actions);
-
-  overlay.appendChild(box);
-  document.body.appendChild(overlay);
-
-  let busy = false;
-  let closed = false;
-  function close() {
-    closed = true;
-    overlay.remove();
-    document.removeEventListener("keydown", onKey);
-  }
-  function onKey(e) {
-    if (e.key === "Escape") close();
-  }
-  // Cancel / Escape / backdrop stay available even while generating so a slow
-  // "all rows" export can always be dismissed; the `closed` guard then aborts the
-  // in-flight save/copy so no OS dialog or write happens after dismissal (#40 review).
-  function setBusy(b) {
-    busy = b;
-    [saveBtn, copyBtn, encSel, nlSel].forEach((el) => { el.disabled = b; });
-  }
-  function clearStatus() {
-    status.textContent = "";
-    status.style.color = "";
-  }
-  document.addEventListener("keydown", onKey);
-  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
-  cancelBtn.addEventListener("click", close);
-  // A stale "copied" message must not imply the current selection was copied.
-  [encSel, nlSel].forEach((sel) => sel.addEventListener("change", clearStatus));
-
-  async function prepareContent() {
-    setExportPref("newline", nlSel.value);
-    const nl = nlSel.value === "crlf" ? "\r\n" : "\n";
-    return generate(nl);
-  }
-
-  saveBtn.addEventListener("click", async () => {
-    if (busy) return;
-    setBusy(true);
-    clearStatus();
-    try {
-      const content = await prepareContent();
-      if (closed) return; // dismissed during generation → abort the save
-      const enc = encSel.value;
-      setExportPref("encoding", enc);
-      const ok = await saveFile(content, defaultName, filterName, [ext], enc);
-      if (ok) close(); else setBusy(false); // ok === false → user cancelled the OS save dialog
-    } catch (err) {
-      status.style.color = "var(--danger)";
-      status.textContent = t('export_failed', { msg: String(err) });
-      setBusy(false);
-    }
-  });
-
-  copyBtn.addEventListener("click", async () => {
-    if (busy) return;
-    setBusy(true);
-    clearStatus();
-    try {
-      // Encoding is a no-op for clipboard (Unicode text); only the line ending applies.
-      const content = await prepareContent();
-      if (closed) return; // dismissed during generation → abort the copy
-      await navigator.clipboard.writeText(content);
-      status.style.color = "var(--success)";
-      status.textContent = t('export_copied');
-      setBusy(false); // keep the dialog open so the user can copy again or save
-    } catch (err) {
-      status.style.color = "var(--danger)";
-      status.textContent = t('export_failed', { msg: String(err) });
-      setBusy(false);
-    }
-  });
-
-  encSel.focus();
-}
-
 function showExportMenu(e, columns, rows, tableName) {
-  const items = [
-    { label: t('csv_current'), icon: "download", action: () => doExportCurrent(columns, rows, tableName, ",", "csv") },
-    { label: t('tsv_current'), icon: "download", action: () => doExportCurrent(columns, rows, tableName, "\t", "tsv") },
-  ];
+  const items = currentRowsExportItems(columns, rows, tableName);
   if (tableName) {
     items.push({ separator: true });
     items.push({ label: t('csv_all'), icon: "download", action: () => doExportAll(tableName, ",", "csv") });
@@ -1259,15 +998,6 @@ function showExportMenu(e, columns, rows, tableName) {
     items.push({ label: t('markdown_schema'), icon: "download", action: () => doExportMarkdownSchema(tableName) });
   }
   showContextMenu(e, items);
-}
-
-function doExportCurrent(columns, rows, tableName, sep, ext) {
-  openExportDialog({
-    defaultName: (tableName || "export") + "." + ext,
-    ext,
-    filterName: ext.toUpperCase(),
-    generate: async (nl) => generateCsv(columns, rows, sep, nl),
-  });
 }
 
 function doExportAll(tableName, sep, ext) {
@@ -2413,55 +2143,6 @@ function addSqlTab(initialContent, tabNum) {
   });
 }
 
-// ── Context menu ──
-
-function showContextMenu(e, menuItems) {
-  hideContextMenu();
-  contextMenuEl.innerHTML = "";
-  menuItems.forEach((mi) => {
-    if (mi.separator) {
-      const sep = document.createElement("div");
-      sep.className = "context-menu-separator";
-      contextMenuEl.appendChild(sep);
-      return;
-    }
-    const el = document.createElement("div");
-    el.className = "context-menu-item";
-    if (mi.icon) {
-      const iconSpan = document.createElement('span');
-      iconSpan.innerHTML = icon(mi.icon);
-      el.appendChild(iconSpan);
-      el.appendChild(document.createTextNode(' ' + mi.label));
-    } else {
-      el.textContent = mi.label;
-    }
-    if (mi.danger) el.style.color = "var(--danger)";
-    el.addEventListener("click", () => {
-      hideContextMenu();
-      mi.action();
-    });
-    contextMenuEl.appendChild(el);
-  });
-
-  contextMenuEl.classList.remove("hidden");
-  contextMenuEl.style.left = e.clientX + "px";
-  contextMenuEl.style.top = e.clientY + "px";
-
-  requestAnimationFrame(() => {
-    const rect = contextMenuEl.getBoundingClientRect();
-    if (rect.right > window.innerWidth) {
-      contextMenuEl.style.left = (window.innerWidth - rect.width - 4) + "px";
-    }
-    if (rect.bottom > window.innerHeight) {
-      contextMenuEl.style.top = (window.innerHeight - rect.height - 4) + "px";
-    }
-  });
-}
-
-function hideContextMenu() {
-  contextMenuEl.classList.add("hidden");
-}
-
 // ── QuickOpen command palette (Ctrl+P) (#44) ──
 // Subsequence fuzzy score: -1 if not all query chars appear in order, else higher-is-better
 // with bonuses for prefix and consecutive matches.
@@ -2672,10 +2353,8 @@ document.addEventListener("keydown", (e) => {
   }
 }, true);
 
-document.addEventListener("click", hideContextMenu);
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
-    hideContextMenu();
     if (!aiAssistModal.classList.contains("hidden")) {
       closeAiAssistModal();
     }
@@ -2786,6 +2465,8 @@ if (eventApi && eventApi.listen) {
   });
 
   eventApi.listen("query:reset", () => {
+    // A prompt left open would answer for the next open (credential-prompt.js).
+    cancelCredentialPrompt();
     resetExplorer();
   });
 

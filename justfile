@@ -84,6 +84,12 @@ verify-mysql:
 verify-docker:
     cargo test verify::verify_docker -- --ignored --nocapture
 
+# Redis の画面の処理（キーの一覧、型ごとの値、CLI）を確かめる（MUSQL_VERIFY_REDIS_HOST ほか。#98）。
+# 型ごとに 1 つずつ musql:verify: のキーを書き込み、最後に消すので、試験用のサーバーに向けること
+[working-directory('src-tauri')]
+verify-redis:
+    cargo test verify::verify_redis -- --ignored --nocapture
+
 # 通知を 1 件出し、クリックが返るかを確かめる（MUSQL_VERIFY_TOAST=1。数値なら待ち秒数。#113）
 [working-directory('src-tauri')]
 verify-toast:

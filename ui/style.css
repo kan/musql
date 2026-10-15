@@ -2064,3 +2064,199 @@ html.dark .CodeMirror-hint-active {
 .about-license-text::selection {
   background: var(--selection-bg);
 }
+
+/* ── Redis window (#98) ── */
+.redis-status {
+  padding: 24px;
+  color: var(--sub);
+}
+.redis-filter {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.redis-filter input {
+  width: 100%;
+}
+.redis-more {
+  padding: 6px 12px;
+}
+.redis-more button {
+  width: 100%;
+}
+.redis-kind {
+  flex: none;
+  min-width: 44px;
+  font-size: 11px;
+  color: var(--sub);
+}
+.table-list-item.active .redis-kind {
+  color: inherit;
+}
+.redis-empty {
+  padding: 8px 12px;
+  color: var(--sub);
+  font-size: 13px;
+}
+.redis-key-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+.redis-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  min-width: 0;
+}
+.redis-fact {
+  display: inline-flex;
+  gap: 6px;
+  white-space: nowrap;
+}
+.redis-fact-label {
+  color: var(--sub);
+}
+.redis-key-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+/* The DB switcher: the server label is a button that opens the DB list. */
+.redis-db-switch {
+  padding: 2px 6px;
+  border: none;
+  min-width: 0;
+  text-align: left;
+}
+/* A gap between the manual button and the menu button in a tab bar. */
+.tab-bar .help-btn {
+  margin: 0 8px;
+}
+.redis-note {
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--sub);
+}
+.redis-key-body {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+}
+.redis-value {
+  margin: 0;
+  padding: 12px;
+  font-family: "Consolas", "Cascadia Code", monospace;
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: text;
+}
+.redis-cli-output {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  font-family: "Consolas", "Cascadia Code", monospace;
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: text;
+}
+.redis-cli-command {
+  color: var(--accent);
+}
+.redis-cli-error {
+  color: var(--danger);
+}
+.redis-cli-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+  font-family: "Consolas", "Cascadia Code", monospace;
+}
+.redis-cli-input input {
+  flex: 1;
+  font-family: inherit;
+}
+.redis-cli-input-area {
+  position: relative;
+}
+/* Completion: opens upward from the input, over the end of the output. */
+.redis-suggest {
+  position: absolute;
+  left: 28px;
+  right: 12px;
+  bottom: 100%;
+  max-height: 240px;
+  overflow: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: var(--shadow-md);
+  z-index: 10;
+}
+.redis-suggest-item {
+  display: flex;
+  gap: 10px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-family: "Consolas", "Cascadia Code", monospace;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.redis-suggest-item:hover,
+.redis-suggest-item.active {
+  background: var(--hover-bg-strong);
+}
+.redis-suggest-name {
+  font-weight: 600;
+}
+.redis-suggest-syntax {
+  color: var(--sub);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Help under the input: the typed command's syntax, or the main commands. */
+.redis-cli-help {
+  max-height: 35%;
+  overflow: auto;
+  padding: 6px 12px 10px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.redis-help-syntax {
+  font-family: "Consolas", "Cascadia Code", monospace;
+  font-size: 13px;
+  word-break: break-word;
+  user-select: text;
+}
+.redis-help-summary {
+  color: var(--sub);
+  margin: 2px 0 4px;
+}
+.redis-help-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+}
+.redis-help-group {
+  width: 56px;
+  color: var(--sub);
+}
+.redis-help-chip {
+  padding: 1px 6px;
+  font-family: "Consolas", "Cascadia Code", monospace;
+  font-size: 12px;
+}

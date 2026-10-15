@@ -192,8 +192,8 @@ pub(crate) fn restore(app: &AppHandle, window: &WebviewWindow) {
 /// At quit: remembers the desktop this instance is on, and stops counting as running.
 ///
 /// `windows` are tried in order and the first one that is on a desktop decides: main,
-/// then query (main is hidden while the query window is open, and a hidden window is on
-/// no desktop). If none is, what was remembered stays.
+/// then the connection windows (main is hidden while one is open, and a hidden window is
+/// on no desktop). If none is, what was remembered stays.
 ///
 /// Every instance writes, so the desktop remembered is that of the muSQL closed last.
 pub(crate) fn on_quit(app: &AppHandle, windows: &[&str]) {

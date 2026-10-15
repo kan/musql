@@ -2,6 +2,17 @@
 // table data) and the Redis window (hash / list / set / zset / stream values, #98).
 // Needs i18n.js (`t`) and icons.js (`icon`) to be loaded first.
 
+// A JSON object or array formatted for reading, or null when `s` is not one.
+function prettyJson(s) {
+  const trimmed = s.trim();
+  if (!((trimmed.startsWith("{") || trimmed.startsWith("[")) && trimmed.length > 2)) return null;
+  try {
+    return JSON.stringify(JSON.parse(trimmed), null, 2);
+  } catch (_) {
+    return null;
+  }
+}
+
 // ── Row detail modal ──
 
 function showRowDetailModal(columns, row) {
@@ -47,18 +58,9 @@ function showRowDetailModal(columns, row) {
       valEl.textContent = "EMPTY";
     } else {
       const s = String(val);
-      // Try to detect and pretty-print JSON
-      if ((s.startsWith("{") || s.startsWith("[")) && s.length > 2) {
-        try {
-          const parsed = JSON.parse(s);
-          valEl.textContent = JSON.stringify(parsed, null, 2);
-          valEl.classList.add("monospace");
-        } catch (_) {
-          valEl.textContent = s;
-        }
-      } else {
-        valEl.textContent = s;
-      }
+      const json = prettyJson(s);
+      valEl.textContent = json ?? s;
+      if (json !== null) valEl.classList.add("monospace");
       // Long values get monospace for readability
       if (s.length > 200 && !valEl.classList.contains("monospace")) {
         valEl.classList.add("monospace");
@@ -317,6 +319,7 @@ function renderPagedTable(columns, rows, container, onRowClick) {
 }
 
 // What the windows' scripts call.
+window.prettyJson = prettyJson;
 window.showRowDetailModal = showRowDetailModal;
 window.renderTable = renderTable;
 window.renderPagedTable = renderPagedTable;

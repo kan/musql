@@ -13,6 +13,7 @@
 //! just verify-ssh      # MUSQL_VERIFY_SSH_HOST, …
 //! just verify-mysql    # MUSQL_VERIFY_MYSQL_HOST, … (through the SSH host if set)
 //! just verify-docker   # MUSQL_VERIFY_DOCKER=1
+//! just verify-redis    # MUSQL_VERIFY_REDIS_HOST, … (writes, then deletes, musql:verify:* keys)
 //! ```
 //!
 //! Tests rather than `src/bin/verify_*.rs` because muSQL is a binary-only crate: a
@@ -313,4 +314,171 @@ fn verify_docker() {
             )
         );
     }
+}
+
+/// Runs the Redis window's calls against a real server (#98): the key list, each type's
+/// view, and the CLI.
+///
+/// **Writes to the server**: one key of each type under `musql:verify:`, deleted again at
+/// the end. Point it at a scratch server.
+///
+/// | Variable | Default |
+/// |---|---|
+/// | `MUSQL_VERIFY_REDIS_HOST` | (required) |
+/// | `MUSQL_VERIFY_REDIS_PORT` | 6379 |
+/// | `MUSQL_VERIFY_REDIS_USER` | empty (the default user) |
+/// | `MUSQL_VERIFY_REDIS_PASSWORD` | empty |
+/// | `MUSQL_VERIFY_REDIS_DB` | 0 |
+/// | `MUSQL_VERIFY_REDIS_SSL_MODE` | `DISABLED` |
+#[test]
+#[ignore]
+fn verify_redis() {
+    let Some(host) = env("MUSQL_VERIFY_REDIS_HOST") else {
+        println!("verify_redis: skipped (set MUSQL_VERIFY_REDIS_HOST)");
+        return;
+    };
+    let port = env_port("MUSQL_VERIFY_REDIS_PORT", 6379);
+    let mysql = MySqlConfig {
+        host: host.clone(),
+        port,
+        database: env("MUSQL_VERIFY_REDIS_DB"),
+        username: env_or("MUSQL_VERIFY_REDIS_USER", ""),
+        password: env_or("MUSQL_VERIFY_REDIS_PASSWORD", ""),
+        ssl_mode: env_or("MUSQL_VERIFY_REDIS_SSL_MODE", "DISABLED").into(),
+        tls_ca_cert_path: None,
+        save_password: false,
+        op_ref: None,
+        tls_enabled: false,
+        tls_skip_verify: false,
+    };
+    let client = redis_client::client(&mysql, &host, port).unwrap_or_else(|e| panic!("{e}"));
+    let mut session =
+        redis_client::RedisSession::open(client, None).unwrap_or_else(|e| panic!("{e}"));
+    let version = redis_client::server_version(&mut session).unwrap_or_else(|e| panic!("{e}"));
+    println!("verify_redis: connected to Redis {version} at {host}:{port}");
+
+    // Runs a line that needs no confirmation.
+    let run = |s: &mut redis_client::RedisSession, line: &str| {
+        redis_client::command(s, line, false)
+            .unwrap_or_else(|e| panic!("{line}: {e}"))
+            .reply
+    };
+    // (type, the command that writes it, its arguments after the key). The key is
+    // `musql:verify:<type>`.
+    let seeds = [
+        ("string", "SET", r#""{\"a\":1}""#),
+        ("hash", "HSET", "f1 v1 f2 v2"),
+        ("list", "RPUSH", "x y z"),
+        ("set", "SADD", "m1 m2"),
+        ("zset", "ZADD", "1 a 2 b"),
+        ("stream", "XADD", "* user ann"),
+    ];
+    let keys: Vec<(String, &str)> = seeds
+        .iter()
+        .map(|(kind, _, _)| (format!("musql:verify:{kind}"), *kind))
+        .collect();
+    for ((key, _), (_, command, args)) in keys.iter().zip(&seeds) {
+        run(&mut session, &format!("{command} {key} {args}"));
+    }
+
+    // The key list, through as many calls as it takes.
+    let mut found = Vec::new();
+    let mut cursor = 0;
+    loop {
+        let page = redis_client::scan(&mut session, cursor, "musql:verify:*", || true)
+            .unwrap_or_else(|e| panic!("SCAN: {e}"));
+        let page = serde_json::to_value(page).unwrap();
+        for entry in page["keys"].as_array().unwrap() {
+            found.push((
+                entry["key"].as_str().unwrap().to_owned(),
+                entry["kind"].as_str().unwrap().to_owned(),
+            ));
+        }
+        cursor = page["cursor"].as_str().unwrap().parse().unwrap();
+        if cursor == 0 {
+            break;
+        }
+    }
+    found.sort();
+    let mut expected: Vec<(String, String)> = keys
+        .iter()
+        .map(|(key, kind)| (key.clone(), (*kind).to_owned()))
+        .collect();
+    expected.sort();
+    assert_eq!(found, expected, "the key list");
+    println!(
+        "verify_redis: ok, SCAN found the {} seeded keys",
+        found.len()
+    );
+
+    // Each type's view.
+    for (key, kind) in &keys {
+        let view =
+            redis_client::key_view(&mut session, key.as_bytes()).unwrap_or_else(|e| panic!("{e}"));
+        let view = serde_json::to_value(view).unwrap();
+        assert_eq!(view["kind"], *kind, "{key}");
+        println!(
+            "verify_redis:   {kind}: size {}, {} row(s), text {}",
+            view["size"],
+            view["rows"].as_array().unwrap().len(),
+            view["text"]
+        );
+    }
+
+    // The CLI: a reply, a server error shown as output, a refused command, and a
+    // dangerous one held for confirmation.
+    println!(
+        "verify_redis:   LRANGE -> {}",
+        run(&mut session, "LRANGE musql:verify:list 0 -1").replace('\n', " | ")
+    );
+    let wrong_type = run(&mut session, "LPUSH musql:verify:string x");
+    assert!(wrong_type.starts_with("(error)"), "{wrong_type}");
+    println!("verify_redis:   wrong type -> {wrong_type}");
+    assert!(redis_client::command(&mut session, "SUBSCRIBE musql:verify", false).is_err());
+    let held = redis_client::command(&mut session, r#""FLUSHDB""#, false).unwrap();
+    assert_eq!(held.confirm.as_deref(), Some("FLUSHDB"));
+    assert!(held.reply.is_empty());
+
+    // A key that is not valid UTF-8: listed with its bytes, and opened by them.
+    run(&mut session, r#"SET "musql:verify:bin\xff" binary"#);
+    let page = redis_client::scan(&mut session, 0, "musql:verify:bin*", || true).unwrap();
+    let page = serde_json::to_value(page).unwrap();
+    let entry = &page["keys"][0];
+    assert_eq!(entry["key"], r"musql:verify:bin\xff");
+    let bytes =
+        redis_client::key_bytes(entry["key"].as_str().unwrap(), entry["raw"].as_str()).unwrap();
+    let view = serde_json::to_value(redis_client::key_view(&mut session, &bytes).unwrap()).unwrap();
+    assert_eq!(view["text"], "binary");
+    println!("verify_redis:   non-UTF-8 key {} opens", entry["key"]);
+    run(&mut session, r#"DEL "musql:verify:bin\xff""#);
+
+    // The DB switcher and the CLI's completion.
+    let db = session.db();
+    session.select(1).unwrap();
+    assert_eq!(session.db(), 1);
+    assert!(session.select(100_000).is_err(), "a DB the server lacks");
+    assert_eq!(session.db(), 1);
+    session.select(db).unwrap();
+    let dbs = serde_json::to_value(redis_client::databases(&mut session).unwrap()).unwrap();
+    println!(
+        "verify_redis:   {} DB(s), DB 0 has {} key(s)",
+        dbs.as_array().unwrap().len(),
+        dbs[0]["keys"]
+    );
+    let docs = serde_json::to_value(redis_client::command_docs(&mut session).unwrap()).unwrap();
+    let hset = docs
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["name"] == "HSET")
+        .expect("HSET in the command docs");
+    println!(
+        "verify_redis:   {} command(s); HSET {}",
+        docs.as_array().unwrap().len(),
+        hset["syntax"]
+    );
+
+    let all: Vec<&str> = keys.iter().map(|(key, _)| key.as_str()).collect();
+    run(&mut session, &format!("DEL {}", all.join(" ")));
+    println!("verify_redis: ok, the seeded keys are deleted again");
 }
