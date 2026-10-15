@@ -3756,6 +3756,8 @@ async fn install_update(_app: AppHandle) -> Result<(), String> {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 struct DockerConnectionInfo {
+    /// From the container's detection (`DockerContainer::engine`).
+    engine: Engine,
     host: String,
     port: u16,
     user: String,
@@ -3801,7 +3803,7 @@ async fn docker_available() -> Result<bool, String> {
 #[tauri::command]
 async fn docker_list_containers() -> Result<Vec<docker::discovery::DockerContainer>, String> {
     let docker = connect_docker().await?;
-    docker::discovery::discover_mysql_containers(&docker).await
+    docker::discovery::discover_containers(&docker).await
 }
 
 #[cfg(feature = "docker")]
@@ -3833,10 +3835,14 @@ async fn docker_cleanup_tunnels() -> Result<(), String> {
     docker::tunnel::cleanup_all_tunnels(&docker).await
 }
 
+/// Opens a Docker container in the window for its engine: `query:docker-open` or
+/// `redis:docker-open`.
 #[cfg(feature = "docker")]
 #[tauri::command]
-fn open_docker_query_window(app: AppHandle, info: DockerConnectionInfo) -> Result<(), String> {
-    show_connection_window(&app, WIN_QUERY, "docker-open", &info)
+fn open_docker_window(app: AppHandle, info: DockerConnectionInfo) -> Result<(), String> {
+    // An engine this version does not know opens no window.
+    let label = info.engine.window()?;
+    show_connection_window(&app, label, "docker-open", &info)
 }
 
 // Stubs when docker feature is disabled
@@ -3875,7 +3881,7 @@ async fn docker_cleanup_tunnels() -> Result<(), String> {
 
 #[cfg(not(feature = "docker"))]
 #[tauri::command]
-fn open_docker_query_window(_app: AppHandle, _info: DockerConnectionInfo) -> Result<(), String> {
+fn open_docker_window(_app: AppHandle, _info: DockerConnectionInfo) -> Result<(), String> {
     Ok(())
 }
 
@@ -4058,7 +4064,7 @@ fn main() {
             docker_create_tunnel,
             docker_stop_tunnel,
             docker_cleanup_tunnels,
-            open_docker_query_window,
+            open_docker_window,
             get_docker_password,
             save_docker_password,
             op_available,

@@ -36,6 +36,8 @@ menuBtn.addEventListener("click", () =>
 // ── State ──
 let profileId = null;
 let profileName = "";
+// The socat tunnel container of a Docker connection (`openDocker`), stopped on close.
+let dockerTunnelContainerId = null;
 let serverVersion = "";
 let currentDb = 0;
 // A string: SCAN cursors are u64, which a JS number can round (`redis_client::ScanPage`).
@@ -247,7 +249,8 @@ function addKeyItem(entry) {
 // ── A key's tab ──
 
 // `entry` is a key from the list: `key` is its name to show, and `raw` its bytes (hex)
-// when they are not valid UTF-8. Rust opens the key by `raw` when there is one.
+// when the name is binary (not valid UTF-8, or with a control character). Rust opens the
+// key by `raw` when there is one.
 async function openKey(entry) {
   const id = entry.raw ? "raw:" + entry.raw : "key:" + entry.key;
   const tab = addTab(id, entry.key, "database", true);
@@ -334,6 +337,12 @@ async function renderKey(entry, pane) {
       : t("redis_truncated", { shown: view.rows.length, total: view.size });
     pane.appendChild(note);
   }
+  if (view.binary) {
+    const note = document.createElement("div");
+    note.className = "redis-note";
+    note.textContent = t("redis_binary_value");
+    pane.appendChild(note);
+  }
 
   const body = document.createElement("div");
   body.className = "redis-key-body";
@@ -341,7 +350,7 @@ async function renderKey(entry, pane) {
   if (view.text !== null) {
     const pre = document.createElement("pre");
     pre.className = "redis-value";
-    pre.textContent = prettyJson(view.text) ?? view.text;
+    pre.textContent = view.binary ? view.text : (prettyJson(view.text) ?? view.text);
     body.appendChild(pre);
   } else if (view.columns.length > 0) {
     renderPagedTable(view.columns, view.rows, body, showRowDetailModal);
@@ -695,6 +704,10 @@ function reset() {
 }
 
 function clearView() {
+  if (dockerTunnelContainerId) {
+    safeInvoke("docker_stop_tunnel", { containerId: dockerTunnelContainerId }).catch(() => {});
+    dockerTunnelContainerId = null;
+  }
   generation++;
   listing++;
   cancelCredentialPrompt();
@@ -737,6 +750,42 @@ async function open(id) {
     showStatus(t("redis_not_connected"));
     return;
   }
+  await connect(request, id, gen);
+}
+
+// A running Docker container (#98): the main window's Docker list resolved the address
+// (a published port, or a socat tunnel) and the credentials, so there is no profile and
+// no prompt. The tunnel is stopped when the window closes.
+async function openDocker(info) {
+  clearView();
+  // Recorded at once: a close (or another open) while the disconnect below is on its
+  // way must still stop this tunnel (clearView does).
+  dockerTunnelContainerId = info.tunnel_container_id || null;
+  const gen = generation;
+  await disconnect();
+  if (gen !== generation) return;
+  profileId = "docker:" + info.name;
+  profileName = info.name;
+  const request = {
+    engine: "redis",
+    mysql: {
+      host: info.host,
+      port: info.port,
+      database: null,
+      username: info.user || "",
+      password: info.password || "",
+      ssl_mode: info.ssl_mode || "DISABLED",
+      tls_ca_cert_path: null,
+      save_password: true,
+    },
+    ssh: null,
+  };
+  // No profile id: the credentials are in the request, and there is no profile entry in
+  // the credential manager to look up.
+  await connect(request, null, gen);
+}
+
+async function connect(request, id, gen) {
   showStatus(t("redis_connecting"));
   try {
     const server = await safeInvoke("redis_connect", { request, profileId: id });
@@ -782,6 +831,9 @@ patternInput.addEventListener("keydown", (e) => {
 if (eventApi && eventApi.listen) {
   eventApi.listen("redis:open", (event) => {
     open(String(event.payload || "")).catch((error) => showStatus(String(error)));
+  });
+  eventApi.listen("redis:docker-open", (event) => {
+    if (event.payload) openDocker(event.payload).catch((error) => showStatus(String(error)));
   });
   eventApi.listen("redis:reset", () => reset());
 }

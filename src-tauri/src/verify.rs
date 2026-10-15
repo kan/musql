@@ -295,17 +295,18 @@ fn verify_docker() {
     }
     let containers = tauri::async_runtime::block_on(async {
         let docker = connect_docker().await?;
-        docker::discovery::discover_mysql_containers(&docker).await
+        docker::discovery::discover_containers(&docker).await
     })
     .unwrap_or_else(|e| panic!("Docker failed: {e}"));
     println!(
-        "verify_docker: ok, API reachable; {} MySQL container(s)",
+        "verify_docker: ok, API reachable; {} MySQL / Redis container(s)",
         containers.len()
     );
     for c in &containers {
         println!(
-            "verify_docker:   {} ({}) port {} -> host {}",
+            "verify_docker:   {} ({}, {}) port {} -> host {}",
             c.name,
+            c.engine.display_name(),
             c.image,
             c.port,
             c.host_port.map_or_else(

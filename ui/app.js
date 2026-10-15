@@ -119,10 +119,14 @@ function getItemHint(item) {
   // MySQL is the default and goes unlabelled; any other engine prefixes the hint. Rust
   // always fills `engine` in (a profile from before #132 reads as "mysql").
   const engine = item.request.engine;
-  // hasOwn: a stored name such as "constructor" must not pick up Object.prototype.
-  const name = Object.hasOwn(ENGINE_NAMES, engine) ? ENGINE_NAMES[engine] : engine;
-  const prefix = engine === "mysql" ? "" : name + ": ";
+  const prefix = engine === "mysql" ? "" : engineName(engine) + ": ";
   return prefix + getAddressHint(item);
+}
+
+// The name to show for an engine; one this version does not know shows as stored.
+function engineName(engine) {
+  // hasOwn: a stored name such as "constructor" must not pick up Object.prototype.
+  return Object.hasOwn(ENGINE_NAMES, engine) ? ENGINE_NAMES[engine] : engine;
 }
 
 function getAddressHint(item) {
@@ -979,7 +983,7 @@ async function showDockerModal() {
       meta.appendChild(nameDiv);
       var subDiv = document.createElement("div");
       subDiv.className = "docker-item-sub";
-      subDiv.textContent = c.image;
+      subDiv.textContent = engineName(c.engine) + " · " + c.image;
       meta.appendChild(subDiv);
       el.appendChild(meta);
       el.addEventListener("click", function() { connectToDockerContainer(c); });
@@ -994,9 +998,29 @@ async function showDockerModal() {
 var DOCKER_CRED_KEY = "musql:docker-creds";
 var DOCKER_LAST_KEY = "musql:docker-last-cred";
 var DOCKER_LAST_ID = "__last__";
-// REQUIRED skips certificate verification, so it works with a container's self-signed
-// cert and also satisfies servers running with require_secure_transport=ON.
-var DOCKER_DEFAULT_SSL_MODE = "REQUIRED";
+// The defaults per engine. MySQL: REQUIRED skips certificate verification, so it works
+// with a container's self-signed cert and also satisfies servers running with
+// require_secure_transport=ON. Redis (#98): the default user (empty) and no TLS, which is
+// how the official image runs.
+var DOCKER_DEFAULTS = {
+  mysql: { user: "root", ssl_mode: "REQUIRED" },
+  redis: { user: "", ssl_mode: "DISABLED" },
+};
+
+// The defaults and the last-used credentials go by the kind of server: MariaDB counts as
+// MySQL. null for an engine this version does not know (a musql.engine label).
+function dockerKind(engine) {
+  if (engine === "redis") return "redis";
+  return engine === "mysql" || engine === "mariadb" ? "mysql" : null;
+}
+
+// The last-used credentials are kept per kind: a MySQL root password is no starting
+// point for a Redis container. MySQL keeps the keys it had before Redis was supported.
+// Redis carries no password over: most containers run without one, and a password sent
+// to such a server fails the connection.
+function dockerLastKey(kind) {
+  return kind === "redis" ? DOCKER_LAST_KEY + ":redis" : DOCKER_LAST_KEY;
+}
 
 function loadDockerCreds() {
   try { return JSON.parse(localStorage.getItem(DOCKER_CRED_KEY) || "{}"); } catch (_) { return {}; }
@@ -1028,38 +1052,43 @@ async function migrateDockerCreds() {
     }
   } catch (_) { /* ignore */ }
 }
-async function saveDockerCred(containerId, cred) {
+// `kind` is dockerKind's: "mysql" or "redis".
+async function saveDockerCred(containerId, kind, cred) {
   // Save password to OS keyring (never localStorage)
   var pw = cred.password || "";
-  await Promise.all([
-    safeInvoke("save_docker_password", { containerId: containerId, password: pw }),
-    safeInvoke("save_docker_password", { containerId: DOCKER_LAST_ID, password: pw })
-  ]);
+  var saves = [safeInvoke("save_docker_password", { containerId: containerId, password: pw })];
+  if (kind !== "redis") {
+    saves.push(safeInvoke("save_docker_password", { containerId: DOCKER_LAST_ID, password: pw }));
+  }
+  await Promise.all(saves);
   // Save non-secret fields to localStorage
   var meta = { user: cred.user, ssl_mode: cred.ssl_mode };
   var all = loadDockerCreds();
   all[containerId] = meta;
   localStorage.setItem(DOCKER_CRED_KEY, JSON.stringify(all));
-  localStorage.setItem(DOCKER_LAST_KEY, JSON.stringify(meta));
+  localStorage.setItem(dockerLastKey(kind), JSON.stringify(meta));
 }
-async function getDockerCred(containerId) {
+async function getDockerCred(containerId, kind) {
   var all = loadDockerCreds();
   var meta = all[containerId] || null;
   var keyId = meta ? containerId : DOCKER_LAST_ID;
   if (!meta) {
-    try { meta = JSON.parse(localStorage.getItem(DOCKER_LAST_KEY)); } catch (_) { /* ignore */ }
+    try { meta = JSON.parse(localStorage.getItem(dockerLastKey(kind))); } catch (_) { /* ignore */ }
+    if (meta && kind === "redis") return { user: meta.user, password: "", ssl_mode: meta.ssl_mode };
   }
   if (!meta) return null;
   var pw = await safeInvoke("get_docker_password", { containerId: keyId });
   return { user: meta.user, password: pw || "", ssl_mode: meta.ssl_mode };
 }
 
-async function showDockerCredPrompt(container) {
-  // Initial values: label > saved (per-container, else last-used) > defaults
-  var saved = await getDockerCred(container.id);
-  dockerCredUser.value = container.label_user || (saved && saved.user) || "root";
+async function showDockerCredPrompt(container, kind) {
+  // Initial values: label > saved (per-container, else last-used for the kind) > defaults.
+  var defaults = DOCKER_DEFAULTS[kind];
+  var saved = await getDockerCred(container.id, kind);
+  dockerCredUser.value = container.label_user || (saved && saved.user) || defaults.user;
+  dockerCredUser.placeholder = kind === "redis" ? t("redis_default_user") : "";
   dockerCredPassword.value = container.label_password || (saved && saved.password) || "";
-  dockerCredSsl.value = container.label_ssl_mode || (saved && saved.ssl_mode) || DOCKER_DEFAULT_SSL_MODE;
+  dockerCredSsl.value = container.label_ssl_mode || (saved && saved.ssl_mode) || defaults.ssl_mode;
   dockerCredModal.classList.remove("hidden");
   return new Promise(function(resolve) {
     dockerCredResolve = resolve;
@@ -1085,20 +1114,28 @@ dockerCredCancel.addEventListener("click", function() {
 async function connectToDockerContainer(container) {
   var user, password, sslMode;
 
-  if (container.label_user && container.label_password) {
-    user = container.label_user;
+  var kind = dockerKind(container.engine);
+  if (!kind) {
+    dockerModalStatus.textContent = t("db_engine_unknown", { name: container.engine });
+    return;
+  }
+  // The labels give everything: MySQL needs a user and a password, Redis a password (an
+  // empty user is the default user).
+  var labelled = container.label_password && (kind === "redis" || container.label_user);
+  if (labelled) {
+    user = container.label_user || "";
     password = container.label_password;
     // No prompt on this path, so nothing here is the user's choice: saved values are
     // not read (they would carry another container's mode over) and nothing is saved.
-    sslMode = container.label_ssl_mode || DOCKER_DEFAULT_SSL_MODE;
+    sslMode = container.label_ssl_mode || DOCKER_DEFAULTS[kind].ssl_mode;
   } else {
-    var creds = await showDockerCredPrompt(container);
+    var creds = await showDockerCredPrompt(container, kind);
     if (!creds) return;
     user = creds.user;
     password = creds.password;
     sslMode = creds.ssl_mode;
     // Persist credentials for this container
-    await saveDockerCred(container.id, { user: user, password: password, ssl_mode: sslMode });
+    await saveDockerCred(container.id, kind, { user: user, password: password, ssl_mode: sslMode });
   }
 
   var host, port;
@@ -1126,8 +1163,9 @@ async function connectToDockerContainer(container) {
   dockerModal.classList.add("hidden");
 
   try {
-    await safeInvoke("open_docker_query_window", {
+    await safeInvoke("open_docker_window", {
       info: {
+        engine: container.engine,
         host: host,
         port: port,
         user: user,
@@ -1138,6 +1176,10 @@ async function connectToDockerContainer(container) {
       }
     });
   } catch (error) {
+    // No window took the tunnel over, so nothing else stops it.
+    if (tunnelContainerId) {
+      safeInvoke("docker_stop_tunnel", { containerId: tunnelContainerId }).catch(() => {});
+    }
     alert(String(error));
   }
 }

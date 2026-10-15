@@ -26,7 +26,7 @@
 - `musql:ai:provider`, `musql:ai:model`, `musql:ai:op-ref:<provider>`
 - `musql:ai-chat:<profileId>:<database>` — AI アシストのチャット履歴
 - `musql:docker-creds` — Docker コンテナ毎の資格情報（user/ssl_mode のみ。パスワードは keyring `docker:{containerId}` に保存）
-- `musql:docker-last-cred` — 最後に使った Docker 資格情報（user/ssl_mode のみ。パスワードは keyring `docker:_last` に保存）
+- `musql:docker-last-cred` — 最後に使った Docker 資格情報（user/ssl_mode のみ。パスワードは keyring `docker:__last__` に保存）。MySQL のコンテナの分で、Redis のコンテナの分は `musql:docker-last-cred:redis` に分けて持つ（MySQL の root のパスワードを Redis の初期値にしないため）。**Redis はパスワードを引き継がない**（多くのコンテナはパスワード無しで動き、そこへパスワードを送ると接続が失敗するため。コンテナごとのパスワードは保存する）
 - `musql:export:encoding`, `musql:export:newline` — エクスポートの文字コード / 改行コード設定（既定 utf-8 / lf）
 - `musql:notify-query` — 長時間クエリ完了のデスクトップ通知 ON/OFF（既定 ON、`"0"` で OFF）
 - `musql:redis-history:<profileId>` — Redis の CLI タブのコマンド履歴（最大 100 件。パスワードを含みうる行は `SECRET_WORDS` で除く）

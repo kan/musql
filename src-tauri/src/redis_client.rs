@@ -100,7 +100,17 @@ pub fn ping(client: &redis::Client) -> Result<(), String> {
 pub fn connect(client: &redis::Client) -> Result<redis::Connection, String> {
     let conn = client
         .get_connection_with_timeout(CONNECT_TIMEOUT)
-        .map_err(|e| format!("Failed to connect Redis: {e}"))?;
+        .map_err(|e| {
+            // The crate drops the server's words (WRONGPASS, or "called without any password
+            // configured"), so the likely causes are named here.
+            if e.kind() == redis::ErrorKind::AuthenticationFailed {
+                return format!(
+                    "Redis refused the user or password ({e}). If the server has no \
+                     password, leave the password empty."
+                );
+            }
+            format!("Failed to connect Redis: {e}")
+        })?;
     conn.set_read_timeout(Some(CONNECT_TIMEOUT))
         .and_then(|()| conn.set_write_timeout(Some(CONNECT_TIMEOUT)))
         .map_err(|e| format!("Failed to set up the Redis connection: {e}"))?;
@@ -479,45 +489,30 @@ fn arg_syntax(arg: &redis::Value) -> String {
 
 #[derive(serde::Serialize)]
 pub struct KeyEntry {
-    /// The name to show: the key's UTF-8, with any other byte written as `\xHH`.
+    /// The name to show (`shown`): binary names are written as redis-cli writes them, so
+    /// the name can be typed in the CLI inside "...".
     key: String,
-    /// The key's bytes in hex, when they are not valid UTF-8; the window sends it back to
-    /// open the key (`key` alone would name another key).
+    /// The key's bytes in hex, when the name is binary; the window sends it back to open
+    /// the key (`key` alone would name another key).
     raw: Option<String>,
     kind: String,
 }
 
 impl KeyEntry {
     fn new(bytes: Vec<u8>, kind: String) -> Self {
-        match String::from_utf8(bytes) {
+        match as_text(bytes, false) {
             Ok(key) => Self {
                 key,
                 raw: None,
                 kind,
             },
-            Err(e) => {
-                let bytes = e.into_bytes();
-                Self {
-                    key: escaped(&bytes),
-                    raw: Some(bytes.iter().map(|b| format!("{b:02x}")).collect()),
-                    kind,
-                }
-            }
+            Err(bytes) => Self {
+                key: escape(&bytes),
+                raw: Some(bytes.iter().map(|b| format!("{b:02x}")).collect()),
+                kind,
+            },
         }
     }
-}
-
-/// Bytes as text, with the bytes that are not valid UTF-8 written as `\xHH` (as redis-cli
-/// writes them, so the name can be typed in the CLI inside "...").
-fn escaped(bytes: &[u8]) -> String {
-    let mut out = String::new();
-    for chunk in bytes.utf8_chunks() {
-        out.push_str(chunk.valid());
-        for b in chunk.invalid() {
-            let _ = write!(out, "\\x{b:02x}");
-        }
-    }
-    out
 }
 
 /// A key the window names: its `raw` hex when it has one, else its text.
@@ -612,6 +607,8 @@ pub struct KeyView {
     size: i64,
     /// A string value.
     text: Option<String>,
+    /// The string value is binary, so `text` is written as redis-cli writes it.
+    binary: bool,
     /// Any other type, as a table.
     columns: Vec<String>,
     rows: Vec<Vec<String>>,
@@ -667,7 +664,9 @@ pub fn key_view(session: &mut RedisSession, key: &[u8]) -> Result<KeyView, Strin
                     if view.truncated {
                         trim_cut_character(&mut bytes);
                     }
-                    view.text = Some(text(bytes));
+                    let (text, binary) = shown(bytes);
+                    view.text = Some(text);
+                    view.binary = binary;
                     return Ok(view);
                 }
                 "hash" => {
@@ -788,7 +787,7 @@ fn stream_rows(entries: &redis::Value) -> Vec<Vec<String>> {
 /// A reply value as text, without quotes (for table cells).
 fn plain(value: &redis::Value) -> String {
     match value {
-        redis::Value::BulkString(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        redis::Value::BulkString(bytes) => text(bytes.clone()),
         redis::Value::SimpleString(s) => s.clone(),
         redis::Value::Int(n) => n.to_string(),
         other => format_reply(other),
@@ -796,7 +795,7 @@ fn plain(value: &redis::Value) -> String {
 }
 
 /// Drops the end of a UTF-8 character that the `STRING_LIMIT` cut split, so the shown
-/// text does not end in U+FFFD. Bytes that are not UTF-8 at all are left as they are.
+/// text does not end in escaped bytes. Bytes that are not UTF-8 at all are left as they are.
 fn trim_cut_character(bytes: &mut Vec<u8>) {
     // A UTF-8 character is at most 4 bytes, so a cut one starts in the last 3.
     for start in bytes.len().saturating_sub(3)..bytes.len() {
@@ -810,10 +809,63 @@ fn trim_cut_character(bytes: &mut Vec<u8>) {
     }
 }
 
-/// Bytes shown as text. Redis values are bytes; invalid UTF-8 becomes U+FFFD. Valid
-/// UTF-8 (the usual case) is taken over without a copy.
+/// Bytes shown as text. Redis values are bytes; see `shown`.
 fn text(bytes: Vec<u8>) -> String {
-    String::from_utf8(bytes).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
+    shown(bytes).0
+}
+
+/// A value shown as text, and whether it had to be escaped (`as_text`, `escape`).
+fn shown(bytes: Vec<u8>) -> (String, bool) {
+    match as_text(bytes, true) {
+        Ok(text) => (text, false),
+        Err(bytes) => (escape(&bytes), true),
+    }
+}
+
+/// The bytes as a string when they are text, taken over without a copy (the usual case);
+/// else the bytes back, as binary. Text is valid UTF-8 with no control character, except
+/// that `breaks` lets tabs and line breaks in (a value; a key name is one line in the
+/// list). Shown as they are, an invalid byte would be U+FFFD, and a control character a
+/// box or nothing at all.
+fn as_text(bytes: Vec<u8>, breaks: bool) -> Result<String, Vec<u8>> {
+    let allowed = |c: char| !c.is_control() || (breaks && matches!(c, '\t' | '\n' | '\r'));
+    match String::from_utf8(bytes) {
+        Ok(s) if s.chars().all(allowed) => Ok(s),
+        Ok(s) => Err(s.into_bytes()),
+        Err(e) => Err(e.into_bytes()),
+    }
+}
+
+/// Bytes as redis-cli writes them inside "...", so the text can be typed back into the
+/// CLI: `\` as `\\`, line breaks and the like as `\n` and so on, any other control
+/// character and any byte that is not UTF-8 as `\xHH`. Other characters (Japanese, for
+/// one) stay as they are, where redis-cli writes every byte above 0x7e as `\xHH`. `"` is
+/// escaped too, outside "..." as well, so a shown name or value can be pasted in.
+fn escape(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len());
+    for chunk in bytes.utf8_chunks() {
+        for c in chunk.valid().chars() {
+            match c {
+                '\\' => out.push_str("\\\\"),
+                '"' => out.push_str("\\\""),
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                '\u{7}' => out.push_str("\\a"),
+                '\u{8}' => out.push_str("\\b"),
+                c if c.is_control() => {
+                    for b in c.encode_utf8(&mut [0; 4]).bytes() {
+                        let _ = write!(out, "\\x{b:02x}");
+                    }
+                }
+                c => out.push(c),
+            }
+        }
+        for b in chunk.invalid() {
+            let _ = write!(out, "\\x{b:02x}");
+        }
+    }
+    out
 }
 
 /// What one CLI line did.
@@ -1004,7 +1056,7 @@ fn write_reply(out: &mut String, value: &redis::Value, indent: usize) {
     let _ = match value {
         V::Nil => write!(out, "(nil)"),
         V::Int(n) => write!(out, "(integer) {n}"),
-        V::BulkString(bytes) => write!(out, "{:?}", String::from_utf8_lossy(bytes)),
+        V::BulkString(bytes) => write!(out, "\"{}\"", escape(bytes)),
         V::SimpleString(s) => write!(out, "{s}"),
         V::Okay => write!(out, "OK"),
         V::Double(d) => write!(out, "(double) {d}"),
@@ -1343,8 +1395,8 @@ mod tests {
 
         let bytes = [b"sess:".as_slice(), &[0xff, 0x01], "あ".as_bytes()].concat();
         let binary = KeyEntry::new(bytes.clone(), "string".to_owned());
-        // Shown as redis-cli writes it; the control byte 0x01 is valid UTF-8.
-        assert_eq!(binary.key, "sess:\\xff\u{1}あ");
+        // Shown as redis-cli writes it, Japanese aside.
+        assert_eq!(binary.key, "sess:\\xff\\x01あ");
         assert_eq!(
             key_bytes(&binary.key, binary.raw.as_deref()).unwrap(),
             bytes
@@ -1354,9 +1406,30 @@ mod tests {
     }
 
     #[test]
-    fn text_keeps_valid_utf8_and_replaces_the_rest() {
-        assert_eq!(text("日本".as_bytes().to_vec()), "日本");
-        assert_eq!(text(vec![b'a', 0xff]), "a\u{fffd}");
+    fn text_keeps_text_and_escapes_binary() {
+        assert_eq!(
+            shown("日本\tA\r\n\\".as_bytes().to_vec()),
+            ("日本\tA\r\n\\".to_owned(), false)
+        );
+        // A gob value: a control byte makes it binary, and then every escape applies.
+        assert_eq!(
+            shown(b"%\x7f\x03a\\\n\"\xff\x80".to_vec()),
+            (r#"%\x7f\x03a\\\n\"\xff\x80"#.to_owned(), true)
+        );
+        // A control character above ASCII (U+0085) is written byte by byte.
+        assert_eq!(text("\u{85}あ".as_bytes().to_vec()), "\\xc2\\x85あ");
+        // A key name that is valid UTF-8 but has a control byte is binary too, so the
+        // window opens it by its bytes. A key name is one line, so a line break counts.
+        let control = KeyEntry::new(b"k\x01".to_vec(), "string".to_owned());
+        assert_eq!(
+            (control.key.as_str(), control.raw.as_deref()),
+            ("k\\x01", Some("6b01"))
+        );
+        let broken = KeyEntry::new(b"user\n1".to_vec(), "string".to_owned());
+        assert_eq!(
+            (broken.key.as_str(), broken.raw.as_deref()),
+            ("user\\n1", Some("757365720a31"))
+        );
     }
 
     #[test]
@@ -1366,6 +1439,12 @@ mod tests {
         assert_eq!(format_reply(&V::Int(3)), "(integer) 3");
         assert_eq!(format_reply(&V::Okay), "OK");
         assert_eq!(format_reply(&V::BulkString(b"a\"b".to_vec())), r#""a\"b""#);
+        assert_eq!(
+            format_reply(&V::BulkString(
+                [&b"\xe3\x81\x82\x07\x08\n\\"[..], &[0xff]].concat()
+            )),
+            r#""あ\a\b\n\\\xff""#
+        );
         assert_eq!(format_reply(&V::Array(vec![])), "(empty array)");
         assert_eq!(
             format_reply(&V::Array(vec![
