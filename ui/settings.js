@@ -14,6 +14,7 @@ const sshEnabledCheck = document.getElementById("ssh-enabled");
 const sshFieldsDiv = document.getElementById("ssh-fields");
 const sshManualFieldIds = ["ssh-host", "ssh-port", "ssh-user", "ssh-key", "ssh-password"];
 let sshConfigHostValue = ""; // current config host alias (empty = manual)
+const dbEngineSelect = document.getElementById("db-engine");
 const sslModeSelect = document.getElementById("mysql-ssl-mode");
 const caCertRow = document.getElementById("ca-cert-row");
 const caCertInput = document.getElementById("mysql-ca-cert");
@@ -378,21 +379,22 @@ function updateCaCertVisibility() {
 }
 sslModeSelect.addEventListener("change", updateCaCertVisibility);
 
-// A mode this version does not know (from a hand edit, or a newer version through the
-// sync file) gets an option of its own. Without one the select would go blank and
-// saving would replace the value with "" (#131). Connecting still refuses it.
-function setSslMode(mode) {
-  const stale = sslModeSelect.querySelector("option[data-unknown]");
+// A value this version does not know (from a hand edit, or a newer version through the
+// sync file) gets an option of its own, labelled with `labelKey`. Without one the select
+// would go blank and saving would replace the value with "" (#131). Connecting still
+// refuses it.
+function setSelectKeepingUnknown(select, value, labelKey) {
+  const stale = select.querySelector("option[data-unknown]");
   if (stale) stale.remove();
-  const known = Array.from(sslModeSelect.options).some((o) => o.value === mode);
+  const known = Array.from(select.options).some((o) => o.value === value);
   if (!known) {
     const option = document.createElement("option");
-    option.value = mode;
-    option.textContent = t("ssl_mode_unknown", { name: mode });
+    option.value = value;
+    option.textContent = t(labelKey, { name: value });
     option.dataset.unknown = "";
-    sslModeSelect.append(option);
+    select.append(option);
   }
-  sslModeSelect.value = mode;
+  select.value = value;
 }
 
 async function browseFile(inputEl, title, filterName, extensions) {
@@ -414,6 +416,7 @@ function collectRequest() {
   const sshEnabled = document.getElementById("ssh-enabled").checked;
 
   return {
+    engine: dbEngineSelect.value,
     mysql: {
       host: document.getElementById("mysql-host").value.trim(),
       port: Number(document.getElementById("mysql-port").value),
@@ -449,7 +452,8 @@ function applyRequest(request) {
   document.getElementById("mysql-db").value = request.mysql.database || "";
   document.getElementById("mysql-user").value = request.mysql.username || "";
   document.getElementById("mysql-pass").value = request.mysql.password || "";
-  setSslMode(request.mysql.ssl_mode || "DISABLED");
+  setSelectKeepingUnknown(dbEngineSelect, request.engine, "db_engine_unknown");
+  setSelectKeepingUnknown(sslModeSelect, request.mysql.ssl_mode || "DISABLED", "ssl_mode_unknown");
   caCertInput.value = request.mysql.tls_ca_cert_path || "";
   mysqlSavePasswordCheck.checked = request.mysql.save_password !== false;
   mysqlOpRefInput.value = request.mysql.op_ref || "";
@@ -717,6 +721,7 @@ function clearForm() {
   renderColorSelect();
   renderTagChips();
   applyRequest({
+    engine: "mysql",
     mysql: {
       host: "127.0.0.1",
       port: 3306,

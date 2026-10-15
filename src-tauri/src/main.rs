@@ -130,8 +130,82 @@ struct SshConfig {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 struct ConnectionRequest {
+    /// The kind of server (#132). Absent in profiles written before it, which are MySQL.
+    #[serde(default)]
+    engine: Engine,
+    /// The server to connect to, for every engine. The key stays `mysql` so that a
+    /// version that predates `engine` still reads the whole store: it shows every profile
+    /// as MySQL, and only the ones that are not fail when opened. Engine-specific settings
+    /// go in here as optional fields.
     mysql: MySqlConfig,
     ssh: Option<SshConfig>,
+}
+
+/// The kind of server a profile connects to (#132). Stored as `mysql`, `mariadb`, ...
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, Default)]
+#[serde(from = "String", into = "String")]
+enum Engine {
+    #[default]
+    Mysql,
+    /// Speaks the MySQL protocol; only the name differs (display, AI prompt).
+    Mariadb,
+    /// An engine this version does not know, such as one a later version added. Its
+    /// spelling is kept so that saving does not turn it into MySQL, and nothing connects
+    /// to it as MySQL.
+    Unknown(String),
+}
+
+impl From<String> for Engine {
+    fn from(name: String) -> Self {
+        match name.as_str() {
+            "mysql" => Self::Mysql,
+            "mariadb" => Self::Mariadb,
+            _ => Self::Unknown(name),
+        }
+    }
+}
+
+impl From<Engine> for String {
+    fn from(engine: Engine) -> Self {
+        match engine {
+            Engine::Mysql => "mysql".to_owned(),
+            Engine::Mariadb => "mariadb".to_owned(),
+            Engine::Unknown(name) => name,
+        }
+    }
+}
+
+impl Engine {
+    /// The name shown to people and used in the AI prompts.
+    fn display_name(&self) -> &str {
+        match self {
+            Engine::Mysql => "MySQL",
+            Engine::Mariadb => "MariaDB",
+            Engine::Unknown(name) => name,
+        }
+    }
+
+    /// The window that opens a profile of this engine.
+    fn window(&self) -> Result<&'static str, String> {
+        match self {
+            Engine::Mysql | Engine::Mariadb => Ok(WIN_QUERY),
+            Engine::Unknown(name) => Err(unknown_engine_error(name)),
+        }
+    }
+
+    /// Ok when the MySQL client can connect to this engine.
+    fn ensure_mysql_protocol(&self) -> Result<(), String> {
+        match self {
+            Engine::Mysql | Engine::Mariadb => Ok(()),
+            Engine::Unknown(name) => Err(unknown_engine_error(name)),
+        }
+    }
+}
+
+fn unknown_engine_error(name: &str) -> String {
+    format!(
+        "Unknown connection type \"{name}\". It may have been added by a newer version of muSQL."
+    )
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -342,6 +416,8 @@ impl russh::client::Handler for SshHandler {
 struct ConnectionCache {
     fingerprint: String,
     pool: Pool,
+    /// Names the server in the AI prompts, which get the connection from here.
+    engine: Engine,
     _tunnel: Option<SshTunnel>,
 }
 
@@ -386,7 +462,8 @@ fn connection_fingerprint(request: &ConnectionRequest) -> String {
         _ => String::new(),
     };
     format!(
-        "{}:{}:{}:ssl={:?}:ca={}|{}",
+        "{}:{}:{}:{}:ssl={:?}:ca={}|{}",
+        String::from(request.engine.clone()),
         request.mysql.host,
         request.mysql.port,
         request.mysql.username,
@@ -400,6 +477,7 @@ async fn get_or_create_pool_async(
     cache: &Arc<Mutex<Option<ConnectionCache>>>,
     request: &ConnectionRequest,
 ) -> Result<Pool, String> {
+    request.engine.ensure_mysql_protocol()?;
     let fp = connection_fingerprint(request);
 
     // Check cache (short lock, no await)
@@ -447,6 +525,7 @@ async fn get_or_create_pool_async(
         *guard = Some(ConnectionCache {
             fingerprint: fp,
             pool: pool.clone(),
+            engine: request.engine.clone(),
             _tunnel: tunnel,
         });
     }
@@ -1195,16 +1274,25 @@ fn schema_text_for_prompt(schema: &SchemaInfo) -> String {
     schema_text
 }
 
-fn build_ai_prompt(schema: &SchemaInfo, text_before: &str, text_after: &str) -> String {
+fn build_ai_prompt(
+    engine: &Engine,
+    schema: &SchemaInfo,
+    text_before: &str,
+    text_after: &str,
+) -> String {
     let schema_text = schema_text_for_prompt(schema);
 
     format!(
-        "You are a MySQL query assistant. Given the database schema below and the SQL context, \
+        "You are a {} query assistant. Given the database schema below and the SQL context, \
          return ONLY the SQL fragment to insert at [CURSOR]. No explanation, no markdown, no code fences.\n\n\
          Database: {}\n\n\
          Schema:\n{}\n\
          SQL context:\n{}\n[CURSOR]\n{}",
-        schema.database, schema_text, text_before, text_after
+        engine.display_name(),
+        schema.database,
+        schema_text,
+        text_before,
+        text_after
     )
 }
 
@@ -1337,6 +1425,46 @@ async fn send_ai_request(
 
 // ── AI Tauri commands ──
 
+/// The open connection's engine and the schema of `database`, for the AI prompts. The
+/// schema is fetched once per connection and database, then cached.
+async fn connection_schema(
+    state: &Mutex<Option<ConnectionCache>>,
+    database: &str,
+) -> Result<(Engine, SchemaInfo), String> {
+    let (pool, fingerprint, engine) = {
+        let guard = state.lock().map_err(|e| format!("Lock error: {e}"))?;
+        match guard.as_ref() {
+            Some(cached) => (
+                cached.pool.clone(),
+                cached.fingerprint.clone(),
+                cached.engine.clone(),
+            ),
+            None => return Err("Not connected".to_owned()),
+        }
+    };
+
+    let cache_key = format!("{fingerprint}:{database}");
+
+    let cached = {
+        let cache = SCHEMA_CACHE
+            .lock()
+            .map_err(|e| format!("Lock error: {e}"))?;
+        cache.get(&cache_key).cloned()
+    };
+    if let Some(schema) = cached {
+        return Ok((engine, schema));
+    }
+
+    let db = database.to_owned();
+    let schema = tauri::async_runtime::spawn_blocking(move || fetch_schema(&pool, &db))
+        .await
+        .map_err(|e| format!("Task error: {e}"))??;
+    if let Ok(mut cache) = SCHEMA_CACHE.lock() {
+        cache.insert(cache_key, schema.clone());
+    }
+    Ok((engine, schema))
+}
+
 #[tauri::command]
 async fn ai_complete(
     text_before: String,
@@ -1351,48 +1479,15 @@ async fn ai_complete(
         .map_err(|_| format!("Invalid AI provider: {provider}"))?;
 
     let api_key = resolve_ai_api_key(&ai_provider, op_ref).await?;
+    let (engine, schema) = connection_schema(&state, &database).await?;
 
-    // Get pool + fingerprint from state
-    let (pool, fingerprint) = {
-        let guard = state.lock().map_err(|e| format!("Lock error: {e}"))?;
-        match guard.as_ref() {
-            Some(cached) => (cached.pool.clone(), cached.fingerprint.clone()),
-            None => return Err("Not connected".to_owned()),
-        }
-    };
-
-    let cache_key = format!("{fingerprint}:{database}");
-
-    // Check schema cache
-    let schema = {
-        let cache = SCHEMA_CACHE
-            .lock()
-            .map_err(|e| format!("Lock error: {e}"))?;
-        cache.get(&cache_key).cloned()
-    };
-
-    let schema = match schema {
-        Some(s) => s,
-        None => {
-            let db = database.clone();
-            let ck = cache_key.clone();
-            let schema = tauri::async_runtime::spawn_blocking(move || fetch_schema(&pool, &db))
-                .await
-                .map_err(|e| format!("Task error: {e}"))??;
-            // Store in cache
-            if let Ok(mut cache) = SCHEMA_CACHE.lock() {
-                cache.insert(ck, schema.clone());
-            }
-            schema
-        }
-    };
-
-    let prompt = build_ai_prompt(&schema, &text_before, &text_after);
+    let prompt = build_ai_prompt(&engine, &schema, &text_before, &text_after);
     let result = call_ai_api(&ai_provider, &model, &api_key, &prompt).await?;
     Ok(result.trim().to_owned())
 }
 
 fn build_ai_assist_prompt(
+    engine: &Engine,
     schema: &SchemaInfo,
     prompt: &str,
     editor_content: &str,
@@ -1401,12 +1496,14 @@ fn build_ai_assist_prompt(
     let schema_text = schema_text_for_prompt(schema);
 
     let mut parts = format!(
-        "You are a MySQL query assistant. Given the database schema below, \
+        "You are a {} query assistant. Given the database schema below, \
          write SQL based on the user's request. Return ONLY the SQL query. \
          No explanation, no markdown, no code fences.\n\n\
          Database: {}\n\n\
          Schema:\n{}",
-        schema.database, schema_text
+        engine.display_name(),
+        schema.database,
+        schema_text
     );
 
     if !editor_content.trim().is_empty() {
@@ -1437,41 +1534,15 @@ async fn ai_assist(
         .map_err(|_| format!("Invalid AI provider: {provider}"))?;
 
     let api_key = resolve_ai_api_key(&ai_provider, op_ref).await?;
+    let (engine, schema) = connection_schema(&state, &database).await?;
 
-    let (pool, fingerprint) = {
-        let guard = state.lock().map_err(|e| format!("Lock error: {e}"))?;
-        match guard.as_ref() {
-            Some(cached) => (cached.pool.clone(), cached.fingerprint.clone()),
-            None => return Err("Not connected".to_owned()),
-        }
-    };
-
-    let cache_key = format!("{fingerprint}:{database}");
-
-    let schema = {
-        let cache = SCHEMA_CACHE
-            .lock()
-            .map_err(|e| format!("Lock error: {e}"))?;
-        cache.get(&cache_key).cloned()
-    };
-
-    let schema = match schema {
-        Some(s) => s,
-        None => {
-            let db = database.clone();
-            let ck = cache_key.clone();
-            let schema = tauri::async_runtime::spawn_blocking(move || fetch_schema(&pool, &db))
-                .await
-                .map_err(|e| format!("Task error: {e}"))??;
-            if let Ok(mut cache) = SCHEMA_CACHE.lock() {
-                cache.insert(ck, schema.clone());
-            }
-            schema
-        }
-    };
-
-    let ai_prompt =
-        build_ai_assist_prompt(&schema, &prompt, &editor_content, &conversation_context);
+    let ai_prompt = build_ai_assist_prompt(
+        &engine,
+        &schema,
+        &prompt,
+        &editor_content,
+        &conversation_context,
+    );
     let result = call_ai_api(&ai_provider, &model, &api_key, &ai_prompt).await?;
 
     // Strip code fences if present
@@ -2061,6 +2132,7 @@ async fn run_connection_test(
     mut request: ConnectionRequest,
     profile_id: Option<String>,
 ) -> Result<String, String> {
+    request.engine.ensure_mysql_protocol()?;
     resolve_credentials(&mut request, profile_id.as_deref()).await?;
 
     // Set up SSH tunnel if needed (async)
@@ -2101,6 +2173,8 @@ async fn run_query(
         return Err("Query is empty".to_owned());
     }
 
+    // Before the credentials: resolving them can run the 1Password CLI (#132).
+    request.engine.ensure_mysql_protocol()?;
     resolve_credentials(&mut request, profile_id.as_deref()).await?;
     let limit = max_rows.unwrap_or(500);
 
@@ -2807,8 +2881,15 @@ fn open_settings_window(
 
 #[tauri::command]
 fn open_query_window(app: AppHandle, id: String) -> Result<(), String> {
+    // The window depends on the engine (#132); a profile of an unknown engine opens none.
+    let store = load_profiles(&app)?;
+    let profile = store
+        .items
+        .iter()
+        .find(|p| p.id == id)
+        .ok_or("Profile not found")?;
     let window = app
-        .get_webview_window(WIN_QUERY)
+        .get_webview_window(profile.request.engine.window()?)
         .ok_or("Query window not found")?;
     window
         .emit("query:open", id)
@@ -3873,6 +3954,7 @@ Host myserver
         ssh: Option<SshConfig>,
     ) -> ConnectionRequest {
         ConnectionRequest {
+            engine: Engine::Mysql,
             mysql: MySqlConfig {
                 host: host.to_owned(),
                 port,
@@ -3939,11 +4021,7 @@ Host myserver
     /// The `case "..."` labels of a script's `menu:action` listener: from the listener
     /// to the end of its `switch` (the first line that closes a block at its indent).
     fn menu_action_cases(script: &str) -> std::collections::BTreeSet<String> {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../ui")
-            .join(script);
-        let text = std::fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+        let text = read_ui(script);
         let start = text
             .find("listen(\"menu:action\"")
             .unwrap_or_else(|| panic!("{script} has no menu:action listener"));
@@ -3997,6 +4075,117 @@ Host myserver
         // An item paired with a window whose menu does not have it.
         assert_eq!(parse_menu_id("settings:exit"), None);
         assert_eq!(parse_menu_id("main:close"), None);
+    }
+
+    // ── Engine ─────────────────────────────────────────────────────
+
+    // Profiles written before #132 have no `engine`; they are MySQL.
+    #[test]
+    fn engine_absent_means_mysql() {
+        let request: ConnectionRequest = serde_json::from_str(
+            r#"{"mysql":{"host":"h","port":3306,"database":null,"username":"u"},"ssh":null}"#,
+        )
+        .unwrap();
+        assert_eq!(request.engine, Engine::Mysql);
+    }
+
+    #[test]
+    fn engine_reads_and_writes_the_stored_names() {
+        for (name, engine) in [("mysql", Engine::Mysql), ("mariadb", Engine::Mariadb)] {
+            let json = format!("\"{name}\"");
+            assert_eq!(serde_json::from_str::<Engine>(&json).unwrap(), engine);
+            assert_eq!(serde_json::to_string(&engine).unwrap(), json);
+            assert!(engine.ensure_mysql_protocol().is_ok());
+            assert_eq!(engine.window(), Ok(WIN_QUERY));
+        }
+    }
+
+    // An engine from a later version must keep its spelling through a save (the sync
+    // mirror would otherwise turn it into MySQL on every machine), and must never be
+    // connected to as MySQL.
+    #[test]
+    fn unknown_engine_round_trips_and_opens_nothing() {
+        let engine: Engine = serde_json::from_str("\"redis\"").unwrap();
+        assert_eq!(engine, Engine::Unknown("redis".to_owned()));
+        assert_eq!(serde_json::to_string(&engine).unwrap(), "\"redis\"");
+        assert!(engine.window().is_err());
+        assert!(engine.ensure_mysql_protocol().is_err());
+    }
+
+    /// Every engine this version knows, with its stored name.
+    fn known_engines() -> Vec<(String, Engine)> {
+        let engines = [Engine::Mysql, Engine::Mariadb];
+        for engine in &engines {
+            // No wildcard: a new variant stops this compiling until it is listed above.
+            match engine {
+                Engine::Mysql | Engine::Mariadb | Engine::Unknown(_) => {}
+            }
+        }
+        engines
+            .into_iter()
+            .map(|e| (String::from(e.clone()), e))
+            .collect()
+    }
+
+    fn read_ui(file: &str) -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../ui")
+            .join(file);
+        std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()))
+    }
+
+    /// The text between `start` (exclusive) and the next `end`.
+    fn between<'a>(text: &'a str, start: &str, end: &str) -> &'a str {
+        let from = text
+            .find(start)
+            .unwrap_or_else(|| panic!("{start:?} not found"))
+            + start.len();
+        let len = text[from..]
+            .find(end)
+            .unwrap_or_else(|| panic!("{end:?} not found"));
+        &text[from..from + len]
+    }
+
+    // The UI names the engines in two places of its own: the list's labels (app.js) and
+    // the settings window's choices. Both must match `Engine` (#132), or the UI would
+    // offer an engine Rust treats as unknown, or name one differently.
+    #[test]
+    fn ui_engine_names_match_the_engines() {
+        let expected: Vec<(String, String)> = known_engines()
+            .into_iter()
+            .map(|(id, e)| (id, e.display_name().to_owned()))
+            .collect();
+
+        // `const ENGINE_NAMES = { mysql: "MySQL", ... };`
+        let names: Vec<(String, String)> =
+            between(&read_ui("app.js"), "const ENGINE_NAMES = {", "};")
+                .split(',')
+                .filter_map(|pair| pair.split_once(':'))
+                .map(|(id, name)| {
+                    (
+                        id.trim().to_owned(),
+                        name.trim().trim_matches('"').to_owned(),
+                    )
+                })
+                .collect();
+        assert_eq!(names, expected, "ENGINE_NAMES in app.js");
+
+        // `<option value="mysql" selected>MySQL</option>`
+        let options: Vec<(String, String)> = between(
+            &read_ui("settings.html"),
+            "<select id=\"db-engine\">",
+            "</select>",
+        )
+        .split("<option value=\"")
+        .skip(1)
+        .map(|option| {
+            let (id, rest) = option.split_once('"').expect("value is quoted");
+            let name = between(rest, ">", "</option>");
+            (id.to_owned(), name.to_owned())
+        })
+        .collect();
+        assert_eq!(options, expected, "the DB Engine choices in settings.html");
     }
 
     // ── SslMode ────────────────────────────────────────────────────
@@ -4128,7 +4317,8 @@ Host myserver
                 ],
             }],
         };
-        let prompt = build_ai_prompt(&schema, "SELECT ", "");
+        let prompt = build_ai_prompt(&Engine::Mysql, &schema, "SELECT ", "");
+        assert!(prompt.contains("You are a MySQL query assistant"));
         assert!(prompt.contains("testdb"));
         assert!(prompt.contains("-- users"));
         assert!(prompt.contains("id int PK"));
@@ -4155,7 +4345,7 @@ Host myserver
                 })
                 .collect(),
         };
-        let prompt = build_ai_prompt(&schema, "SELECT ", "");
+        let prompt = build_ai_prompt(&Engine::Mysql, &schema, "SELECT ", "");
         assert!(prompt.contains("(truncated)"));
     }
 
@@ -4169,9 +4359,10 @@ Host myserver
                 columns: vec![],
             }],
         };
-        let prompt = build_ai_prompt(&schema, "SELECT ", "");
+        let prompt = build_ai_prompt(&Engine::Mysql, &schema, "SELECT ", "");
         assert!(prompt.contains("(truncated)"));
-        let prompt = build_ai_assist_prompt(&schema, "list", "", "");
+        let prompt = build_ai_assist_prompt(&Engine::Mariadb, &schema, "list", "", "");
+        assert!(prompt.contains("You are a MariaDB query assistant"));
         assert!(prompt.contains("(truncated)"));
 
         // A single over-long line has no earlier newline, so the cut lands on the

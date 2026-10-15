@@ -51,8 +51,9 @@
         <h3 class="settings-section-heading"><span data-i18n="mysql">DB Settings</span> <button type="button" class="help-btn" data-manual="connections.md#接続情報と-ssl" data-i18n-title="help_open_manual">?</button></h3>
         <div class="grid">
           <label><span data-i18n="db_engine">DB Engine</span>
-            <select id="db-engine" disabled>
+            <select id="db-engine">
               <option value="mysql" selected>MySQL</option>
+              <option value="mariadb">MariaDB</option>
             </select>
           </label>
           <label><span data-i18n="host">Host</span> <input id="mysql-host" value="127.0.0.1" /></label>
@@ -157,6 +158,6 @@
     <script src="./theme.js"></script>
     <script src="./manual.js"></script>
     <script src="./op-picker.js"></script>
-    <script src="./settings.js?v=10"></script>
+    <script src="./settings.js?v=11"></script>
   </body>
 </html>

@@ -3083,8 +3083,11 @@ if (eventApi && eventApi.listen) {
     currentProfileId = "docker:" + info.name;
     currentProfileName = info.name;
 
-    // Build a synthetic requestCache matching ConnectionRequest shape
+    // Build a synthetic requestCache matching ConnectionRequest shape. A Docker connection
+    // is treated as MySQL (#132), MariaDB containers included: detection goes by the port
+    // and labels, not by the server.
     requestCache = {
+      engine: "mysql",
       mysql: {
         host: info.host,
         port: info.port,

@@ -153,6 +153,7 @@ fn verify_mysql() {
     );
 
     let request = ConnectionRequest {
+        engine: Engine::Mysql,
         mysql: mysql.clone(),
         ssh: ssh.clone(),
     };

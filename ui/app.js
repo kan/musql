@@ -112,7 +112,21 @@ function confirmDialog(message, opts) {
   });
 }
 
+// Display names of the connection engines (#132). Must match `Engine::display_name` in
+// main.rs. An engine this version does not know shows as stored.
+const ENGINE_NAMES = { mysql: "MySQL", mariadb: "MariaDB" };
+
 function getItemHint(item) {
+  // MySQL is the default and goes unlabelled; any other engine prefixes the hint. Rust
+  // always fills `engine` in (a profile from before #132 reads as "mysql").
+  const engine = item.request.engine;
+  // hasOwn: a stored name such as "constructor" must not pick up Object.prototype.
+  const name = Object.hasOwn(ENGINE_NAMES, engine) ? ENGINE_NAMES[engine] : engine;
+  const prefix = engine === "mysql" ? "" : name + ": ";
+  return prefix + getAddressHint(item);
+}
+
+function getAddressHint(item) {
   const ssh = item.request.ssh;
   const mysqlHost = item.request.mysql.host || t('host_not_set');
   if (!ssh || !ssh.enabled) return mysqlHost;
