@@ -447,7 +447,7 @@
       "license": "MIT",
       "name": "CodeMirror",
       "texts": [
-        278
+        279
       ],
       "url": "https://codemirror.net/5/",
       "vendored": true,
@@ -1720,7 +1720,7 @@
       "license": "ISC",
       "name": "Lucide",
       "texts": [
-        280
+        281
       ],
       "url": "https://lucide.dev",
       "vendored": true,
@@ -2349,15 +2349,6 @@
         183
       ],
       "url": "https://github.com/tafia/quick-xml",
-      "version": "0.37.5"
-    },
-    {
-      "license": "MIT",
-      "name": "quick-xml",
-      "texts": [
-        183
-      ],
-      "url": "https://github.com/tafia/quick-xml",
       "version": "0.38.4"
     },
     {
@@ -2593,7 +2584,7 @@
         116
       ],
       "url": "https://github.com/rustls/rustls",
-      "version": "0.23.45"
+      "version": "0.23.46"
     },
     {
       "license": "MIT OR Apache-2.0",
@@ -3089,7 +3080,7 @@
       "license": "MIT",
       "name": "sql-formatter",
       "texts": [
-        279
+        280
       ],
       "url": "https://github.com/sql-formatter-org/sql-formatter",
       "vendored": true,
@@ -3155,10 +3146,28 @@
       "version": "0.11.1"
     },
     {
+      "license": "MIT",
+      "name": "strum",
+      "texts": [
+        228
+      ],
+      "url": "https://github.com/Peternator7/strum",
+      "version": "0.28.0"
+    },
+    {
+      "license": "MIT",
+      "name": "strum_macros",
+      "texts": [
+        228
+      ],
+      "url": "https://github.com/Peternator7/strum",
+      "version": "0.28.0"
+    },
+    {
       "license": "BSD-3-Clause",
       "name": "subtle",
       "texts": [
-        228
+        229
       ],
       "url": "https://github.com/dalek-cryptography/subtle",
       "version": "2.6.1"
@@ -3196,7 +3205,7 @@
       "license": "MIT",
       "name": "synstructure",
       "texts": [
-        229
+        230
       ],
       "url": "https://github.com/mystor/synstructure",
       "version": "0.13.2"
@@ -3206,7 +3215,7 @@
       "name": "tao",
       "texts": [
         48,
-        230
+        231
       ],
       "url": "https://github.com/tauri-apps/tao",
       "version": "0.37.1"
@@ -3216,7 +3225,7 @@
       "name": "tauri",
       "texts": [
         66,
-        231
+        232
       ],
       "url": "https://github.com/tauri-apps/tauri",
       "version": "2.12.1"
@@ -3226,7 +3235,7 @@
       "name": "tauri-codegen",
       "texts": [
         66,
-        231
+        232
       ],
       "url": "https://github.com/tauri-apps/tauri",
       "version": "2.7.1"
@@ -3236,7 +3245,7 @@
       "name": "tauri-macros",
       "texts": [
         66,
-        231
+        232
       ],
       "url": "https://github.com/tauri-apps/tauri",
       "version": "2.7.1"
@@ -3245,9 +3254,9 @@
       "license": "Apache-2.0 OR MIT",
       "name": "tauri-plugin-log",
       "texts": [
-        232,
+        233,
         66,
-        231
+        232
       ],
       "url": "https://github.com/tauri-apps/plugins-workspace",
       "version": "2.10.0"
@@ -3256,9 +3265,9 @@
       "license": "Apache-2.0 OR MIT",
       "name": "tauri-plugin-notification",
       "texts": [
-        232,
+        233,
         66,
-        231
+        232
       ],
       "url": "https://github.com/tauri-apps/plugins-workspace",
       "version": "2.5.1"
@@ -3267,9 +3276,9 @@
       "license": "Apache-2.0 OR MIT",
       "name": "tauri-plugin-opener",
       "texts": [
-        232,
+        233,
         66,
-        231
+        232
       ],
       "url": "https://github.com/tauri-apps/plugins-workspace",
       "version": "2.7.0"
@@ -3278,9 +3287,9 @@
       "license": "Apache-2.0 OR MIT",
       "name": "tauri-plugin-updater",
       "texts": [
-        232,
+        233,
         66,
-        231
+        232
       ],
       "url": "https://github.com/tauri-apps/plugins-workspace",
       "version": "2.13.1"
@@ -3289,9 +3298,9 @@
       "license": "Apache-2.0 OR MIT",
       "name": "tauri-plugin-window-state",
       "texts": [
-        232,
+        233,
         66,
-        231
+        232
       ],
       "url": "https://github.com/tauri-apps/plugins-workspace",
       "version": "2.5.0"
@@ -3301,7 +3310,7 @@
       "name": "tauri-runtime",
       "texts": [
         66,
-        231
+        232
       ],
       "url": "https://github.com/tauri-apps/tauri",
       "version": "2.12.1"
@@ -3311,7 +3320,7 @@
       "name": "tauri-runtime-wry",
       "texts": [
         66,
-        231
+        232
       ],
       "url": "https://github.com/tauri-apps/tauri",
       "version": "2.12.1"
@@ -3321,7 +3330,7 @@
       "name": "tauri-utils",
       "texts": [
         66,
-        231
+        232
       ],
       "url": "https://github.com/tauri-apps/tauri",
       "version": "2.10.1"
@@ -3330,19 +3339,30 @@
       "license": "MIT OR Apache-2.0",
       "name": "tauri-winrt-notification",
       "texts": [
-        233,
+        234,
         66,
-        231
+        232
       ],
       "url": "https://github.com/tauri-apps/winrt-notification",
-      "version": "0.7.2"
+      "version": "0.7.3"
+    },
+    {
+      "license": "MIT OR Apache-2.0",
+      "name": "tauri-winrt-notification",
+      "texts": [
+        234,
+        66,
+        232
+      ],
+      "url": "https://github.com/tauri-apps/winrt-notification",
+      "version": "0.8.1"
     },
     {
       "license": "MIT OR Apache-2.0",
       "name": "tempfile",
       "texts": [
         13,
-        234
+        235
       ],
       "url": "https://github.com/Stebalien/tempfile",
       "version": "3.25.0"
@@ -3352,7 +3372,7 @@
       "name": "tendril",
       "texts": [
         13,
-        235
+        236
       ],
       "url": "https://github.com/servo/html5ever",
       "version": "0.5.0"
@@ -3393,7 +3413,7 @@
       "name": "time",
       "texts": [
         66,
-        236
+        237
       ],
       "url": "https://github.com/time-rs/time",
       "version": "0.3.47"
@@ -3403,7 +3423,7 @@
       "name": "time-core",
       "texts": [
         66,
-        236
+        237
       ],
       "url": "https://github.com/time-rs/time",
       "version": "0.1.8"
@@ -3413,7 +3433,7 @@
       "name": "time-macros",
       "texts": [
         66,
-        236
+        237
       ],
       "url": "https://github.com/time-rs/time",
       "version": "0.2.27"
@@ -3433,7 +3453,7 @@
       "texts": [
         40,
         57,
-        237
+        238
       ],
       "url": "https://github.com/Lokathor/tinyvec",
       "version": "1.12.0"
@@ -3442,9 +3462,9 @@
       "license": "MIT OR Apache-2.0 OR Zlib",
       "name": "tinyvec_macros",
       "texts": [
-        238,
         239,
-        240
+        240,
+        241
       ],
       "url": "https://github.com/Soveu/tinyvec_macros",
       "version": "0.1.1"
@@ -3453,7 +3473,7 @@
       "license": "MIT",
       "name": "tokio",
       "texts": [
-        245
+        246
       ],
       "url": "https://github.com/tokio-rs/tokio",
       "version": "1.53.2"
@@ -3462,7 +3482,7 @@
       "license": "MIT",
       "name": "tokio-macros",
       "texts": [
-        241
+        242
       ],
       "url": "https://github.com/tokio-rs/tokio",
       "version": "2.7.0"
@@ -3471,7 +3491,7 @@
       "license": "MIT",
       "name": "tokio-native-tls",
       "texts": [
-        242
+        243
       ],
       "url": "https://github.com/tokio-rs/tls",
       "version": "0.3.1"
@@ -3480,8 +3500,8 @@
       "license": "MIT OR Apache-2.0",
       "name": "tokio-rustls",
       "texts": [
-        243,
-        244
+        244,
+        245
       ],
       "url": "https://github.com/rustls/tokio-rustls",
       "version": "0.26.4"
@@ -3490,7 +3510,7 @@
       "license": "MIT",
       "name": "tokio-util",
       "texts": [
-        245
+        246
       ],
       "url": "https://github.com/tokio-rs/tokio",
       "version": "0.7.18"
@@ -3559,7 +3579,7 @@
       "license": "MIT",
       "name": "tower",
       "texts": [
-        247
+        248
       ],
       "url": "https://github.com/tower-rs/tower",
       "version": "0.5.3"
@@ -3568,7 +3588,7 @@
       "license": "MIT",
       "name": "tower-http",
       "texts": [
-        246
+        247
       ],
       "url": "https://github.com/tower-rs/tower-http",
       "version": "0.6.8"
@@ -3577,7 +3597,7 @@
       "license": "MIT",
       "name": "tower-layer",
       "texts": [
-        247
+        248
       ],
       "url": "https://github.com/tower-rs/tower",
       "version": "0.3.3"
@@ -3586,7 +3606,7 @@
       "license": "MIT",
       "name": "tower-service",
       "texts": [
-        247
+        248
       ],
       "url": "https://github.com/tower-rs/tower",
       "version": "0.3.3"
@@ -3595,7 +3615,7 @@
       "license": "MIT",
       "name": "tracing",
       "texts": [
-        242
+        243
       ],
       "url": "https://github.com/tokio-rs/tracing",
       "version": "0.1.44"
@@ -3604,7 +3624,7 @@
       "license": "MIT",
       "name": "tracing-attributes",
       "texts": [
-        242
+        243
       ],
       "url": "https://github.com/tokio-rs/tracing",
       "version": "0.1.31"
@@ -3613,7 +3633,7 @@
       "license": "MIT",
       "name": "tracing-core",
       "texts": [
-        242
+        243
       ],
       "url": "https://github.com/tokio-rs/tracing",
       "version": "0.1.36"
@@ -3624,7 +3644,7 @@
       "texts": [
         13,
         151,
-        248
+        249
       ],
       "url": "https://github.com/tauri-apps/tray-icon",
       "version": "0.25.1"
@@ -3633,7 +3653,7 @@
       "license": "MIT",
       "name": "try-lock",
       "texts": [
-        249
+        250
       ],
       "url": "https://github.com/seanmonstar/try-lock",
       "version": "0.2.5"
@@ -3642,7 +3662,7 @@
       "license": "MIT",
       "name": "twox-hash",
       "texts": [
-        250
+        251
       ],
       "url": "https://github.com/shepmaster/twox-hash",
       "version": "2.1.2"
@@ -3661,9 +3681,9 @@
       "license": "MIT OR Apache-2.0",
       "name": "typenum",
       "texts": [
-        251,
         252,
-        253
+        253,
+        254
       ],
       "url": "https://github.com/paholg/typenum",
       "version": "1.20.1"
@@ -3674,7 +3694,7 @@
       "texts": [
         12,
         2,
-        254
+        255
       ],
       "url": "https://github.com/dtolnay/unicode-ident",
       "version": "1.0.24"
@@ -3683,7 +3703,7 @@
       "license": "MIT OR Apache-2.0",
       "name": "unicode-segmentation",
       "texts": [
-        255,
+        256,
         13,
         102
       ],
@@ -3695,7 +3715,7 @@
       "name": "universal-hash",
       "texts": [
         3,
-        256
+        257
       ],
       "url": "https://github.com/RustCrypto/traits",
       "version": "0.6.1"
@@ -3704,7 +3724,7 @@
       "license": "ISC",
       "name": "untrusted",
       "texts": [
-        257
+        258
       ],
       "url": "https://github.com/briansmith/untrusted",
       "version": "0.9.0"
@@ -3723,7 +3743,7 @@
       "license": "MIT",
       "name": "urlpattern",
       "texts": [
-        258
+        259
       ],
       "url": "https://github.com/denoland/rust-urlpattern",
       "version": "0.6.0"
@@ -3742,7 +3762,7 @@
       "license": "Apache-2.0 OR MIT",
       "name": "utf8_iter",
       "texts": [
-        259,
+        260,
         40,
         82
       ],
@@ -3754,7 +3774,7 @@
       "name": "uuid",
       "texts": [
         13,
-        260
+        261
       ],
       "url": "https://github.com/uuid-rs/uuid",
       "version": "1.21.0"
@@ -3774,7 +3794,7 @@
       "license": "MIT",
       "name": "want",
       "texts": [
-        261
+        262
       ],
       "url": "https://github.com/seanmonstar/want",
       "version": "0.3.1"
@@ -3783,8 +3803,8 @@
       "license": "MIT OR Apache-2.0",
       "name": "web-time",
       "texts": [
-        262,
-        263
+        263,
+        264
       ],
       "url": "https://github.com/daxpedda/web-time",
       "version": "1.1.0"
@@ -3837,7 +3857,7 @@
       "name": "winapi",
       "texts": [
         48,
-        264
+        265
       ],
       "url": "https://github.com/retep998/winapi-rs",
       "version": "0.3.9"
@@ -3858,8 +3878,8 @@
       "name": "window-vibrancy",
       "texts": [
         13,
-        265,
-        266
+        266,
+        267
       ],
       "url": "https://github.com/tauri-apps/tauri-plugin-vibrancy",
       "version": "0.8.1"
@@ -3868,8 +3888,8 @@
       "license": "MIT OR Apache-2.0",
       "name": "windows",
       "texts": [
-        267,
-        268
+        268,
+        269
       ],
       "url": "https://github.com/microsoft/windows-rs",
       "version": "0.61.3"
@@ -3878,8 +3898,8 @@
       "license": "MIT OR Apache-2.0",
       "name": "windows",
       "texts": [
-        267,
-        268
+        268,
+        269
       ],
       "url": "https://github.com/microsoft/windows-rs",
       "version": "0.62.2"
@@ -3888,8 +3908,8 @@
       "license": "MIT OR Apache-2.0",
       "name": "windows-collections",
       "texts": [
-        267,
-        268
+        268,
+        269
       ],
       "url": "https://github.com/microsoft/windows-rs",
       "version": "0.2.0"
@@ -3898,8 +3918,8 @@
       "license": "MIT OR Apache-2.0",
       "name": "windows-collections",
       "texts": [
-        267,
-        268
+        268,
+        269
       ],
       "url": "https://github.com/microsoft/windows-rs",
       "version": "0.3.2"
@@ -3908,8 +3928,8 @@
       "license": "MIT OR Apache-2.0",
       "name": "windows-core",
       "texts": [
-        267,
-        268
+        268,
+        269
       ],
       "url": "https://github.com/microsoft/windows-rs",
       "version": "0.61.2"
@@ -3918,8 +3938,8 @@
       "license": "MIT OR Apache-2.0",
       "name": "windows-core",
       "texts": [
-        267,
-        268
+        268,
+        269
       ],
       "url": "https://github.com/microsoft/windows-rs",
       "version": "0.62.2"
@@ -3928,8 +3948,8 @@
       "license": "MIT OR Apache-2.0",
       "name": "windows-future",
       "texts": [
-        267,
-        268
+        268,
+        269
       ],
       "url": "https://github.com/microsoft/windows-rs",
       "version": "0.2.1"
@@ -3938,8 +3958,8 @@
       "license": "MIT OR Apache-2.0",
       "name": "windows-future",
       "texts": [
-        267,
-        268
+        268,
+        269
       ],
       "url": "https://github.com/microsoft/windows-rs",
       "version": "0.3.2"
@@ -3948,8 +3968,8 @@
       "license": "MIT OR Apache-2.0",
       "name": "windows-implement",
       "texts": [
-        267,
-        268
+        268,
+        269
       ],
       "url": "https://github.com/microsoft/windows-rs",
       "version": "0.60.2"
@@ -3958,8 +3978,8 @@
       "license": "MIT OR Apache-2.0",
       "name": "windows-interface",
       "texts": [
-        267,
-        268
+        268,
+        269
       ],
       "url": "https://github.com/microsoft/windows-rs",
       "version": "0.59.3"
@@ -3968,8 +3988,8 @@
       "license": "MIT OR Apache-2.0",
       "name": "windows-link",
       "texts": [
-        267,
-        268
+        268,
+        269
       ],
       "url": "https://github.com/microsoft/windows-rs",
       "version": "0.1.3"
@@ -3978,8 +3998,8 @@
       "license": "MIT OR Apache-2.0",
       "name": "windows-link",
       "texts": [
-        267,
-        268
+        268,
+        269
       ],
       "url": "https://github.com/microsoft/windows-rs",
       "version": "0.2.1"
@@ -3988,8 +4008,8 @@
       "license": "MIT OR Apache-2.0",
       "name": "windows-numerics",
       "texts": [
-        267,
-        268
+        268,
+        269
       ],
       "url": "https://github.com/microsoft/windows-rs",
       "version": "0.2.0"
@@ -3998,8 +4018,8 @@
       "license": "MIT OR Apache-2.0",
       "name": "windows-numerics",
       "texts": [
-        267,
-        268
+        268,
+        269
       ],
       "url": "https://github.com/microsoft/windows-rs",
       "version": "0.3.1"
@@ -4008,8 +4028,8 @@
       "license": "MIT OR Apache-2.0",
       "name": "windows-registry",
       "texts": [
-        267,
-        268
+        268,
+        269
       ],
       "url": "https://github.com/microsoft/windows-rs",
       "version": "0.6.1"
@@ -4018,8 +4038,8 @@
       "license": "MIT OR Apache-2.0",
       "name": "windows-result",
       "texts": [
-        267,
-        268
+        268,
+        269
       ],
       "url": "https://github.com/microsoft/windows-rs",
       "version": "0.3.4"
@@ -4028,8 +4048,8 @@
       "license": "MIT OR Apache-2.0",
       "name": "windows-result",
       "texts": [
-        267,
-        268
+        268,
+        269
       ],
       "url": "https://github.com/microsoft/windows-rs",
       "version": "0.4.1"
@@ -4038,8 +4058,8 @@
       "license": "MIT OR Apache-2.0",
       "name": "windows-strings",
       "texts": [
-        267,
-        268
+        268,
+        269
       ],
       "url": "https://github.com/microsoft/windows-rs",
       "version": "0.4.2"
@@ -4048,8 +4068,8 @@
       "license": "MIT OR Apache-2.0",
       "name": "windows-strings",
       "texts": [
-        267,
-        268
+        268,
+        269
       ],
       "url": "https://github.com/microsoft/windows-rs",
       "version": "0.5.1"
@@ -4058,8 +4078,8 @@
       "license": "MIT OR Apache-2.0",
       "name": "windows-sys",
       "texts": [
-        267,
-        268
+        268,
+        269
       ],
       "url": "https://github.com/microsoft/windows-rs",
       "version": "0.60.2"
@@ -4068,8 +4088,8 @@
       "license": "MIT OR Apache-2.0",
       "name": "windows-sys",
       "texts": [
-        267,
-        268
+        268,
+        269
       ],
       "url": "https://github.com/microsoft/windows-rs",
       "version": "0.61.2"
@@ -4078,8 +4098,8 @@
       "license": "MIT OR Apache-2.0",
       "name": "windows-targets",
       "texts": [
-        267,
-        268
+        268,
+        269
       ],
       "url": "https://github.com/microsoft/windows-rs",
       "version": "0.53.5"
@@ -4088,8 +4108,8 @@
       "license": "MIT OR Apache-2.0",
       "name": "windows-threading",
       "texts": [
-        267,
-        268
+        268,
+        269
       ],
       "url": "https://github.com/microsoft/windows-rs",
       "version": "0.1.0"
@@ -4098,8 +4118,8 @@
       "license": "MIT OR Apache-2.0",
       "name": "windows-threading",
       "texts": [
-        267,
-        268
+        268,
+        269
       ],
       "url": "https://github.com/microsoft/windows-rs",
       "version": "0.2.1"
@@ -4108,8 +4128,8 @@
       "license": "MIT OR Apache-2.0",
       "name": "windows-version",
       "texts": [
-        267,
-        268
+        268,
+        269
       ],
       "url": "https://github.com/microsoft/windows-rs",
       "version": "0.1.7"
@@ -4118,8 +4138,8 @@
       "license": "MIT OR Apache-2.0",
       "name": "windows_x86_64_msvc",
       "texts": [
-        267,
-        268
+        268,
+        269
       ],
       "url": "https://github.com/microsoft/windows-rs",
       "version": "0.53.1"
@@ -4128,7 +4148,7 @@
       "license": "MIT",
       "name": "winnow",
       "texts": [
-        269
+        270
       ],
       "url": "https://github.com/winnow-rs/winnow",
       "version": "0.7.14"
@@ -4137,7 +4157,7 @@
       "license": "MIT",
       "name": "winnow",
       "texts": [
-        269
+        270
       ],
       "url": "https://github.com/winnow-rs/winnow",
       "version": "1.0.3"
@@ -4147,7 +4167,7 @@
       "name": "wnaf",
       "texts": [
         3,
-        270
+        271
       ],
       "url": "https://github.com/RustCrypto/elliptic-curves",
       "version": "0.14.0"
@@ -4166,8 +4186,8 @@
       "name": "wry",
       "texts": [
         13,
-        271,
-        272
+        272,
+        273
       ],
       "url": "https://github.com/tauri-apps/wry",
       "version": "0.57.0"
@@ -4194,9 +4214,9 @@
       "license": "BSD-2-Clause OR Apache-2.0 OR MIT",
       "name": "zerocopy",
       "texts": [
-        273,
         274,
-        275
+        275,
+        276
       ],
       "url": "https://github.com/google/zerocopy",
       "version": "0.8.39"
@@ -4224,7 +4244,7 @@
       "name": "zeroize",
       "texts": [
         40,
-        276
+        277
       ],
       "url": "https://github.com/RustCrypto/utils",
       "version": "1.9.0"
@@ -4260,7 +4280,7 @@
       "license": "MIT",
       "name": "zip",
       "texts": [
-        277
+        278
       ],
       "url": "https://github.com/zip-rs/zip2.git",
       "version": "4.6.1"
@@ -4504,6 +4524,7 @@
     "Copyright (c) 2017 Robert Grosse\n\nPermission is hereby granted, free of charge, to any\nperson obtaining a copy of this software and associated\ndocumentation files (the \"Software\"), to deal in the\nSoftware without restriction, including without\nlimitation the rights to use, copy, modify, merge,\npublish, distribute, sublicense, and/or sell copies of\nthe Software, and to permit persons to whom the Software\nis furnished to do so, subject to the following\nconditions:\n\nThe above copyright notice and this permission notice\nshall be included in all copies or substantial portions\nof the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF\nANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED\nTO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A\nPARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT\nSHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY\nCLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION\nOF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR\nIN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER\nDEALINGS IN THE SOFTWARE.",
     "Copyright (c) 2012-2013 Mozilla Foundation\n\nPermission is hereby granted, free of charge, to any\nperson obtaining a copy of this software and associated\ndocumentation files (the \"Software\"), to deal in the\nSoftware without restriction, including without\nlimitation the rights to use, copy, modify, merge,\npublish, distribute, sublicense, and/or sell copies of\nthe Software, and to permit persons to whom the Software\nis furnished to do so, subject to the following\nconditions:\n\nThe above copyright notice and this permission notice\nshall be included in all copies or substantial portions\nof the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF\nANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED\nTO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A\nPARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT\nSHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY\nCLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION\nOF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR\nIN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER\nDEALINGS IN THE SOFTWARE.",
     "The MIT License (MIT)\n\nCopyright (c) 2015 Danny Guo\nCopyright (c) 2016 Titus Wormer <tituswormer@gmail.com>\nCopyright (c) 2018 Akash Kurdekar\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.",
+    "MIT License\n\nCopyright (c) 2019 Peter Glotfelty\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.",
     "Copyright (c) 2016-2017 Isis Agora Lovecruft, Henry de Valence. All rights reserved.\nCopyright (c) 2016-2024 Isis Agora Lovecruft. All rights reserved.\n\nRedistribution and use in source and binary forms, with or without\nmodification, are permitted provided that the following conditions are\nmet:\n\n1. Redistributions of source code must retain the above copyright\nnotice, this list of conditions and the following disclaimer.\n\n2. Redistributions in binary form must reproduce the above copyright\nnotice, this list of conditions and the following disclaimer in the\ndocumentation and/or other materials provided with the distribution.\n\n3. Neither the name of the copyright holder nor the names of its\ncontributors may be used to endorse or promote products derived from\nthis software without specific prior written permission.\n\nTHIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS \"AS\nIS\" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED\nTO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A\nPARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT\nHOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,\nSPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED\nTO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR\nPROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF\nLIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING\nNEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS\nSOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.",
     "Copyright 2016 Nika Layzell\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.",
     "SPDXVersion: SPDX-2.1\nDataLicense: CC0-1.0\nPackageName: tao\nDataFormat: SPDXRef-1\nPackageSupplier: Organization: The Tauri Programme in the Commons Conservancy\nPackageHomePage: https://tauri.app\nPackageLicenseDeclared: Apache-2.0\nPackageCopyrightText: 2021-2023, The Tauri Programme in the Commons Conservancy\nPackageSummary: <text>Tao is the official, rust-based window manager for Wry.\n                </text>\nPackageComment: <text>The package includes the following libraries; see\nRelationship information.\n                </text>\nCreated: 2020-05-20T09:00:00Z\nPackageDownloadLocation: git://github.com/tauri-apps/tao\nPackageDownloadLocation: git+https://github.com/tauri-apps/tao.git\nPackageDownloadLocation: git+ssh://github.com/tauri-apps/tao.git\nCreator: Person: Daniel Thompson-Yvetot",

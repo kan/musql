@@ -94,7 +94,9 @@ fn mysql_from_env() -> Option<MySqlConfig> {
         database: env("MUSQL_VERIFY_MYSQL_DATABASE"),
         username: env_or("MUSQL_VERIFY_MYSQL_USER", "root"),
         password: env_or("MUSQL_VERIFY_MYSQL_PASSWORD", ""),
-        ssl_mode: env_or("MUSQL_VERIFY_MYSQL_SSL_MODE", "DISABLED"),
+        // Read as a saved profile would be; a misspelling becomes `Unknown`, which the
+        // connection test then refuses.
+        ssl_mode: env_or("MUSQL_VERIFY_MYSQL_SSL_MODE", "DISABLED").into(),
         tls_ca_cert_path: env("MUSQL_VERIFY_MYSQL_CA_CERT"),
         save_password: false,
         op_ref: None,
@@ -139,7 +141,7 @@ fn verify_mysql() {
     };
     let ssh = ssh_from_env();
     println!(
-        "verify_mysql: {}@{}:{} (ssl: {}){}",
+        "verify_mysql: {}@{}:{} (ssl: {:?}){}",
         mysql.username,
         mysql.host,
         mysql.port,
@@ -167,8 +169,8 @@ fn verify_mysql() {
         Some(t) => ("127.0.0.1".to_owned(), t.local_port),
         None => (mysql.host.clone(), mysql.port),
     };
-    let pool = Pool::new(build_opts(&mysql, &host, port))
-        .unwrap_or_else(|e| panic!("failed to build pool: {e}"));
+    let opts = build_opts(&mysql, &host, port).unwrap_or_else(|e| panic!("{e}"));
+    let pool = Pool::new(opts).unwrap_or_else(|e| panic!("failed to build pool: {e}"));
     let mut conn = pool
         .get_conn()
         .unwrap_or_else(|e| panic!("failed to connect: {e}"));
@@ -190,11 +192,11 @@ fn verify_mysql() {
     );
 
     // The mode asked for must be the one in effect, in both directions.
-    let wants_tls = mysql.ssl_mode != "DISABLED";
+    let wants_tls = mysql.ssl_mode != SslMode::Disabled;
     assert_eq!(
         !cipher.is_empty(),
         wants_tls,
-        "ssl_mode is {} but the session is {}",
+        "ssl_mode is {:?} but the session is {}",
         mysql.ssl_mode,
         if cipher.is_empty() {
             "unencrypted"

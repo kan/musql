@@ -378,6 +378,23 @@ function updateCaCertVisibility() {
 }
 sslModeSelect.addEventListener("change", updateCaCertVisibility);
 
+// A mode this version does not know (from a hand edit, or a newer version through the
+// sync file) gets an option of its own. Without one the select would go blank and
+// saving would replace the value with "" (#131). Connecting still refuses it.
+function setSslMode(mode) {
+  const stale = sslModeSelect.querySelector("option[data-unknown]");
+  if (stale) stale.remove();
+  const known = Array.from(sslModeSelect.options).some((o) => o.value === mode);
+  if (!known) {
+    const option = document.createElement("option");
+    option.value = mode;
+    option.textContent = t("ssl_mode_unknown", { name: mode });
+    option.dataset.unknown = "";
+    sslModeSelect.append(option);
+  }
+  sslModeSelect.value = mode;
+}
+
 async function browseFile(inputEl, title, filterName, extensions) {
   try {
     const path = await safeInvoke("pick_file", { title, filterName, extensions });
@@ -432,7 +449,7 @@ function applyRequest(request) {
   document.getElementById("mysql-db").value = request.mysql.database || "";
   document.getElementById("mysql-user").value = request.mysql.username || "";
   document.getElementById("mysql-pass").value = request.mysql.password || "";
-  sslModeSelect.value = request.mysql.ssl_mode || "DISABLED";
+  setSslMode(request.mysql.ssl_mode || "DISABLED");
   caCertInput.value = request.mysql.tls_ca_cert_path || "";
   mysqlSavePasswordCheck.checked = request.mysql.save_password !== false;
   mysqlOpRefInput.value = request.mysql.op_ref || "";

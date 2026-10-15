@@ -3,6 +3,8 @@ use bollard::Docker;
 use serde::Serialize;
 use std::collections::HashMap;
 
+use crate::SslMode;
+
 #[derive(Debug, Serialize, Clone)]
 pub struct DockerContainer {
     pub id: String,
@@ -15,15 +17,17 @@ pub struct DockerContainer {
     pub label_user: Option<String>,
     pub label_password: Option<String>,
     pub label_name: Option<String>,
-    pub label_ssl_mode: Option<String>,
+    pub label_ssl_mode: Option<SslMode>,
 }
 
 /// Normalises a `musql.ssl-mode` label value. Only DISABLED and REQUIRED are accepted:
 /// a Docker connection has no CA path and targets 127.0.0.1, so the verifying modes
 /// cannot succeed. Anything else is dropped and the UI default applies.
-fn parse_ssl_mode_label(value: &str) -> Option<String> {
-    let mode = value.trim().to_ascii_uppercase();
-    matches!(mode.as_str(), "DISABLED" | "REQUIRED").then_some(mode)
+fn parse_ssl_mode_label(value: &str) -> Option<SslMode> {
+    match SslMode::from(value.trim().to_ascii_uppercase()) {
+        mode @ (SslMode::Disabled | SslMode::Required) => Some(mode),
+        _ => None,
+    }
 }
 
 pub async fn discover_mysql_containers(docker: &Docker) -> Result<Vec<DockerContainer>, String> {
@@ -147,14 +151,8 @@ mod tests {
 
     #[test]
     fn parse_ssl_mode_label_normalises_known_modes() {
-        assert_eq!(
-            parse_ssl_mode_label("DISABLED").as_deref(),
-            Some("DISABLED")
-        );
-        assert_eq!(
-            parse_ssl_mode_label(" required ").as_deref(),
-            Some("REQUIRED")
-        );
+        assert_eq!(parse_ssl_mode_label("DISABLED"), Some(SslMode::Disabled));
+        assert_eq!(parse_ssl_mode_label(" required "), Some(SslMode::Required));
     }
 
     #[test]

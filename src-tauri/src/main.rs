@@ -10,7 +10,9 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tauri::menu::{CheckMenuItemBuilder, Menu, MenuItem, PredefinedMenuItem, Submenu};
+use tauri::menu::{
+    CheckMenuItem, CheckMenuItemBuilder, Menu, MenuItem, PredefinedMenuItem, Submenu,
+};
 use tauri::{AppHandle, Emitter, EventTarget, Manager, Window, Wry};
 
 mod app_log;
@@ -34,8 +36,8 @@ struct MySqlConfig {
     username: String,
     #[serde(default, skip_serializing)]
     password: String,
-    #[serde(default = "default_ssl_mode")]
-    ssl_mode: String, // "DISABLED" | "REQUIRED" | "VERIFY_CA" | "VERIFY_IDENTITY"
+    #[serde(default)]
+    ssl_mode: SslMode,
     #[serde(default)]
     tls_ca_cert_path: Option<String>,
     #[serde(default = "default_true")]
@@ -51,8 +53,45 @@ struct MySqlConfig {
     tls_skip_verify: bool,
 }
 
-fn default_ssl_mode() -> String {
-    "DISABLED".to_owned()
+/// How the MySQL connection uses TLS. Stored as the MySQL option names
+/// (`DISABLED`, `REQUIRED`, `VERIFY_CA`, `VERIFY_IDENTITY`), which the UI's choices use too.
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, Default)]
+#[serde(from = "String", into = "String")]
+enum SslMode {
+    #[default]
+    Disabled,
+    Required,
+    VerifyCa,
+    VerifyIdentity,
+    /// A value this version does not know: a hand edit, or a mode added by a later
+    /// version. It still loads, so one bad profile does not break the whole store, but
+    /// connecting refuses it instead of silently dropping TLS (#131). The spelling is
+    /// kept, so saving the profile (and the sync mirror) writes it back unchanged.
+    Unknown(String),
+}
+
+impl From<String> for SslMode {
+    fn from(name: String) -> Self {
+        match name.as_str() {
+            "DISABLED" => Self::Disabled,
+            "REQUIRED" => Self::Required,
+            "VERIFY_CA" => Self::VerifyCa,
+            "VERIFY_IDENTITY" => Self::VerifyIdentity,
+            _ => Self::Unknown(name),
+        }
+    }
+}
+
+impl From<SslMode> for String {
+    fn from(mode: SslMode) -> Self {
+        match mode {
+            SslMode::Disabled => "DISABLED".to_owned(),
+            SslMode::Required => "REQUIRED".to_owned(),
+            SslMode::VerifyCa => "VERIFY_CA".to_owned(),
+            SslMode::VerifyIdentity => "VERIFY_IDENTITY".to_owned(),
+            SslMode::Unknown(name) => name,
+        }
+    }
 }
 
 fn default_ssh_auth_method() -> String {
@@ -347,7 +386,7 @@ fn connection_fingerprint(request: &ConnectionRequest) -> String {
         _ => String::new(),
     };
     format!(
-        "{}:{}:{}:ssl={}:ca={}|{}",
+        "{}:{}:{}:ssl={:?}:ca={}|{}",
         request.mysql.host,
         request.mysql.port,
         request.mysql.username,
@@ -392,7 +431,7 @@ async fn get_or_create_pool_async(
     let mut mysql_no_db = request.mysql.clone();
     mysql_no_db.database = None;
     let pool = tauri::async_runtime::spawn_blocking(move || {
-        let opts = build_opts(&mysql_no_db, &target_host, target_port);
+        let opts = build_opts(&mysql_no_db, &target_host, target_port)?;
         let pool = Pool::new(opts).map_err(|e| format!("Failed to build pool: {e}"))?;
         let _conn = pool
             .get_conn()
@@ -415,7 +454,7 @@ async fn get_or_create_pool_async(
     Ok(pool)
 }
 
-fn build_opts(mysql: &MySqlConfig, host: &str, port: u16) -> OptsBuilder {
+fn build_opts(mysql: &MySqlConfig, host: &str, port: u16) -> Result<OptsBuilder, String> {
     let mut builder = OptsBuilder::new();
     builder = builder
         .ip_or_hostname(Some(host.to_owned()))
@@ -430,15 +469,16 @@ fn build_opts(mysql: &MySqlConfig, host: &str, port: u16) -> OptsBuilder {
         }
     }
 
-    match mysql.ssl_mode.as_str() {
-        "REQUIRED" => {
+    match &mysql.ssl_mode {
+        SslMode::Disabled => {}
+        SslMode::Required => {
             builder = builder.ssl_opts(Some(
                 SslOpts::default()
                     .with_danger_accept_invalid_certs(true)
                     .with_danger_skip_domain_validation(true),
             ));
         }
-        "VERIFY_CA" => {
+        SslMode::VerifyCa => {
             let mut ssl = SslOpts::default().with_danger_skip_domain_validation(true);
             if let Some(p) = &mysql.tls_ca_cert_path {
                 if !p.trim().is_empty() {
@@ -447,7 +487,7 @@ fn build_opts(mysql: &MySqlConfig, host: &str, port: u16) -> OptsBuilder {
             }
             builder = builder.ssl_opts(Some(ssl));
         }
-        "VERIFY_IDENTITY" => {
+        SslMode::VerifyIdentity => {
             let mut ssl = SslOpts::default();
             if let Some(p) = &mysql.tls_ca_cert_path {
                 if !p.trim().is_empty() {
@@ -456,10 +496,14 @@ fn build_opts(mysql: &MySqlConfig, host: &str, port: u16) -> OptsBuilder {
             }
             builder = builder.ssl_opts(Some(ssl));
         }
-        _ => { /* DISABLED or unknown — no ssl_opts */ }
+        SslMode::Unknown(name) => {
+            return Err(format!(
+                "Unknown SSL mode \"{name}\" in this connection. Choose one in the connection settings."
+            ));
+        }
     }
 
-    builder
+    Ok(builder)
 }
 
 fn profiles_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -499,11 +543,10 @@ fn load_profiles(app: &AppHandle) -> Result<ConnectionProfileStore, String> {
         let m = &mut item.request.mysql;
         if m.tls_enabled {
             m.ssl_mode = if m.tls_skip_verify {
-                "REQUIRED"
+                SslMode::Required
             } else {
-                "VERIFY_IDENTITY"
-            }
-            .to_owned();
+                SslMode::VerifyIdentity
+            };
             m.tls_enabled = false;
             m.tls_skip_verify = false;
             ssl_migrated = true;
@@ -2032,7 +2075,7 @@ async fn run_connection_test(
     // MySQL connection test (blocking)
     let mysql = request.mysql.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let opts = build_opts(&mysql, &target_host, target_port);
+        let opts = build_opts(&mysql, &target_host, target_port)?;
         let pool = Pool::new(opts).map_err(|e| format!("Failed to build pool: {e}"))?;
         let mut conn = pool
             .get_conn()
@@ -2862,84 +2905,167 @@ fn set_window_title(window: tauri::WebviewWindow, title: String) -> Result<(), S
     apply_window_title(&window, &title).map_err(|e| e.to_string())
 }
 
-fn ml<'a>(lang: &str, key: &'a str) -> &'a str {
-    match (lang, key) {
-        ("ja", "file") => "ファイル",
-        ("ja", "edit") => "編集",
-        ("ja", "help") => "ヘルプ",
-        ("ja", "query") => "クエリ",
-        ("ja", "view") => "表示",
-        ("ja", "new_profile") => "新規プロファイル",
-        ("ja", "new_group") => "新規グループ",
-        ("ja", "import") => "インポート...",
-        ("ja", "export") => "エクスポート...",
-        ("ja", "sync_settings") => "接続の同期...",
-        ("ja", "exit") => "終了",
-        ("ja", "github") => "GitHub リポジトリ",
-        ("ja", "manual") => "マニュアル",
-        ("ja", "open_logs") => "ログフォルダを開く",
-        ("ja", "about") => "muSQL について",
-        ("ja", "check_update") => "アップデートを確認...",
-        ("ja", "settings") => "設定",
-        ("ja", "new_sql_tab") => "新規 SQL タブ",
-        ("ja", "close_window") => "ウィンドウを閉じる",
-        ("ja", "run") => "実行",
-        ("ja", "run_all") => "すべて実行",
-        ("ja", "cancel") => "キャンセル",
-        ("ja", "format") => "整形",
-        ("ja", "switch_db") => "データベース切替",
-        ("ja", "theme") => "テーマ",
-        ("ja", "theme_light") => "ライト",
-        ("ja", "theme_dark") => "ダーク",
-        ("ja", "language") => "言語",
-        ("ja", "ai_settings") => "AI 設定",
-        ("ja", "notify_query") => "クエリ完了を通知",
-        ("ja", "test_connection") => "接続テスト",
-        ("ja", "connect") => "接続",
-        ("ja", "save") => "保存",
-        ("ja", "delete") => "削除",
-        (_, "file") => "File",
-        (_, "edit") => "Edit",
-        (_, "help") => "Help",
-        (_, "query") => "Query",
-        (_, "view") => "View",
-        (_, "ai_settings") => "AI Settings",
-        (_, "notify_query") => "Notify on Query Completion",
-        (_, "settings") => "Settings",
-        (_, "new_profile") => "New Profile",
-        (_, "new_group") => "New Group",
-        (_, "import") => "Import Profiles...",
-        (_, "export") => "Export Profiles...",
-        (_, "sync_settings") => "Sync Connections...",
-        (_, "exit") => "Exit",
-        (_, "github") => "GitHub Repository",
-        (_, "manual") => "Manual",
-        (_, "open_logs") => "Open Log Folder",
-        (_, "about") => "About muSQL",
-        (_, "check_update") => "Check for Updates...",
-        (_, "new_sql_tab") => "New SQL Tab",
-        (_, "close_window") => "Close Window",
-        (_, "run") => "Run",
-        (_, "run_all") => "Run All",
-        (_, "cancel") => "Cancel",
-        (_, "format") => "Format",
-        (_, "switch_db") => "Switch Database",
-        (_, "theme") => "Theme",
-        (_, "theme_light") => "Light",
-        (_, "theme_dark") => "Dark",
-        (_, "language") => "Language",
-        (_, "test_connection") => "Test Connection",
-        (_, "connect") => "Connect",
-        (_, "save") => "Save",
-        (_, "delete") => "Delete",
-        _ => key,
+// ── Menus ──
+
+/// A menu item. Its id is `<window>:<item>` (`main:exit`), and the items Rust does not
+/// handle itself reach that window's UI as the `<item>` part, in `menu:action`. An enum
+/// so that the id the menu is built with and the one `on_menu_event` matches cannot
+/// drift apart, and an item added without labels does not compile (#131).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, strum::EnumString)]
+#[cfg_attr(test, derive(strum::EnumIter))]
+#[strum(serialize_all = "kebab-case")]
+enum MenuAction {
+    // main
+    NewProfile,
+    NewGroup,
+    Import,
+    Export,
+    SyncSettings,
+    Exit,
+    // Kept in the Store build (no self-updater), which only leaves it out of the menu.
+    CheckUpdate,
+    Manual,
+    Github,
+    OpenLogs,
+    About,
+    // query
+    NewSqlTab,
+    Close,
+    SwitchDb,
+    AiSettings,
+    ToggleNotify,
+    Run,
+    RunAll,
+    Cancel,
+    Format,
+    // settings
+    TestConnection,
+    Connect,
+    Save,
+    Delete,
+    // The View menu of every window
+    ThemeLight,
+    ThemeDark,
+    LangEn,
+    LangJa,
+}
+
+/// A submenu of the menu bar / popup menu.
+#[derive(Clone, Copy)]
+enum MenuTitle {
+    File,
+    Edit,
+    View,
+    Help,
+    Query,
+    Settings,
+}
+
+/// Picks the label for the UI language from an (English, Japanese) pair.
+fn pick_label(lang: &str, (en, ja): (&'static str, &'static str)) -> &'static str {
+    if lang == "ja" {
+        ja
+    } else {
+        en
     }
+}
+
+fn menu_title(lang: &str, title: MenuTitle) -> &'static str {
+    pick_label(
+        lang,
+        match title {
+            MenuTitle::File => ("File", "ファイル"),
+            MenuTitle::Edit => ("Edit", "編集"),
+            MenuTitle::View => ("View", "表示"),
+            MenuTitle::Help => ("Help", "ヘルプ"),
+            MenuTitle::Query => ("Query", "クエリ"),
+            MenuTitle::Settings => ("Settings", "設定"),
+        },
+    )
+}
+
+/// Each item names both languages in one arm, so neither label can be left out.
+fn menu_label(lang: &str, item: MenuAction) -> &'static str {
+    use MenuAction::*;
+    pick_label(
+        lang,
+        match item {
+            NewProfile => ("New Profile", "新規プロファイル"),
+            NewGroup => ("New Group", "新規グループ"),
+            Import => ("Import Profiles...", "インポート..."),
+            Export => ("Export Profiles...", "エクスポート..."),
+            SyncSettings => ("Sync Connections...", "接続の同期..."),
+            Exit => ("Exit", "終了"),
+            CheckUpdate => ("Check for Updates...", "アップデートを確認..."),
+            Manual => ("Manual", "マニュアル"),
+            Github => ("GitHub Repository", "GitHub リポジトリ"),
+            OpenLogs => ("Open Log Folder", "ログフォルダを開く"),
+            About => ("About muSQL", "muSQL について"),
+            NewSqlTab => ("New SQL Tab", "新規 SQL タブ"),
+            Close => ("Close Window", "ウィンドウを閉じる"),
+            SwitchDb => ("Switch Database", "データベース切替"),
+            AiSettings => ("AI Settings", "AI 設定"),
+            ToggleNotify => ("Notify on Query Completion", "クエリ完了を通知"),
+            Run => ("Run", "実行"),
+            RunAll => ("Run All", "すべて実行"),
+            Cancel => ("Cancel", "キャンセル"),
+            Format => ("Format", "整形"),
+            TestConnection => ("Test Connection", "接続テスト"),
+            Connect => ("Connect", "接続"),
+            Save => ("Save", "保存"),
+            Delete => ("Delete", "削除"),
+            ThemeLight => ("Light", "ライト"),
+            ThemeDark => ("Dark", "ダーク"),
+            // Each language is listed under its own name.
+            LangEn => ("English", "English"),
+            LangJa => ("日本語", "日本語"),
+        },
+    )
+}
+
+fn menu_id(window: &str, item: MenuAction) -> String {
+    let item: &'static str = item.into();
+    format!("{window}:{item}")
+}
+
+/// The reverse of `menu_id`. `None` for ids that are not ours (the predefined items).
+fn parse_menu_id(id: &str) -> Option<(&str, MenuAction)> {
+    let (window, item) = id.split_once(':')?;
+    Some((window, item.parse().ok()?))
+}
+
+fn menu_item(
+    handle: &AppHandle<Wry>,
+    lang: &str,
+    window: &str,
+    item: MenuAction,
+    accelerator: Option<&str>,
+) -> tauri::Result<MenuItem<Wry>> {
+    MenuItem::with_id(
+        handle,
+        menu_id(window, item),
+        menu_label(lang, item),
+        true,
+        accelerator,
+    )
+}
+
+fn check_menu_item(
+    handle: &AppHandle<Wry>,
+    lang: &str,
+    window: &str,
+    item: MenuAction,
+    checked: bool,
+) -> tauri::Result<CheckMenuItem<Wry>> {
+    CheckMenuItemBuilder::with_id(menu_id(window, item), menu_label(lang, item))
+        .checked(checked)
+        .build(handle)
 }
 
 fn build_edit_submenu(handle: &AppHandle<Wry>, lang: &str) -> tauri::Result<Submenu<Wry>> {
     Submenu::with_items(
         handle,
-        ml(lang, "edit"),
+        menu_title(lang, MenuTitle::Edit),
         true,
         &[
             &PredefinedMenuItem::undo(handle, None)?,
@@ -2962,28 +3088,13 @@ fn build_view_items(
 ) -> tauri::Result<[Box<dyn tauri::menu::IsMenuItem<Wry>>; 6]> {
     let is_light = theme != "dark";
     let is_ja = lang == "ja";
+    let check = |item, checked| check_menu_item(handle, lang, prefix, item, checked);
     Ok([
-        Box::new(
-            CheckMenuItemBuilder::with_id(format!("{prefix}:theme-light"), ml(lang, "theme_light"))
-                .checked(is_light)
-                .build(handle)?,
-        ),
-        Box::new(
-            CheckMenuItemBuilder::with_id(format!("{prefix}:theme-dark"), ml(lang, "theme_dark"))
-                .checked(!is_light)
-                .build(handle)?,
-        ),
+        Box::new(check(MenuAction::ThemeLight, is_light)?),
+        Box::new(check(MenuAction::ThemeDark, !is_light)?),
         Box::new(PredefinedMenuItem::separator(handle)?),
-        Box::new(
-            CheckMenuItemBuilder::with_id(format!("{prefix}:lang-en"), "English")
-                .checked(!is_ja)
-                .build(handle)?,
-        ),
-        Box::new(
-            CheckMenuItemBuilder::with_id(format!("{prefix}:lang-ja"), "日本語")
-                .checked(is_ja)
-                .build(handle)?,
-        ),
+        Box::new(check(MenuAction::LangEn, !is_ja)?),
+        Box::new(check(MenuAction::LangJa, is_ja)?),
         Box::new(PredefinedMenuItem::separator(handle)?),
     ])
 }
@@ -2996,94 +3107,40 @@ fn build_view_submenu(
 ) -> tauri::Result<Submenu<Wry>> {
     let items = build_view_items(handle, lang, theme, prefix)?;
     let refs: Vec<&dyn tauri::menu::IsMenuItem<Wry>> = items.iter().map(|b| b.as_ref()).collect();
-    Submenu::with_items(handle, ml(lang, "view"), true, &refs)
+    Submenu::with_items(handle, menu_title(lang, MenuTitle::View), true, &refs)
 }
 
 fn build_main_menu(handle: &AppHandle<Wry>, lang: &str, theme: &str) -> tauri::Result<Menu<Wry>> {
+    let item = |item, accelerator| menu_item(handle, lang, WIN_MAIN, item, accelerator);
     let file_menu = Submenu::with_items(
         handle,
-        ml(lang, "file"),
+        menu_title(lang, MenuTitle::File),
         true,
         &[
-            &MenuItem::with_id(
-                handle,
-                "main:new-profile",
-                ml(lang, "new_profile"),
-                true,
-                Some("CmdOrCtrl+N"),
-            )?,
-            &MenuItem::with_id(
-                handle,
-                "main:new-group",
-                ml(lang, "new_group"),
-                true,
-                Some("CmdOrCtrl+Shift+N"),
-            )?,
+            &item(MenuAction::NewProfile, Some("CmdOrCtrl+N"))?,
+            &item(MenuAction::NewGroup, Some("CmdOrCtrl+Shift+N"))?,
             &PredefinedMenuItem::separator(handle)?,
-            &MenuItem::with_id(
-                handle,
-                "main:import",
-                ml(lang, "import"),
-                true,
-                None::<&str>,
-            )?,
-            &MenuItem::with_id(
-                handle,
-                "main:export",
-                ml(lang, "export"),
-                true,
-                None::<&str>,
-            )?,
-            &MenuItem::with_id(
-                handle,
-                "main:sync-settings",
-                ml(lang, "sync_settings"),
-                true,
-                None::<&str>,
-            )?,
+            &item(MenuAction::Import, None)?,
+            &item(MenuAction::Export, None)?,
+            &item(MenuAction::SyncSettings, None)?,
             &PredefinedMenuItem::separator(handle)?,
-            &MenuItem::with_id(handle, "main:exit", ml(lang, "exit"), true, None::<&str>)?,
+            &item(MenuAction::Exit, None)?,
         ],
     )?;
     let edit_menu = build_edit_submenu(handle, lang)?;
     let view_menu = build_view_submenu(handle, lang, theme, WIN_MAIN)?;
-    let manual_item = MenuItem::with_id(
-        handle,
-        "main:manual",
-        ml(lang, "manual"),
-        true,
-        None::<&str>,
-    )?;
-    let github_item = MenuItem::with_id(
-        handle,
-        "main:github",
-        ml(lang, "github"),
-        true,
-        None::<&str>,
-    )?;
-    let open_logs_item = MenuItem::with_id(
-        handle,
-        "main:open-logs",
-        ml(lang, "open_logs"),
-        true,
-        None::<&str>,
-    )?;
+    let manual_item = item(MenuAction::Manual, None)?;
+    let github_item = item(MenuAction::Github, None)?;
+    let open_logs_item = item(MenuAction::OpenLogs, None)?;
     let about_sep = PredefinedMenuItem::separator(handle)?;
-    let about_item =
-        MenuItem::with_id(handle, "main:about", ml(lang, "about"), true, None::<&str>)?;
+    let about_item = item(MenuAction::About, None)?;
     #[cfg(feature = "self-updater")]
     let help_menu = {
-        let check_update_item = MenuItem::with_id(
-            handle,
-            "main:check-update",
-            ml(lang, "check_update"),
-            true,
-            None::<&str>,
-        )?;
+        let check_update_item = item(MenuAction::CheckUpdate, None)?;
         let sep = PredefinedMenuItem::separator(handle)?;
         Submenu::with_items(
             handle,
-            ml(lang, "help"),
+            menu_title(lang, MenuTitle::Help),
             true,
             &[
                 &check_update_item,
@@ -3099,7 +3156,7 @@ fn build_main_menu(handle: &AppHandle<Wry>, lang: &str, theme: &str) -> tauri::R
     #[cfg(not(feature = "self-updater"))]
     let help_menu = Submenu::with_items(
         handle,
-        ml(lang, "help"),
+        menu_title(lang, MenuTitle::Help),
         true,
         &[
             &manual_item,
@@ -3118,91 +3175,42 @@ fn build_query_menu(
     theme: &str,
     notify: bool,
 ) -> tauri::Result<Menu<Wry>> {
+    let item = |item, accelerator| menu_item(handle, lang, WIN_QUERY, item, accelerator);
     let file_menu = Submenu::with_items(
         handle,
-        ml(lang, "file"),
+        menu_title(lang, MenuTitle::File),
         true,
         &[
-            &MenuItem::with_id(
-                handle,
-                "query:new-sql-tab",
-                ml(lang, "new_sql_tab"),
-                true,
-                Some("CmdOrCtrl+T"),
-            )?,
+            &item(MenuAction::NewSqlTab, Some("CmdOrCtrl+T"))?,
             &PredefinedMenuItem::separator(handle)?,
-            &MenuItem::with_id(
-                handle,
-                "query:close",
-                ml(lang, "close_window"),
-                true,
-                Some("CmdOrCtrl+W"),
-            )?,
+            &item(MenuAction::Close, Some("CmdOrCtrl+W"))?,
         ],
     )?;
     let edit_menu = build_edit_submenu(handle, lang)?;
     // Query view menu: Switch DB + shared theme/lang items
     let view_items = build_view_items(handle, lang, theme, WIN_QUERY)?;
-    let switch_db = MenuItem::with_id(
-        handle,
-        "query:switch-db",
-        ml(lang, "switch_db"),
-        true,
-        None::<&str>,
-    )?;
-    let ai_settings = MenuItem::with_id(
-        handle,
-        "query:ai-settings",
-        ml(lang, "ai_settings"),
-        true,
-        None::<&str>,
-    )?;
+    let switch_db = item(MenuAction::SwitchDb, None)?;
+    let ai_settings = item(MenuAction::AiSettings, None)?;
     let ai_sep = PredefinedMenuItem::separator(handle)?;
-    let notify_item =
-        CheckMenuItemBuilder::with_id("query:toggle-notify", ml(lang, "notify_query"))
-            .checked(notify)
-            .build(handle)?;
+    let notify_item = check_menu_item(handle, lang, WIN_QUERY, MenuAction::ToggleNotify, notify)?;
     let notify_sep = PredefinedMenuItem::separator(handle)?;
     let mut view_refs: Vec<&dyn tauri::menu::IsMenuItem<Wry>> =
         vec![&switch_db, &ai_settings, &ai_sep, &notify_item, &notify_sep];
     for item in &view_items {
         view_refs.push(item.as_ref());
     }
-    let view_menu = Submenu::with_items(handle, ml(lang, "view"), true, &view_refs)?;
+    let view_menu =
+        Submenu::with_items(handle, menu_title(lang, MenuTitle::View), true, &view_refs)?;
     let query_menu = Submenu::with_items(
         handle,
-        ml(lang, "query"),
+        menu_title(lang, MenuTitle::Query),
         true,
         &[
-            &MenuItem::with_id(
-                handle,
-                "query:run",
-                ml(lang, "run"),
-                true,
-                Some("CmdOrCtrl+Enter"),
-            )?,
-            &MenuItem::with_id(
-                handle,
-                "query:run-all",
-                ml(lang, "run_all"),
-                true,
-                Some("CmdOrCtrl+Shift+Enter"),
-            )?,
-            &MenuItem::with_id(
-                handle,
-                "query:cancel",
-                ml(lang, "cancel"),
-                true,
-                None::<&str>,
-            )?,
+            &item(MenuAction::Run, Some("CmdOrCtrl+Enter"))?,
+            &item(MenuAction::RunAll, Some("CmdOrCtrl+Shift+Enter"))?,
+            &item(MenuAction::Cancel, None)?,
             &PredefinedMenuItem::separator(handle)?,
-            &MenuItem::with_id(
-                handle,
-                "query:format",
-                ml(lang, "format"),
-                true,
-                Some("CmdOrCtrl+Shift+F"),
-            )?,
+            &item(MenuAction::Format, Some("CmdOrCtrl+Shift+F"))?,
         ],
     )?;
     Menu::with_items(handle, &[&file_menu, &edit_menu, &view_menu, &query_menu])
@@ -3215,40 +3223,17 @@ fn build_settings_menu(
 ) -> tauri::Result<Menu<Wry>> {
     let edit_menu = build_edit_submenu(handle, lang)?;
     let view_menu = build_view_submenu(handle, lang, theme, WIN_SETTINGS)?;
+    let item = |item| menu_item(handle, lang, WIN_SETTINGS, item, None);
     let settings_menu = Submenu::with_items(
         handle,
-        ml(lang, "settings"),
+        menu_title(lang, MenuTitle::Settings),
         true,
         &[
-            &MenuItem::with_id(
-                handle,
-                "settings:test-connection",
-                ml(lang, "test_connection"),
-                true,
-                None::<&str>,
-            )?,
-            &MenuItem::with_id(
-                handle,
-                "settings:connect",
-                ml(lang, "connect"),
-                true,
-                None::<&str>,
-            )?,
+            &item(MenuAction::TestConnection)?,
+            &item(MenuAction::Connect)?,
             &PredefinedMenuItem::separator(handle)?,
-            &MenuItem::with_id(
-                handle,
-                "settings:save",
-                ml(lang, "save"),
-                true,
-                None::<&str>,
-            )?,
-            &MenuItem::with_id(
-                handle,
-                "settings:delete",
-                ml(lang, "delete"),
-                true,
-                None::<&str>,
-            )?,
+            &item(MenuAction::Save)?,
+            &item(MenuAction::Delete)?,
         ],
     )?;
     Menu::with_items(handle, &[&edit_menu, &view_menu, &settings_menu])
@@ -3575,33 +3560,25 @@ fn main() {
             Ok(())
         })
         .on_menu_event(|app, event| {
-            let id = event.id().0.as_str();
-            match id {
-                "main:exit" => quit(app),
-                "main:github" => {
+            let Some((window_label, action)) = parse_menu_id(event.id().0.as_str()) else {
+                return;
+            };
+            use MenuAction::*;
+            match action {
+                Exit => quit(app),
+                Github => {
                     let _ = open_in_browser("https://github.com/kan/musql");
                 }
-                "main:open-logs" => {
+                OpenLogs => {
                     if let Err(e) = app_log::open_dir(app) {
                         log::warn!("failed to open the log directory: {e}");
                     }
                 }
-                "main:manual" => {
-                    let _ = app.emit_to(
-                        EventTarget::webview_window(WIN_MAIN),
-                        "menu:action",
-                        "manual",
-                    );
-                }
-                "main:about" => {
-                    let _ = app.emit_to(
-                        EventTarget::webview_window(WIN_MAIN),
-                        "menu:action",
-                        "about",
-                    );
-                }
+                // Not in the Store build's menu.
+                #[cfg(not(feature = "self-updater"))]
+                CheckUpdate => {}
                 #[cfg(feature = "self-updater")]
-                "main:check-update" => {
+                CheckUpdate => {
                     let handle = app.clone();
                     tauri::async_runtime::spawn(async move {
                         // A newer version announces itself (`update-available`). Both
@@ -3616,7 +3593,7 @@ fn main() {
                         }
                     });
                 }
-                "query:close" => {
+                Close => {
                     if let Some(w) = app.get_webview_window(WIN_QUERY) {
                         let _ = w.emit("query:reset", ());
                         let _ = w.hide();
@@ -3626,14 +3603,17 @@ fn main() {
                         let _ = w.set_focus();
                     }
                 }
-                _ => {
-                    if let Some((window_label, action)) = id.split_once(':') {
-                        let _ = app.emit_to(
-                            EventTarget::webview_window(window_label),
-                            "menu:action",
-                            action,
-                        );
-                    }
+                // Handled by the UI of the window the menu belongs to. Listed one by
+                // one so that a new item has to pick a side.
+                NewProfile | NewGroup | Import | Export | SyncSettings | Manual | About
+                | NewSqlTab | SwitchDb | AiSettings | ToggleNotify | Run | RunAll | Cancel
+                | Format | TestConnection | Connect | Save | Delete | ThemeLight | ThemeDark
+                | LangEn | LangJa => {
+                    let _ = app.emit_to(
+                        EventTarget::webview_window(window_label),
+                        "menu:action",
+                        <&'static str>::from(action),
+                    );
                 }
             }
         })
@@ -3854,7 +3834,7 @@ Host myserver
                 database: None,
                 username: user.to_owned(),
                 password: String::new(),
-                ssl_mode: "DISABLED".to_owned(),
+                ssl_mode: SslMode::Disabled,
                 tls_ca_cert_path: None,
                 save_password: true,
                 op_ref: None,
@@ -3907,6 +3887,104 @@ Host myserver
         let req1 = make_request("127.0.0.1", 3306, "root", None);
         let req2 = make_request("127.0.0.1", 3307, "root", None);
         assert_ne!(connection_fingerprint(&req1), connection_fingerprint(&req2));
+    }
+
+    // ── Menus ──────────────────────────────────────────────────────
+
+    // The UI's `menu:action` handlers (app.js / query.js / settings.js) match these
+    // strings, so renaming a variant must not change them silently.
+    #[test]
+    fn menu_actions_keep_the_ids_the_ui_handles() {
+        use strum::IntoEnumIterator;
+        let ids: Vec<&'static str> = MenuAction::iter().map(<&'static str>::from).collect();
+        assert_eq!(
+            ids,
+            [
+                "new-profile",
+                "new-group",
+                "import",
+                "export",
+                "sync-settings",
+                "exit",
+                "check-update",
+                "manual",
+                "github",
+                "open-logs",
+                "about",
+                "new-sql-tab",
+                "close",
+                "switch-db",
+                "ai-settings",
+                "toggle-notify",
+                "run",
+                "run-all",
+                "cancel",
+                "format",
+                "test-connection",
+                "connect",
+                "save",
+                "delete",
+                "theme-light",
+                "theme-dark",
+                "lang-en",
+                "lang-ja",
+            ]
+        );
+    }
+
+    #[test]
+    fn menu_ids_round_trip() {
+        use strum::IntoEnumIterator;
+        for action in MenuAction::iter() {
+            let id = menu_id(WIN_QUERY, action);
+            assert_eq!(parse_menu_id(&id), Some((WIN_QUERY, action)), "{id}");
+        }
+        // The predefined items (undo, copy, ...) carry ids that are not ours.
+        assert_eq!(parse_menu_id("undo"), None);
+        assert_eq!(parse_menu_id("main:no-such-item"), None);
+    }
+
+    // ── SslMode ────────────────────────────────────────────────────
+
+    // Saved profiles and the UI's choices use these spellings; they must keep loading
+    // and be written back unchanged.
+    #[test]
+    fn ssl_mode_reads_and_writes_the_stored_names() {
+        for (name, mode) in [
+            ("DISABLED", SslMode::Disabled),
+            ("REQUIRED", SslMode::Required),
+            ("VERIFY_CA", SslMode::VerifyCa),
+            ("VERIFY_IDENTITY", SslMode::VerifyIdentity),
+        ] {
+            let json = format!("\"{name}\"");
+            assert_eq!(serde_json::from_str::<SslMode>(&json).unwrap(), mode);
+            assert_eq!(serde_json::to_string(&mode).unwrap(), json);
+        }
+    }
+
+    #[test]
+    fn ssl_mode_absent_means_disabled() {
+        let mysql: MySqlConfig =
+            serde_json::from_str(r#"{"host":"h","port":3306,"database":null,"username":"u"}"#)
+                .unwrap();
+        assert_eq!(mysql.ssl_mode, SslMode::Disabled);
+    }
+
+    // An unknown value must not fail the load (it would take every profile with it),
+    // must not connect without TLS, and must survive being saved again (the sync mirror
+    // would otherwise carry the loss to the machine that wrote it).
+    #[test]
+    fn unknown_ssl_mode_loads_round_trips_and_refuses_to_connect() {
+        for name in ["PREFERRED", "verify_ca", ""] {
+            let json = format!("\"{name}\"");
+            let mode: SslMode = serde_json::from_str(&json).unwrap();
+            assert_eq!(mode, SslMode::Unknown(name.to_owned()));
+            assert_eq!(serde_json::to_string(&mode).unwrap(), json);
+        }
+        let mut req = make_request("127.0.0.1", 3306, "root", None);
+        assert!(build_opts(&req.mysql, "127.0.0.1", 3306).is_ok());
+        req.mysql.ssl_mode = SslMode::Unknown("PREFERRED".to_owned());
+        assert!(build_opts(&req.mysql, "127.0.0.1", 3306).is_err());
     }
 
     // ── generate_profile_id ────────────────────────────────────────
@@ -4319,7 +4397,7 @@ Host myserver
         assert!(it.request.ssh.as_ref().unwrap().private_key_path.is_none());
         // Everything else still arrives.
         assert_eq!(it.request.mysql.host, "db.example.com");
-        assert_eq!(it.request.mysql.ssl_mode, "VERIFY_CA");
+        assert_eq!(it.request.mysql.ssl_mode, SslMode::VerifyCa);
     }
 
     // Machine A exports, machine B imports: B must keep its own key/cert paths while
