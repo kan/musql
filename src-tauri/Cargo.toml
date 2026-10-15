@@ -38,7 +38,7 @@ futures-util = { version = "0.3", optional = true }
 #   のは、あちらに desktop のクリックを受ける口が無いため
 # - windows はスタートメニューのショートカットに AUMID を書くのに使う。tauri が引く版と
 #   同じ 0.62 に揃えてある
-tauri-winrt-notification = "0.7"
+tauri-winrt-notification = "0.8"
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     # パッケージ化されているか（Store 版か）の判定
