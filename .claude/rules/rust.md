@@ -1,6 +1,6 @@
 # Rust 実装ルール（`src-tauri/`）
 
-Rust 側を触るときに従う。`src-tauri/src/main.rs` に全ロジックを集約し、Docker 連携だけ `src-tauri/src/docker/`（`discovery.rs`, `tunnel.rs`）、1Password 連携は `src-tauri/src/onepassword.rs` に分けてある。
+Rust 側を触るときに従う。ロジックの中心は `src-tauri/src/main.rs` で、次の機能だけを別のファイルに分けてある。Docker 連携は `src-tauri/src/docker/`（`discovery.rs`, `tunnel.rs`）、1Password 連携は `src-tauri/src/onepassword.rs`、ログは `src-tauri/src/app_log.rs`、クリックで戻れる通知は `src-tauri/src/toast.rs`、仮想デスクトップは `src-tauri/src/vdesk.rs`。テストでだけ使うものは `src-tauri/src/credits.rs`、`src-tauri/src/docs_consistency.rs`、`src-tauri/src/verify.rs`（`testing.md` を参照）。
 
 ## 秘密情報
 - **パスワード / API キー**: `keyring`（Windows Credential Manager）で保存。各パスワード（MySQL / SSH パスフレーズ / SSH パスワード）は `save_*` フラグで keyring 保存 or 都度入力を選択可能。都度入力の場合、query 画面で接続前にモーダルプロンプトを表示。
