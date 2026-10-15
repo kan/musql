@@ -28,11 +28,19 @@ pub fn db_number(database: Option<&str>) -> Result<i64, String> {
 /// The SSL modes map onto TLS as for MySQL: `REQUIRED` encrypts without checking the
 /// certificate, `VERIFY_CA` checks the certificate but not the host name, and
 /// `VERIFY_IDENTITY` checks both. The CA certificate, when given, replaces the system's
-/// trusted roots.
-pub fn client(mysql: &MySqlConfig, host: &str, port: u16) -> Result<redis::Client, String> {
+/// trusted roots. `tls_by_tunnel`: the SSH tunnel makes the TLS (`tunnel_tls`), so the
+/// client talks plain to the tunnel's local end.
+pub fn client(
+    mysql: &MySqlConfig,
+    host: &str,
+    port: u16,
+    tls_by_tunnel: bool,
+) -> Result<redis::Client, String> {
     let invalid = |e: redis::RedisError| format!("Invalid Redis connection settings: {e}");
     // (use TLS, check the certificate, check the host name)
     let (tls, verify, check_host) = match &mysql.ssl_mode {
+        // Only VERIFY_IDENTITY goes to the tunnel; any other mode keeps its own handling.
+        SslMode::VerifyIdentity if tls_by_tunnel => (false, false, false),
         SslMode::Disabled => (false, false, false),
         SslMode::Required => (true, false, false),
         SslMode::VerifyCa => (true, true, false),
@@ -86,6 +94,56 @@ pub fn client(mysql: &MySqlConfig, host: &str, port: u16) -> Result<redis::Clien
     let mut addr = client.get_connection_info().addr().clone();
     addr.set_danger_accept_invalid_hostnames(true);
     redis::Client::open(client.get_connection_info().clone().set_addr(addr)).map_err(invalid)
+}
+
+/// TLS that the SSH tunnel makes to the server itself (#133).
+pub struct TunnelTls {
+    pub config: std::sync::Arc<rustls::ClientConfig>,
+    /// The profile's host, which the certificate must name.
+    pub server_name: rustls::pki_types::ServerName<'static>,
+}
+
+/// The TLS for a `VERIFY_IDENTITY` profile reached through SSH (#133). Through the tunnel
+/// the client connects to 127.0.0.1, and redis checks the certificate against the name it
+/// connects to, so the server's own name would never match. Redis's TLS starts with the
+/// connection, so the tunnel can make it instead, checking the profile's host. The trusted
+/// roots are those `client` uses: the CA certificate when given, else the system's.
+pub fn tunnel_tls(mysql: &MySqlConfig) -> Result<TunnelTls, String> {
+    use rustls::pki_types::{pem::PemObject, CertificateDer, ServerName};
+    let mut roots = rustls::RootCertStore::empty();
+    match mysql.ca_cert_path() {
+        Some(path) => {
+            let pem = std::fs::read(path)
+                .map_err(|e| format!("Failed to read the CA certificate: {e}"))?;
+            for cert in CertificateDer::pem_slice_iter(&pem) {
+                let cert = cert.map_err(|e| format!("Invalid CA certificate: {e}"))?;
+                roots
+                    .add(cert)
+                    .map_err(|e| format!("Invalid CA certificate: {e}"))?;
+            }
+            if roots.is_empty() {
+                return Err("The CA certificate file has no certificate.".to_owned());
+            }
+        }
+        None => {
+            let found = rustls_native_certs::load_native_certs();
+            if let Some(e) = found.errors.first() {
+                return Err(format!("Failed to read the system's certificates: {e}"));
+            }
+            // A system root that rustls cannot use is skipped, not fatal.
+            roots.add_parsable_certificates(found.certs);
+        }
+    }
+    let host = mysql.host.trim().to_owned();
+    let server_name = ServerName::try_from(host)
+        .map_err(|e| format!("The host cannot be checked against a certificate: {e}"))?;
+    let config = rustls::ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    Ok(TunnelTls {
+        config: std::sync::Arc::new(config),
+        server_name,
+    })
 }
 
 /// Opens a connection and checks that the server answers.
@@ -1154,6 +1212,11 @@ mod tests {
         assert!(db_number(Some("-1")).is_err());
     }
 
+    /// `client` without the SSH tunnel's TLS.
+    fn client(mysql: &MySqlConfig, host: &str, port: u16) -> Result<redis::Client, String> {
+        super::client(mysql, host, port, false)
+    }
+
     #[test]
     fn ssl_modes_choose_plain_or_tls() {
         let plain = client(&config(SslMode::Disabled, None), "h", 6379).unwrap();
@@ -1180,6 +1243,35 @@ mod tests {
         }
 
         assert!(client(&config(SslMode::Unknown("X".to_owned()), None), "h", 6379).is_err());
+
+        // The SSH tunnel makes the TLS (#133): the hop to its end is plain.
+        let tunnelled = super::client(
+            &config(SslMode::VerifyIdentity, None),
+            "127.0.0.1",
+            50000,
+            true,
+        )
+        .unwrap();
+        assert!(matches!(
+            tunnelled.get_connection_info().addr(),
+            ConnectionAddr::Tcp(..)
+        ));
+    }
+
+    #[test]
+    fn the_tunnel_checks_the_profile_host() {
+        let mut mysql = config(SslMode::VerifyIdentity, None);
+        mysql.host = " redis.example.com ".to_owned();
+        let tls = tunnel_tls(&mysql).unwrap();
+        assert_eq!(tls.server_name.to_str(), "redis.example.com");
+
+        // A CA file without a certificate is an error, not an empty trust list.
+        let ca =
+            std::env::temp_dir().join(format!("musql_redis_tunnel_ca_{}.pem", std::process::id()));
+        std::fs::write(&ca, b"").unwrap();
+        mysql.tls_ca_cert_path = Some(ca.to_string_lossy().into_owned());
+        assert!(tunnel_tls(&mysql).is_err());
+        let _ = std::fs::remove_file(&ca);
     }
 
     /// Whether the connection skips the host-name check. The flag sits in a type the

@@ -120,7 +120,7 @@ fn verify_ssh() {
         "verify_ssh: {}@{}:{} (auth: {})",
         ssh.username, ssh.host, ssh.port, ssh.auth_method
     );
-    let tunnel = tauri::async_runtime::block_on(start_ssh_tunnel(&ssh, "127.0.0.1", 3306))
+    let tunnel = tauri::async_runtime::block_on(start_ssh_tunnel(&ssh, "127.0.0.1", 3306, None))
         .unwrap_or_else(|e| panic!("SSH connection failed: {e}"));
     println!(
         "verify_ssh: ok, authenticated; tunnel listening on 127.0.0.1:{}",
@@ -164,7 +164,7 @@ fn verify_mysql() {
 
     // The tunnel must stay alive for as long as the pool is used.
     let tunnel = ssh.as_ref().map(|s| {
-        tauri::async_runtime::block_on(start_ssh_tunnel(s, &mysql.host, mysql.port))
+        tauri::async_runtime::block_on(start_ssh_tunnel(s, &mysql.host, mysql.port, None))
             .unwrap_or_else(|e| panic!("SSH tunnel failed: {e}"))
     });
     let (host, port) = match &tunnel {
@@ -331,6 +331,11 @@ fn verify_docker() {
 /// | `MUSQL_VERIFY_REDIS_PASSWORD` | empty |
 /// | `MUSQL_VERIFY_REDIS_DB` | 0 |
 /// | `MUSQL_VERIFY_REDIS_SSL_MODE` | `DISABLED` |
+/// | `MUSQL_VERIFY_REDIS_CA` | none: the system's trusted roots |
+///
+/// Through the SSH host when `MUSQL_VERIFY_SSH_*` is set (`ssh_from_env`): the host and
+/// port are then as the jump host sees them, and with `VERIFY_IDENTITY` the tunnel makes
+/// the TLS (#133).
 #[test]
 #[ignore]
 fn verify_redis() {
@@ -346,17 +351,34 @@ fn verify_redis() {
         username: env_or("MUSQL_VERIFY_REDIS_USER", ""),
         password: env_or("MUSQL_VERIFY_REDIS_PASSWORD", ""),
         ssl_mode: env_or("MUSQL_VERIFY_REDIS_SSL_MODE", "DISABLED").into(),
-        tls_ca_cert_path: None,
+        tls_ca_cert_path: env("MUSQL_VERIFY_REDIS_CA"),
         save_password: false,
         op_ref: None,
         tls_enabled: false,
         tls_skip_verify: false,
     };
-    let client = redis_client::client(&mysql, &host, port).unwrap_or_else(|e| panic!("{e}"));
+    let request = ConnectionRequest {
+        engine: Engine::Redis,
+        mysql: mysql.clone(),
+        ssh: ssh_from_env(),
+    };
+    // The window's way in: the SSH tunnel when there is one, then the client.
+    let (target_host, target_port, tunnel) =
+        tauri::async_runtime::block_on(connect_target(&request)).unwrap_or_else(|e| panic!("{e}"));
+    let tls_by_tunnel = SshTunnel::makes_tls(&tunnel);
+    let client = redis_client::client(&mysql, &target_host, target_port, tls_by_tunnel)
+        .unwrap_or_else(|e| panic!("{e}"));
     let mut session =
-        redis_client::RedisSession::open(client, None).unwrap_or_else(|e| panic!("{e}"));
+        redis_client::RedisSession::open(client, tunnel).unwrap_or_else(|e| panic!("{e}"));
     let version = redis_client::server_version(&mut session).unwrap_or_else(|e| panic!("{e}"));
-    println!("verify_redis: connected to Redis {version} at {host}:{port}");
+    println!(
+        "verify_redis: connected to Redis {version} at {host}:{port}{}",
+        match (&request.ssh, tls_by_tunnel) {
+            (Some(_), true) => " via ssh (TLS made by the tunnel)",
+            (Some(_), false) => " via ssh",
+            (None, _) => "",
+        }
+    );
 
     // Runs a line that needs no confirmation.
     let run = |s: &mut redis_client::RedisSession, line: &str| {

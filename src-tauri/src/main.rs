@@ -351,7 +351,17 @@ struct SchemaInfo {
 
 struct SshTunnel {
     local_port: u16,
+    /// The tunnel makes the TLS to the server (#133, `tunnel_tls`); the local hop is plain.
+    tls_by_tunnel: bool,
     _listener_task: tokio::task::JoinHandle<()>,
+}
+
+impl SshTunnel {
+    /// Whether the client must leave TLS to the tunnel (`tunnel` as `connect_target`
+    /// returns it): the argument `redis_client::client` takes.
+    fn makes_tls(tunnel: &Option<SshTunnel>) -> bool {
+        tunnel.as_ref().is_some_and(|t| t.tls_by_tunnel)
+    }
 }
 
 impl Drop for SshTunnel {
@@ -2025,10 +2035,34 @@ async fn connect_target(
 ) -> Result<(String, u16, Option<SshTunnel>), String> {
     match &request.ssh {
         Some(ssh) if ssh.enabled => {
-            let tunnel = start_ssh_tunnel(ssh, &request.mysql.host, request.mysql.port).await?;
+            let tls = tunnel_tls(request)?;
+            let tunnel =
+                start_ssh_tunnel(ssh, &request.mysql.host, request.mysql.port, tls).await?;
             Ok(("127.0.0.1".to_owned(), tunnel.local_port, Some(tunnel)))
         }
         _ => Ok((request.mysql.host.clone(), request.mysql.port, None)),
+    }
+}
+
+/// The TLS the SSH tunnel makes itself, for a `VERIFY_IDENTITY` connection through it
+/// (#133). The client reaches the tunnel's end at 127.0.0.1, so its own TLS would check
+/// the certificate against that address instead of the server's name. Redis's TLS starts
+/// with the connection, so the tunnel makes it (`redis_client::tunnel_tls`). MySQL's starts
+/// inside its handshake, which the tunnel cannot step into, and the mysql crate has no
+/// way to check another name than the one it connects to: refused, with VERIFY_CA named.
+fn tunnel_tls(request: &ConnectionRequest) -> Result<Option<redis_client::TunnelTls>, String> {
+    // A server on the jump host itself, named 127.0.0.1: the client's check is right.
+    if request.mysql.ssl_mode != SslMode::VerifyIdentity || request.mysql.host.trim() == "127.0.0.1"
+    {
+        return Ok(None);
+    }
+    match request.engine.protocol()? {
+        Protocol::Mysql => Err(
+            "VERIFY_IDENTITY cannot check the server's host name through an SSH tunnel. \
+             Use VERIFY_CA, which checks the certificate but not the host name."
+                .to_owned(),
+        ),
+        Protocol::Redis => redis_client::tunnel_tls(&request.mysql).map(Some),
     }
 }
 
@@ -2036,6 +2070,7 @@ async fn start_ssh_tunnel(
     ssh: &SshConfig,
     mysql_host: &str,
     mysql_port: u16,
+    tls: Option<redis_client::TunnelTls>,
 ) -> Result<SshTunnel, String> {
     // Resolve SSH config host if specified
     let (host, port, config_user, config_identity) = match &ssh.config_host {
@@ -2100,6 +2135,29 @@ async fn start_ssh_tunnel(
         .map_err(|e| format!("Failed to read local addr: {e}"))?
         .port();
 
+    // TLS made here (#133): one handshake now, so a certificate that does not name the host
+    // fails the connection with that reason, not as a connection closed later.
+    let tls = tls.map(|t| (tokio_rustls::TlsConnector::from(t.config), t.server_name));
+    if let Some((connector, server_name)) = &tls {
+        let check = async {
+            let channel = session
+                .channel_open_direct_tcpip(mysql_host, mysql_port as u32, "127.0.0.1", 0u32)
+                .await
+                .map_err(|e| {
+                    format!("SSH tunnel could not reach {mysql_host}:{mysql_port}: {e}")
+                })?;
+            connector
+                .connect(server_name.clone(), channel.into_stream())
+                .await
+                .map_err(|e| format!("TLS through the SSH tunnel failed: {e}"))
+        };
+        // The jump host may take the OS's TCP timeout to report an unreachable server.
+        tokio::time::timeout(CONNECT_TIMEOUT, check)
+            .await
+            .map_err(|_| "TLS through the SSH tunnel timed out".to_owned())??;
+    }
+    let tls_by_tunnel = tls.is_some();
+
     // Spawn forwarding task
     let mysql_host = mysql_host.to_owned();
     let task = tokio::spawn(async move {
@@ -2116,14 +2174,33 @@ async fn start_ssh_tunnel(
                 Err(_) => continue,
             };
             let mut ssh_stream = channel.into_stream();
+            let tls = tls.clone();
             tokio::spawn(async move {
-                let _ = tokio::io::copy_bidirectional(&mut tcp_stream, &mut ssh_stream).await;
+                match tls {
+                    None => {
+                        let _ =
+                            tokio::io::copy_bidirectional(&mut tcp_stream, &mut ssh_stream).await;
+                    }
+                    // A failed handshake closes the local connection: the client sees it
+                    // fail (the check above has already named the reason once). Bounded,
+                    // as nothing here watches the client give up meanwhile.
+                    Some((connector, server_name)) => {
+                        let handshake = connector.connect(server_name, ssh_stream);
+                        if let Ok(Ok(mut tls_stream)) =
+                            tokio::time::timeout(CONNECT_TIMEOUT, handshake).await
+                        {
+                            let _ = tokio::io::copy_bidirectional(&mut tcp_stream, &mut tls_stream)
+                                .await;
+                        }
+                    }
+                }
             });
         }
     });
 
     Ok(SshTunnel {
         local_port,
+        tls_by_tunnel,
         _listener_task: task,
     })
 }
@@ -2235,9 +2312,10 @@ async fn run_connection_test(
     resolve_credentials(&mut request, profile_id.as_deref()).await?;
 
     // Set up SSH tunnel if needed (async)
-    let (target_host, target_port, _tunnel) = connect_target(&request).await?;
+    let (target_host, target_port, tunnel) = connect_target(&request).await?;
+    let tls_by_tunnel = SshTunnel::makes_tls(&tunnel);
 
-    // The connection test itself (blocking)
+    // The connection test itself (blocking). The tunnel stays open until it ends.
     let mysql = request.mysql.clone();
     tauri::async_runtime::spawn_blocking(move || {
         match protocol {
@@ -2251,7 +2329,9 @@ async fn run_connection_test(
                     .map_err(|e| format!("MySQL ping failed: {e}"))?;
             }
             Protocol::Redis => {
-                redis_client::ping(&redis_client::client(&mysql, &target_host, target_port)?)?;
+                let client =
+                    redis_client::client(&mysql, &target_host, target_port, tls_by_tunnel)?;
+                redis_client::ping(&client)?;
             }
         }
         Ok("Connection succeeded.".to_owned())
@@ -2414,10 +2494,11 @@ async fn redis_connect(
     let epoch = drop_redis_session(&state).await?;
     resolve_credentials(&mut request, profile_id.as_deref()).await?;
     let (host, port, tunnel) = connect_target(&request).await?;
+    let tls_by_tunnel = SshTunnel::makes_tls(&tunnel);
     let mysql = request.mysql.clone();
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let client = redis_client::client(&mysql, &host, port)?;
+        let client = redis_client::client(&mysql, &host, port, tls_by_tunnel)?;
         let mut session = redis_client::RedisSession::open(client, tunnel)?;
         let version = redis_client::server_version(&mut session)?;
         let db = session.db();
@@ -4282,6 +4363,27 @@ Host myserver
             },
             ssh,
         }
+    }
+
+    // #133: through SSH, only VERIFY_IDENTITY changes anything. Redis gets its TLS from the
+    // tunnel; MySQL is refused, as its host name cannot be checked there.
+    #[test]
+    fn verify_identity_through_ssh_is_made_by_the_tunnel_or_refused() {
+        let mut req = make_request("db.example.com", 3306, "root", None);
+        req.mysql.ssl_mode = SslMode::VerifyCa;
+        assert!(tunnel_tls(&req).unwrap().is_none());
+
+        req.mysql.ssl_mode = SslMode::VerifyIdentity;
+        assert!(tunnel_tls(&req).is_err_and(|e| e.contains("VERIFY_CA")));
+
+        // A server on the jump host itself is checked right by the client.
+        let mut local = req.clone();
+        local.mysql.host = "127.0.0.1".to_owned();
+        assert!(tunnel_tls(&local).unwrap().is_none());
+
+        req.engine = Engine::Redis;
+        let tls = tunnel_tls(&req).unwrap().expect("the tunnel makes the TLS");
+        assert_eq!(tls.server_name.to_str(), "db.example.com");
     }
 
     #[test]

@@ -2956,6 +2956,7 @@ dependencies = [
  "rfd",
  "russh",
  "rustls",
+ "rustls-native-certs",
  "semver",
  "serde",
  "serde_json",
@@ -2969,6 +2970,7 @@ dependencies = [
  "tauri-plugin-window-state",
  "tauri-winrt-notification 0.8.1",
  "tokio",
+ "tokio-rustls",
  "windows 0.62.2",
 ]
 
