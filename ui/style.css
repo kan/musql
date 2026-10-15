@@ -1734,6 +1734,24 @@ html.dark .CodeMirror-hint-active {
   gap: 6px;
   margin-top: 8px;
 }
+/* A multi-line answer that is used one line at a time (the Redis CLI). */
+.ai-msg-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ai-msg-line + .ai-msg-line {
+  margin-top: 4px;
+}
+.ai-msg-line pre {
+  flex: 1;
+}
+.ai-msg-line button {
+  flex: none;
+  padding: 2px 8px;
+  font-size: 12px;
+  border-radius: 6px;
+}
 .ai-msg-actions button {
   padding: 4px 10px;
   font-size: 12px;
@@ -2083,14 +2101,39 @@ html.dark .CodeMirror-hint-active {
 .redis-more button {
   width: 100%;
 }
-.redis-kind {
-  flex: none;
-  min-width: 44px;
-  font-size: 11px;
+/* The key list's groups, one per type. */
+.redis-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  cursor: default;
+  font-size: 12px;
+  font-weight: 600;
   color: var(--sub);
 }
-.table-list-item.active .redis-kind {
-  color: inherit;
+.redis-group-header:hover {
+  background: var(--hover-bg);
+}
+.redis-group-header .toggle {
+  width: 12px;
+  font-size: 10px;
+  text-align: center;
+}
+.redis-group-header .toggle::before {
+  content: "\25BC";
+}
+.redis-group.collapsed .redis-group-header .toggle::before {
+  content: "\25B6";
+}
+.redis-group-header .group-count {
+  font-weight: 400;
+}
+.redis-group.collapsed .redis-group-keys {
+  display: none;
+}
+.redis-group-keys .table-list-item {
+  padding-left: 28px;
 }
 .redis-empty {
   padding: 8px 12px;
@@ -2185,6 +2228,10 @@ html.dark .CodeMirror-hint-active {
 .redis-cli-input input {
   flex: 1;
   font-family: inherit;
+}
+.redis-cli-input button {
+  flex: none;
+  font-family: "Segoe UI", "Yu Gothic UI", sans-serif;
 }
 .redis-cli-input-area {
   position: relative;

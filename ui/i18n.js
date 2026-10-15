@@ -241,6 +241,9 @@
       ai_assist_send: "Send",
       copy: "Copy",
       ai_assist_insert: "Insert",
+      redis_ai_placeholder: "Ask AI to write Redis commands...",
+      redis_ai_insert: "Put in CLI",
+      redis_ai_empty: "Ask AI to write redis-cli commands. It is told the key names and types, not the values. A command goes into the CLI input and runs only when you press Enter.",
       ai_assist_clear: "Clear chat",
       ai_assist_empty: "Ask AI to generate SQL queries based on your database schema. Describe what you need in natural language.",
 
@@ -495,6 +498,9 @@
       ai_assist_send: "送信",
       copy: "コピー",
       ai_assist_insert: "挿入",
+      redis_ai_placeholder: "AI に Redis のコマンドを書いてもらう...",
+      redis_ai_insert: "CLI に入れる",
+      redis_ai_empty: "やりたいことを書くと、AI が redis-cli のコマンドを作ります。AI に伝えるのはキー名と型だけで、値は送りません。コマンドは CLI の入力欄に入り、Enter を押すまで実行しません。",
       ai_assist_clear: "チャットをクリア",
       ai_assist_empty: "データベースのスキーマに基づいて、AIがSQLクエリを生成します。必要なことを自然言語で記述してください。",
 

@@ -1262,8 +1262,8 @@ fn fetch_schema(pool: &Pool, database: &str) -> Result<SchemaInfo, String> {
 
 // ── AI prompt building ──
 
-// Upper bound in bytes for the schema text sent to the AI provider.
-const AI_SCHEMA_TEXT_MAX: usize = 8000;
+// Upper bound in bytes for the schema text (or the Redis key list) sent to the AI provider.
+const AI_CONTEXT_TEXT_MAX: usize = 8000;
 
 fn schema_text_for_prompt(schema: &SchemaInfo) -> String {
     let mut schema_text = String::new();
@@ -1283,21 +1283,26 @@ fn schema_text_for_prompt(schema: &SchemaInfo) -> String {
             );
         }
     }
-    // Truncate schema text if too long
-    if schema_text.len() > AI_SCHEMA_TEXT_MAX {
-        // String::truncate panics off a char boundary, and identifiers can be multibyte.
-        let mut end = AI_SCHEMA_TEXT_MAX;
-        while !schema_text.is_char_boundary(end) {
-            end -= 1;
-        }
-        // Prefer ending on a whole line so the model never sees a half identifier.
-        if let Some(nl) = schema_text[..end].rfind('\n') {
-            end = nl + 1;
-        }
-        schema_text.truncate(end);
-        schema_text.push_str("\n-- (truncated)\n");
-    }
+    truncate_for_prompt(&mut schema_text, "-- (truncated)");
     schema_text
+}
+
+/// Cuts `text` to `AI_CONTEXT_TEXT_MAX` bytes, on a whole line, and marks the cut.
+fn truncate_for_prompt(text: &mut String, marker: &str) {
+    if text.len() <= AI_CONTEXT_TEXT_MAX {
+        return;
+    }
+    // String::truncate panics off a char boundary, and identifiers can be multibyte.
+    let mut end = AI_CONTEXT_TEXT_MAX;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    // Prefer ending on a whole line so the model never sees a half identifier.
+    if let Some(nl) = text[..end].rfind('\n') {
+        end = nl + 1;
+    }
+    text.truncate(end);
+    let _ = writeln!(text, "\n{marker}");
 }
 
 fn build_ai_prompt(
@@ -1501,15 +1506,28 @@ async fn ai_complete(
     op_ref: Option<String>,
     state: tauri::State<'_, Arc<Mutex<Option<ConnectionCache>>>>,
 ) -> Result<String, String> {
-    let ai_provider: AiProvider = serde_json::from_value(serde_json::json!(provider))
-        .map_err(|_| format!("Invalid AI provider: {provider}"))?;
-
-    let api_key = resolve_ai_api_key(&ai_provider, op_ref).await?;
     let (engine, schema) = connection_schema(&state, &database).await?;
-
     let prompt = build_ai_prompt(&engine, &schema, &text_before, &text_after);
-    let result = call_ai_api(&ai_provider, &model, &api_key, &prompt).await?;
+    let result = ask_ai(&provider, &model, op_ref, &prompt).await?;
     Ok(result.trim().to_owned())
+}
+
+/// A provider name from the UI (`claude`, `openai`, `gemini`).
+fn parse_ai_provider(provider: &str) -> Result<AiProvider, String> {
+    serde_json::from_value(serde_json::json!(provider))
+        .map_err(|_| format!("Invalid AI provider: {provider}"))
+}
+
+/// Sends `prompt` to the provider the UI named, with its key (`resolve_ai_api_key`).
+async fn ask_ai(
+    provider: &str,
+    model: &str,
+    op_ref: Option<String>,
+    prompt: &str,
+) -> Result<String, String> {
+    let ai_provider = parse_ai_provider(provider)?;
+    let api_key = resolve_ai_api_key(&ai_provider, op_ref).await?;
+    call_ai_api(&ai_provider, model, &api_key, prompt).await
 }
 
 fn build_ai_assist_prompt(
@@ -1556,12 +1574,7 @@ async fn ai_assist(
     op_ref: Option<String>,
     state: tauri::State<'_, Arc<Mutex<Option<ConnectionCache>>>>,
 ) -> Result<String, String> {
-    let ai_provider: AiProvider = serde_json::from_value(serde_json::json!(provider))
-        .map_err(|_| format!("Invalid AI provider: {provider}"))?;
-
-    let api_key = resolve_ai_api_key(&ai_provider, op_ref).await?;
     let (engine, schema) = connection_schema(&state, &database).await?;
-
     let ai_prompt = build_ai_assist_prompt(
         &engine,
         &schema,
@@ -1569,38 +1582,83 @@ async fn ai_assist(
         &editor_content,
         &conversation_context,
     );
-    let result = call_ai_api(&ai_provider, &model, &api_key, &ai_prompt).await?;
+    let result = ask_ai(&provider, &model, op_ref, &ai_prompt).await?;
+    Ok(strip_code_fence(&result))
+}
 
-    // Strip code fences if present
-    let trimmed = result.trim();
-    let cleaned = if trimmed.starts_with("```") {
-        let inner = trimmed
-            .trim_start_matches("```sql")
-            .trim_start_matches("```SQL")
-            .trim_start_matches("```")
-            .trim_end_matches("```");
-        inner.trim().to_owned()
-    } else {
-        trimmed.to_owned()
+/// The reply without the code fence a model may wrap it in despite being asked not to
+/// (```` ```sql ````, ```` ```redis ````, or a bare ```` ``` ````).
+fn strip_code_fence(reply: &str) -> String {
+    let trimmed = reply.trim();
+    let Some(rest) = trimmed.strip_prefix("```") else {
+        return trimmed.to_owned();
     };
+    let body = match rest.split_once('\n') {
+        // The opening fence's line, language tag and all, goes.
+        Some((_, body)) => body,
+        // All on one line (```sql SELECT 1```): only a known tag goes, as a command's
+        // first word cannot be told from a tag otherwise.
+        None => ["sql", "SQL", "redis", "bash", "sh", "shell", "text"]
+            .iter()
+            .find_map(|tag| rest.strip_prefix(tag).filter(|r| r.starts_with(' ')))
+            .unwrap_or(rest),
+    };
+    body.trim_end().trim_end_matches("```").trim().to_owned()
+}
 
-    Ok(cleaned)
+fn build_redis_ai_prompt(
+    version: &str,
+    db: i64,
+    mut keys: String,
+    prompt: &str,
+    conversation_context: &str,
+) -> String {
+    truncate_for_prompt(&mut keys, "(truncated)");
+    let mut parts = format!(
+        "You are a Redis assistant. Write redis-cli commands for the user's request. \
+         Return ONLY the commands, one per line, in redis-cli syntax (put an argument with \
+         spaces in double quotes). No explanation, no markdown, no code fences. Use SCAN \
+         rather than KEYS.\n\n\
+         Redis version: {version}\n\
+         Current database: {db}\n\n\
+         Some of the keys, with their types (values are not shown):\n{keys}"
+    );
+    if !conversation_context.trim().is_empty() {
+        let _ = writeln!(parts, "\nPrevious conversation:\n{conversation_context}");
+    }
+    let _ = write!(parts, "\nUser request: {prompt}");
+    parts
+}
+
+/// The AI assist of the Redis window (#98): redis-cli commands for `prompt`. The prompt
+/// carries key names and types (`redis_client::ai_context`), not values.
+#[tauri::command]
+async fn redis_ai_assist(
+    prompt: String,
+    conversation_context: String,
+    provider: String,
+    model: String,
+    op_ref: Option<String>,
+    state: tauri::State<'_, redis_client::RedisState>,
+) -> Result<String, String> {
+    let connection = redis_client::current_epoch();
+    let (version, db, keys) = with_redis_session(&state, move |s| {
+        redis_client::ai_context(s, || redis_client::is_current(connection))
+    })
+    .await?;
+    let ai_prompt = build_redis_ai_prompt(&version, db, keys, &prompt, &conversation_context);
+    let result = ask_ai(&provider, &model, op_ref, &ai_prompt).await?;
+    Ok(strip_code_fence(&result))
 }
 
 #[tauri::command]
 fn save_ai_api_key(provider: String, api_key: String) -> Result<(), String> {
-    let ai_provider: AiProvider =
-        serde_json::from_value(serde_json::json!(provider)).map_err(|_| "Invalid AI provider")?;
-    set_ai_api_key(&ai_provider, &api_key)
+    set_ai_api_key(&parse_ai_provider(&provider)?, &api_key)
 }
 
 #[tauri::command]
 fn has_ai_api_key(provider: String) -> bool {
-    let ai_provider: AiProvider = match serde_json::from_value(serde_json::json!(provider)) {
-        Ok(p) => p,
-        Err(_) => return false,
-    };
-    !get_ai_api_key(&ai_provider).is_empty()
+    parse_ai_provider(&provider).is_ok_and(|p| !get_ai_api_key(&p).is_empty())
 }
 
 #[tauri::command]
@@ -3256,9 +3314,8 @@ impl MenuAction {
         match self {
             NewProfile | NewGroup | Import | Export | SyncSettings | Exit | CheckUpdate
             | Manual | Github | OpenLogs | About => &[WIN_MAIN],
-            NewSqlTab | SwitchDb | AiSettings | ToggleNotify | Run | RunAll | Cancel | Format => {
-                &[WIN_QUERY]
-            }
+            NewSqlTab | SwitchDb | ToggleNotify | Run | RunAll | Cancel | Format => &[WIN_QUERY],
+            AiSettings => &[WIN_QUERY, WIN_REDIS],
             Close => &CONNECTION_WINDOWS,
             TestConnection | Connect | Save | Delete => &[WIN_SETTINGS],
             ThemeLight | ThemeDark | LangEn | LangJa => {
@@ -3485,9 +3542,14 @@ fn build_view_submenu(
     lang: &str,
     theme: &str,
     prefix: &str,
+    leading: &[&dyn tauri::menu::IsMenuItem<Wry>],
 ) -> tauri::Result<Submenu<Wry>> {
     let items = build_view_items(handle, lang, theme, prefix)?;
-    let refs: Vec<&dyn tauri::menu::IsMenuItem<Wry>> = items.iter().map(|b| b.as_ref()).collect();
+    let refs: Vec<&dyn tauri::menu::IsMenuItem<Wry>> = leading
+        .iter()
+        .copied()
+        .chain(items.iter().map(|b| b.as_ref()))
+        .collect();
     Submenu::with_items(handle, menu_title(lang, MenuTitle::View), true, &refs)
 }
 
@@ -3509,7 +3571,7 @@ fn build_main_menu(handle: &AppHandle<Wry>, lang: &str, theme: &str) -> tauri::R
         ],
     )?;
     let edit_menu = build_edit_submenu(handle, lang)?;
-    let view_menu = build_view_submenu(handle, lang, theme, WIN_MAIN)?;
+    let view_menu = build_view_submenu(handle, lang, theme, WIN_MAIN, &[])?;
     let manual_item = item(MenuAction::Manual, None)?;
     let github_item = item(MenuAction::Github, None)?;
     let open_logs_item = item(MenuAction::OpenLogs, None)?;
@@ -3569,19 +3631,18 @@ fn build_query_menu(
     )?;
     let edit_menu = build_edit_submenu(handle, lang)?;
     // Query view menu: Switch DB + shared theme/lang items
-    let view_items = build_view_items(handle, lang, theme, WIN_QUERY)?;
     let switch_db = item(MenuAction::SwitchDb, None)?;
     let ai_settings = item(MenuAction::AiSettings, None)?;
     let ai_sep = PredefinedMenuItem::separator(handle)?;
     let notify_item = check_menu_item(handle, lang, WIN_QUERY, MenuAction::ToggleNotify, notify)?;
     let notify_sep = PredefinedMenuItem::separator(handle)?;
-    let mut view_refs: Vec<&dyn tauri::menu::IsMenuItem<Wry>> =
-        vec![&switch_db, &ai_settings, &ai_sep, &notify_item, &notify_sep];
-    for item in &view_items {
-        view_refs.push(item.as_ref());
-    }
-    let view_menu =
-        Submenu::with_items(handle, menu_title(lang, MenuTitle::View), true, &view_refs)?;
+    let view_menu = build_view_submenu(
+        handle,
+        lang,
+        theme,
+        WIN_QUERY,
+        &[&switch_db, &ai_settings, &ai_sep, &notify_item, &notify_sep],
+    )?;
     let query_menu = Submenu::with_items(
         handle,
         menu_title(lang, MenuTitle::Query),
@@ -3603,7 +3664,7 @@ fn build_settings_menu(
     theme: &str,
 ) -> tauri::Result<Menu<Wry>> {
     let edit_menu = build_edit_submenu(handle, lang)?;
-    let view_menu = build_view_submenu(handle, lang, theme, WIN_SETTINGS)?;
+    let view_menu = build_view_submenu(handle, lang, theme, WIN_SETTINGS, &[])?;
     let item = |item| menu_item(handle, lang, WIN_SETTINGS, item, None);
     let settings_menu = Submenu::with_items(
         handle,
@@ -3652,7 +3713,10 @@ fn build_redis_menu(handle: &AppHandle<Wry>, lang: &str, theme: &str) -> tauri::
         )?],
     )?;
     let edit_menu = build_edit_submenu(handle, lang)?;
-    let view_menu = build_view_submenu(handle, lang, theme, WIN_REDIS)?;
+    // View: AI settings + shared theme/lang items
+    let ai_settings = menu_item(handle, lang, WIN_REDIS, MenuAction::AiSettings, None)?;
+    let ai_sep = PredefinedMenuItem::separator(handle)?;
+    let view_menu = build_view_submenu(handle, lang, theme, WIN_REDIS, &[&ai_settings, &ai_sep])?;
     Menu::with_items(handle, &[&file_menu, &edit_menu, &view_menu])
 }
 
@@ -4056,6 +4120,7 @@ fn main() {
             install_update,
             ai_complete,
             ai_assist,
+            redis_ai_assist,
             save_ai_api_key,
             has_ai_api_key,
             clear_schema_cache,
@@ -4616,6 +4681,31 @@ Host myserver
     }
 
     #[test]
+    fn code_fences_are_stripped_from_ai_replies() {
+        assert_eq!(strip_code_fence("SELECT 1"), "SELECT 1");
+        assert_eq!(strip_code_fence("```sql\nSELECT 1\n```"), "SELECT 1");
+        assert_eq!(
+            strip_code_fence("```redis\nGET a\nGET b\n```\n"),
+            "GET a\nGET b"
+        );
+        assert_eq!(strip_code_fence("```\nGET a```"), "GET a");
+        assert_eq!(strip_code_fence("```sql SELECT 1```"), "SELECT 1");
+        assert_eq!(strip_code_fence("```GET a```"), "GET a");
+    }
+
+    #[test]
+    fn redis_ai_prompt_carries_keys_and_the_request() {
+        let keys: String = (0..2000).map(|i| format!("user:{i} (hash)\n")).collect();
+        let prompt = build_redis_ai_prompt("7.4.1", 3, keys, "count the users", "User: hi");
+        assert!(prompt.contains("Redis version: 7.4.1"));
+        assert!(prompt.contains("Current database: 3"));
+        assert!(prompt.contains("user:0 (hash)\n"));
+        assert!(prompt.contains("(truncated)"));
+        assert!(prompt.contains("Previous conversation:\nUser: hi"));
+        assert!(prompt.ends_with("User request: count the users"));
+    }
+
+    #[test]
     fn build_ai_prompt_truncation_multibyte() {
         // 3-byte chars put the 8000-byte cut inside a character.
         let schema = SchemaInfo {
@@ -4635,7 +4725,7 @@ Host myserver
         // nearest char boundary at or below the limit.
         let text = schema_text_for_prompt(&schema);
         let kept = text.strip_suffix("\n-- (truncated)\n").unwrap().len();
-        assert!((AI_SCHEMA_TEXT_MAX - 2..=AI_SCHEMA_TEXT_MAX).contains(&kept));
+        assert!((AI_CONTEXT_TEXT_MAX - 2..=AI_CONTEXT_TEXT_MAX).contains(&kept));
     }
 
     #[test]
@@ -4651,7 +4741,7 @@ Host myserver
         };
         let text = schema_text_for_prompt(&schema);
         let kept = text.strip_suffix("\n-- (truncated)\n").unwrap();
-        assert!(kept.len() <= AI_SCHEMA_TEXT_MAX);
+        assert!(kept.len() <= AI_CONTEXT_TEXT_MAX);
         assert!(kept.ends_with('\n'));
         assert!(kept.lines().all(|l| l.starts_with("-- table_")));
     }

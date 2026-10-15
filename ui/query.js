@@ -17,33 +17,13 @@ const tabAddBtn = document.getElementById("tab-add-btn");
 
 const menuBtn = document.getElementById("menu-btn");
 
-// AI modal DOM refs
-const aiModal = document.getElementById("ai-modal");
-const aiProviderSelect = document.getElementById("ai-provider");
-const aiModelInput = document.getElementById("ai-model");
-const aiApiKeyInput = document.getElementById("ai-api-key");
-const aiSaveBtn = document.getElementById("ai-save-btn");
-const aiCancelBtn = document.getElementById("ai-cancel-btn");
-
-// AI Assist modal DOM refs
-const aiAssistModal = document.getElementById("ai-assist-modal");
-const aiAssistMessages = document.getElementById("ai-assist-messages");
-const aiAssistInput = document.getElementById("ai-assist-input");
-const aiAssistSendBtn = document.getElementById("ai-assist-send-btn");
-const aiAssistClearBtn = document.getElementById("ai-assist-clear-btn");
-const aiAssistSettingsBtn = document.getElementById("ai-assist-settings-btn");
-const aiAssistCloseBtn = document.getElementById("ai-assist-close-btn");
+// The AI settings and the AI assist chat are in ai-assist.js, shared with the Redis
+// window (#98).
 
 // Apply icons to static elements
 menuBtn.innerHTML = icon('menu');
 dbSwitchBtn.innerHTML = icon('arrow-left-right');
 tabAddBtn.innerHTML = icon('plus');
-aiAssistSendBtn.innerHTML = icon('send');
-aiAssistClearBtn.innerHTML = icon('eraser');
-aiAssistClearBtn.title = t('ai_assist_clear');
-aiAssistSettingsBtn.innerHTML = icon('settings');
-aiAssistSettingsBtn.title = t('ai_settings');
-aiAssistCloseBtn.innerHTML = icon('x');
 
 menuBtn.addEventListener("click", () => safeInvoke("show_popup_menu", { lang: getLang(), theme: getTheme(), notify: isNotifyEnabled() }));
 document.getElementById("db-modal-heading").innerHTML = icon('database', 20) + ' ' + t('select_database');
@@ -226,390 +206,6 @@ function buildTableHints() {
   currentTables.forEach((t) => { hints[t] = []; });
   return hints;
 }
-
-// ── AI settings modal ──
-
-const AI_MODELS = {
-  claude: [
-    { value: "claude-sonnet-5", label: "Claude Sonnet 5" },
-    { value: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
-    { value: "claude-opus-4-8", label: "Claude Opus 4.8" },
-  ],
-  openai: [
-    { value: "gpt-5.4", label: "GPT-5.4" },
-    { value: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
-    { value: "gpt-5.4-nano", label: "GPT-5.4 Nano" },
-    { value: "gpt-5.5", label: "GPT-5.5" },
-  ],
-  gemini: [
-    { value: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
-    { value: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash-Lite" },
-    { value: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro (Preview)" },
-  ],
-};
-
-function aiDefaultModel(provider) {
-  const models = AI_MODELS[provider];
-  return models && models.length > 0 ? models[0].value : "";
-}
-
-function getAiProvider() {
-  return localStorage.getItem("musql:ai:provider") || "";
-}
-
-function getAiModel() {
-  return localStorage.getItem("musql:ai:model") || "";
-}
-
-function populateAiModelSelect(provider, selectedModel) {
-  const select = aiModelInput;
-  select.innerHTML = "";
-  const models = AI_MODELS[provider] || [];
-  if (models.length === 0) {
-    const opt = document.createElement("option");
-    opt.value = "";
-    opt.textContent = "--";
-    select.appendChild(opt);
-    return;
-  }
-  models.forEach((m) => {
-    const opt = document.createElement("option");
-    opt.value = m.value;
-    opt.textContent = m.label;
-    select.appendChild(opt);
-  });
-  if (selectedModel && models.some((m) => m.value === selectedModel)) {
-    select.value = selectedModel;
-  } else {
-    select.value = models[0].value;
-  }
-}
-
-async function isAiConfigured() {
-  const provider = getAiProvider();
-  if (!provider) return false;
-  try {
-    if (await safeInvoke("has_ai_api_key", { provider })) return true;
-  } catch (_) {
-    // Fall through: a 1Password reference still counts as configured.
-  }
-  // A 1Password reference counts as configured — the key is fetched on first use.
-  return !!getAiOpRef(provider);
-}
-
-// ── 1Password (AI API key) ──
-// The reference lives in localStorage rather than the profile store: AI settings are
-// per-machine and are not part of what syncs. It seeds the keyring on first use, exactly
-// like the connection credentials.
-const aiOpRefInput = document.getElementById("ai-op-ref");
-const aiOpRow = document.getElementById("ai-op-row");
-let aiOpAvailable = false;
-
-function aiOpRefKey(provider) {
-  return `musql:ai:op-ref:${provider}`;
-}
-
-function getAiOpRef(provider) {
-  return provider ? localStorage.getItem(aiOpRefKey(provider)) || "" : "";
-}
-
-function updateAiOpRowVisibility() {
-  aiOpRow.classList.toggle("hidden", !aiOpAvailable || !aiProviderSelect.value);
-}
-
-safeInvoke("op_available")
-  .then((available) => {
-    aiOpAvailable = !!available;
-    updateAiOpRowVisibility();
-  })
-  .catch(() => {});
-
-const aiOpStatus = document.getElementById("ai-op-status");
-
-function setAiOpStatus(message, ok) {
-  aiOpStatus.textContent = message;
-  aiOpStatus.style.color = ok ? "var(--success)" : "var(--danger)";
-}
-
-const aiOpBrowseBtn = document.getElementById("ai-op-browse");
-const aiOpFetchBtn = document.getElementById("ai-op-fetch");
-
-async function fetchAiKeyFromOnePassword() {
-  const reference = aiOpRefInput.value.trim();
-  if (!reference) return;
-  // Both buttons would start another CLI call on top of the one in flight.
-  aiOpBrowseBtn.disabled = true;
-  aiOpFetchBtn.disabled = true;
-  setAiOpStatus(t('op_fetching'), true);
-  try {
-    aiApiKeyInput.value = await safeInvoke("op_read_secret", { reference });
-    aiApiKeyInput.placeholder = "";
-    setAiOpStatus(t('op_fetched'), true);
-  } catch (e) {
-    setAiOpStatus(String(e), false);
-  } finally {
-    aiOpBrowseBtn.disabled = false;
-    aiOpFetchBtn.disabled = false;
-  }
-}
-
-aiOpBrowseBtn.addEventListener("click", async () => {
-  if (typeof window.openOpPicker !== "function") return;
-  const reference = await window.openOpPicker();
-  if (!reference) return;
-  aiOpRefInput.value = reference;
-  // Picking a field settles what the key is, so fetch it without a second click.
-  await fetchAiKeyFromOnePassword();
-});
-
-aiOpFetchBtn.addEventListener("click", fetchAiKeyFromOnePassword);
-
-async function showAiModal() {
-  const provider = getAiProvider();
-  const model = getAiModel();
-  aiProviderSelect.value = provider;
-  populateAiModelSelect(provider, model);
-  aiApiKeyInput.value = "";
-  aiOpRefInput.value = getAiOpRef(provider);
-  setAiOpStatus("", true);
-  updateAiOpRowVisibility();
-  if (provider) {
-    try {
-      const hasKey = await safeInvoke("has_ai_api_key", { provider });
-      if (hasKey) aiApiKeyInput.placeholder = "(saved)";
-      else aiApiKeyInput.placeholder = "";
-    } catch (_) {
-      aiApiKeyInput.placeholder = "";
-    }
-  } else {
-    aiApiKeyInput.placeholder = "";
-  }
-  aiModal.classList.remove("hidden");
-  applyI18n();
-}
-
-function hideAiModal() {
-  aiModal.classList.add("hidden");
-}
-
-aiProviderSelect.addEventListener("change", () => {
-  const p = aiProviderSelect.value;
-  populateAiModelSelect(p, "");
-  aiApiKeyInput.value = "";
-  aiApiKeyInput.placeholder = "";
-  aiOpRefInput.value = getAiOpRef(p);
-  setAiOpStatus("", true);
-  updateAiOpRowVisibility();
-  if (p) {
-    safeInvoke("has_ai_api_key", { provider: p }).then((hasKey) => {
-      if (hasKey) aiApiKeyInput.placeholder = "(saved)";
-    }).catch(() => {});
-  }
-});
-
-aiSaveBtn.addEventListener("click", async () => {
-  const provider = aiProviderSelect.value;
-  const model = aiModelInput.value;
-  if (provider) {
-    localStorage.setItem("musql:ai:provider", provider);
-    localStorage.setItem("musql:ai:model", model || aiDefaultModel(provider));
-    const opRef = aiOpRefInput.value.trim();
-    if (opRef) localStorage.setItem(aiOpRefKey(provider), opRef);
-    else localStorage.removeItem(aiOpRefKey(provider));
-    const key = aiApiKeyInput.value.trim();
-    if (key) {
-      try { await safeInvoke("save_ai_api_key", { provider, apiKey: key }); }
-      catch (e) { console.warn("Failed to save AI API key:", e); }
-    }
-  } else {
-    localStorage.removeItem("musql:ai:provider");
-    localStorage.removeItem("musql:ai:model");
-  }
-  hideAiModal();
-});
-
-aiCancelBtn.addEventListener("click", hideAiModal);
-
-aiModal.addEventListener("click", (e) => {
-  if (e.target === aiModal) hideAiModal();
-});
-
-// ── AI Assist modal ──
-
-let aiAssistEditor = null; // reference to the editor that opened the modal
-const AI_CHAT_MAX = 50;
-
-function getAiChatKey() {
-  if (!currentProfileId || !currentDb) return null;
-  return "musql:ai-chat:" + currentProfileId + ":" + currentDb;
-}
-
-function loadAiChat() {
-  const key = getAiChatKey();
-  if (!key) return [];
-  try { return JSON.parse(localStorage.getItem(key)) || []; }
-  catch (_) { return []; }
-}
-
-function saveAiChat(messages) {
-  const key = getAiChatKey();
-  if (!key) return;
-  if (messages.length > AI_CHAT_MAX) {
-    messages = messages.slice(messages.length - AI_CHAT_MAX);
-  }
-  localStorage.setItem(key, JSON.stringify(messages));
-}
-
-function openAiAssistModal(editor) {
-  aiAssistEditor = editor;
-  aiAssistInput.placeholder = t('ai_assist_placeholder');
-  renderAiMessages();
-  aiAssistModal.classList.remove("hidden");
-  aiAssistInput.focus();
-}
-
-function closeAiAssistModal() {
-  aiAssistModal.classList.add("hidden");
-  aiAssistEditor = null;
-}
-
-function renderAiMessages() {
-  aiAssistMessages.innerHTML = "";
-  const messages = loadAiChat();
-  if (messages.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "ai-assist-empty";
-    empty.textContent = t('ai_assist_empty');
-    aiAssistMessages.appendChild(empty);
-    return;
-  }
-  messages.forEach((msg) => {
-    const el = document.createElement("div");
-    if (msg.role === "user") {
-      el.className = "ai-msg user";
-      el.textContent = msg.content;
-    } else if (msg.role === "error") {
-      el.className = "ai-msg error";
-      el.textContent = msg.content;
-    } else {
-      el.className = "ai-msg assistant";
-      const pre = document.createElement("pre");
-      pre.textContent = msg.content;
-      el.appendChild(pre);
-      const actions = document.createElement("div");
-      actions.className = "ai-msg-actions";
-      const copyBtn = document.createElement("button");
-      copyBtn.className = "ghost";
-      copyBtn.innerHTML = icon('copy', 14) + " " + t('copy');
-      copyBtn.addEventListener("click", () => {
-        navigator.clipboard.writeText(msg.content).catch(() => {});
-      });
-      actions.appendChild(copyBtn);
-      const insertBtn = document.createElement("button");
-      insertBtn.className = "ghost";
-      insertBtn.innerHTML = icon('terminal', 14) + " " + t('ai_assist_insert');
-      insertBtn.addEventListener("click", () => {
-        if (aiAssistEditor) {
-          const cursor = aiAssistEditor.getCursor();
-          aiAssistEditor.replaceRange(msg.content + "\n", cursor);
-          closeAiAssistModal();
-          aiAssistEditor.focus();
-        }
-      });
-      actions.appendChild(insertBtn);
-      el.appendChild(actions);
-    }
-    aiAssistMessages.appendChild(el);
-  });
-  aiAssistMessages.scrollTop = aiAssistMessages.scrollHeight;
-}
-
-async function sendAiAssistMessage() {
-  const prompt = aiAssistInput.value.trim();
-  if (!prompt) return;
-
-  const configured = await isAiConfigured();
-  if (!configured) {
-    alert(t('ai_not_configured'));
-    showAiModal();
-    return;
-  }
-
-  const provider = getAiProvider();
-  const model = getAiModel();
-
-  // Add user message
-  const messages = loadAiChat();
-  messages.push({ role: "user", content: prompt, ts: Date.now() });
-  saveAiChat(messages);
-  aiAssistInput.value = "";
-  renderAiMessages();
-
-  // Show progress
-  const progressEl = document.createElement("div");
-  progressEl.className = "ai-assist-progress";
-  progressEl.innerHTML = '<span class="spinner"></span>' + t('ai_requesting');
-  aiAssistMessages.appendChild(progressEl);
-  aiAssistMessages.scrollTop = aiAssistMessages.scrollHeight;
-  aiAssistSendBtn.disabled = true;
-
-  // Build conversation context (last few messages)
-  const conversationContext = messages.slice(-10).map((m) => {
-    return (m.role === "user" ? "User" : "Assistant") + ": " + m.content;
-  }).join("\n");
-
-  const editorContent = aiAssistEditor ? aiAssistEditor.getValue() : "";
-
-  try {
-    const result = await safeInvoke("ai_assist", {
-      prompt,
-      editorContent,
-      conversationContext,
-      provider,
-      model,
-      database: currentDb,
-      opRef: getAiOpRef(provider) || null,
-    });
-    progressEl.remove();
-    const updated = loadAiChat();
-    updated.push({ role: "assistant", content: result, ts: Date.now() });
-    saveAiChat(updated);
-    renderAiMessages();
-  } catch (e) {
-    progressEl.remove();
-    const updated = loadAiChat();
-    updated.push({ role: "error", content: String(e), ts: Date.now() });
-    saveAiChat(updated);
-    renderAiMessages();
-  } finally {
-    aiAssistSendBtn.disabled = false;
-  }
-}
-
-aiAssistSendBtn.addEventListener("click", sendAiAssistMessage);
-
-aiAssistInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey) {
-    e.preventDefault();
-    sendAiAssistMessage();
-  }
-});
-
-aiAssistCloseBtn.addEventListener("click", closeAiAssistModal);
-
-aiAssistModal.addEventListener("click", (e) => {
-  if (e.target === aiAssistModal) closeAiAssistModal();
-});
-
-aiAssistClearBtn.addEventListener("click", () => {
-  const key = getAiChatKey();
-  if (key) localStorage.removeItem(key);
-  renderAiMessages();
-});
-
-aiAssistSettingsBtn.addEventListener("click", () => {
-  showAiModal();
-});
 
 // ── Helpers ──
 
@@ -1897,7 +1493,26 @@ function addSqlTab(initialContent, tabNum) {
     const aiAssistBtn = document.createElement("button");
     aiAssistBtn.className = "ghost";
     aiAssistBtn.innerHTML = icon('sparkles') + " " + t('ai_assist');
-    aiAssistBtn.addEventListener("click", () => openAiAssistModal(editor));
+    aiAssistBtn.addEventListener("click", () => {
+      const database = currentDb;
+      openAiAssistModal({
+        chatKey: aiChatKey(currentProfileId, database),
+        placeholder: t('ai_assist_placeholder'),
+        emptyText: t('ai_assist_empty'),
+        request: (prompt, conversationContext, ai) => safeInvoke("ai_assist", {
+          prompt,
+          editorContent: editor.getValue(),
+          conversationContext,
+          database,
+          ...ai,
+        }),
+        insertLabel: t('ai_assist_insert'),
+        insert: (text) => {
+          editor.replaceRange(text + "\n", editor.getCursor());
+          editor.focus();
+        },
+      });
+    });
     actions.appendChild(aiAssistBtn);
 
     let cancelled = false;
@@ -2352,14 +1967,6 @@ document.addEventListener("keydown", (e) => {
     openQuickOpen();
   }
 }, true);
-
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") {
-    if (!aiAssistModal.classList.contains("hidden")) {
-      closeAiAssistModal();
-    }
-  }
-});
 
 // ── Reset ──
 

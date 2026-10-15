@@ -595,6 +595,22 @@ pub fn scan(
         .map_err(|e| e.to_string())
 }
 
+/// What the AI assist is told about the server: the version, the DB in use, and the
+/// first page of keys (`scan`), one `name (type)` per line. Values are not read. The scan
+/// stops early once `still_wanted` turns false (the window closed or connected again).
+pub fn ai_context(
+    session: &mut RedisSession,
+    still_wanted: impl Fn() -> bool,
+) -> Result<(String, i64, String), String> {
+    let version = server_version(session)?;
+    let page = scan(session, 0, "*", still_wanted)?;
+    let mut keys = String::new();
+    for entry in &page.keys {
+        let _ = writeln!(keys, "{} ({})", entry.key, entry.kind);
+    }
+    Ok((version, session.db(), keys))
+}
+
 #[derive(serde::Serialize, Default)]
 pub struct KeyView {
     /// The Redis type (`string`, `hash`, ...); `none` when the key is gone.

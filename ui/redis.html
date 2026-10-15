@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>muSQL Redis</title>
     <link rel="icon" href="./icon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="./style.css?v=15" />
+    <link rel="stylesheet" href="./style.css?v=16" />
   </head>
   <body>
     <!-- Credential prompt modal (credential-prompt.js) -->
@@ -20,6 +20,64 @@
         <div class="actions actions-right" style="margin-top:16px;">
           <button id="pw-prompt-ok" class="success" data-i18n="connect">Connect</button>
           <button id="pw-prompt-cancel" class="ghost" data-i18n="cancel">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- AI settings modal (ai-assist.js) -->
+    <div id="ai-modal" class="modal-overlay hidden">
+      <div class="modal-box" style="max-width:480px;">
+        <div class="modal-heading-row">
+          <h2 data-i18n="ai_settings">AI Settings</h2>
+          <button type="button" class="help-btn" data-manual="ai-assist.md#設定" data-i18n-title="help_open_manual">?</button>
+        </div>
+        <label><span data-i18n="ai_provider">Provider</span>
+          <select id="ai-provider">
+            <option value="">-- disabled --</option>
+            <option value="claude">Claude (Anthropic)</option>
+            <option value="openai">ChatGPT (OpenAI)</option>
+            <option value="gemini">Gemini (Google)</option>
+          </select>
+        </label>
+        <label><span data-i18n="ai_model">Model</span>
+          <select id="ai-model">
+            <option value="">--</option>
+          </select>
+        </label>
+        <label><span data-i18n="ai_api_key">API Key</span>
+          <input id="ai-api-key" type="password" />
+          <div class="op-row hidden" id="ai-op-row">
+            <div class="input-with-btn">
+              <input id="ai-op-ref" data-i18n-placeholder="op_ref_placeholder" placeholder="op://vault/item/field" />
+              <button type="button" id="ai-op-browse" class="browse-btn" data-i18n-title="op_browse">&hellip;</button>
+              <button type="button" id="ai-op-fetch" class="browse-btn" data-i18n-title="op_fetch">1P</button>
+            </div>
+            <p id="ai-op-status" class="modal-status"></p>
+          </div>
+        </label>
+        <div class="actions actions-right">
+          <button id="ai-save-btn" data-i18n="save">Save</button>
+          <button id="ai-cancel-btn" class="ghost" data-i18n="cancel">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- AI Assist modal (ai-assist.js) -->
+    <div id="ai-assist-modal" class="modal-overlay hidden">
+      <div class="ai-assist-box">
+        <div class="ai-assist-header">
+          <h2 data-i18n-html="ai_assist" data-i18n-icon="sparkles" data-i18n-icon-size="18">AI Assist</h2>
+          <div class="ai-assist-header-actions">
+            <button type="button" class="help-btn" data-manual="ai-assist.md#redis" data-i18n-title="help_open_manual">?</button>
+            <button id="ai-assist-clear-btn" class="ghost sidebar-btn" title="Clear chat"></button>
+            <button id="ai-assist-settings-btn" class="ghost sidebar-btn" title="AI Settings"></button>
+            <button id="ai-assist-close-btn" class="ghost sidebar-btn"></button>
+          </div>
+        </div>
+        <div id="ai-assist-messages" class="ai-assist-messages"></div>
+        <div class="ai-assist-footer">
+          <textarea id="ai-assist-input" rows="2"></textarea>
+          <button id="ai-assist-send-btn"></button>
         </div>
       </div>
     </div>
@@ -62,10 +120,12 @@
     <script src="./i18n.js"></script>
     <script src="./theme.js"></script>
     <script src="./manual.js"></script>
+    <script src="./op-picker.js"></script>
     <script src="./result-table.js?v=2"></script>
     <script src="./credential-prompt.js?v=1"></script>
     <script src="./context-menu.js?v=1"></script>
     <script src="./export.js?v=1"></script>
-    <script src="./redis.js?v=3"></script>
+    <script src="./ai-assist.js?v=1"></script>
+    <script src="./redis.js?v=4"></script>
   </body>
 </html>

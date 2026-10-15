@@ -17,7 +17,7 @@ muSQL は **Windows 向けの軽量な MySQL クライアント**です。Tauri 
 | [Docker 連携](docker.md) | 起動中コンテナの MySQL / Redis の自動検出・接続、`musql.*` ラベル |
 | [Redis](redis.md) | Redis への接続、キーの一覧、型ごとの値の表示、CLI タブ |
 | [クエリ画面](query.md) | テーブル一覧、Data / Schema / SQL タブ、ページング・ソート・行詳細、SQL 実行、履歴、QuickOpen、完了通知 |
-| [AI アシスト](ai-assist.md) | 自然言語からの SQL 生成、プロバイダ設定、チャット履歴 |
+| [AI アシスト](ai-assist.md) | 自然言語からの SQL と Redis のコマンドの生成、プロバイダ設定、チャット履歴 |
 | [エクスポート](export.md) | CSV / TSV / SQL / Markdown 出力、文字コード・改行コード、クリップボードコピー |
 | [接続の同期](sync.md) | 接続プロファイルを外部 JSON で複数マシン間に同期 |
 | [1Password 連携](1password.md) | パスワードの初期取得・更新元として 1Password を使う |

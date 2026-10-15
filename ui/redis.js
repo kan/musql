@@ -204,7 +204,7 @@ async function loadKeys(reset) {
     listing++;
     scanCursor = "0";
     scanPattern = patternFor(patternInput.value);
-    keyListEl.innerHTML = "";
+    clearKeyList();
   }
   const current = listing;
   moreBtn.classList.add("hidden");
@@ -214,8 +214,8 @@ async function loadKeys(reset) {
     if (current !== listing) return;
     showStatus("");
     keyListEl.querySelector(".redis-empty")?.remove();
-    page.keys.forEach(addKeyItem);
     scanCursor = page.cursor;
+    addKeys(page.keys);
   } catch (error) {
     if (current === listing) showStatus(String(error));
     // The cursor did not move: "Load more" tries the same step again.
@@ -231,19 +231,114 @@ async function loadKeys(reset) {
   moreBtn.classList.toggle("hidden", scanCursor === "0");
 }
 
-function addKeyItem(entry) {
-  const item = document.createElement("div");
+// The list is grouped by type, in this order (a module's type, such as ReJSON-RL, comes
+// after them, by name). Each group lists its keys by name. The counts are of the keys
+// loaded so far: SCAN returns the keys in no order, so a group grows with "Load more".
+const KIND_ORDER = ["string", "hash", "list", "set", "zset", "stream"];
+const keyGroups = new Map(); // kind → { el, count, body, entries }
+// The keys listed (`keyId`): SCAN may return a key twice.
+const listedKeys = new Set();
+
+// A key's identity: its bytes when the name is binary (`raw`), else its name.
+function keyId(entry) {
+  return entry.raw ? "raw:" + entry.raw : "key:" + entry.key;
+}
+// The groups the user folded, kept for the connection (a reload keeps them folded).
+const foldedKinds = new Set();
+
+function kindRank(kind) {
+  const i = KIND_ORDER.indexOf(kind);
+  return i >= 0 ? i : KIND_ORDER.length;
+}
+
+// By code unit, as the names are shown (localeCompare would also fold case and accents).
+function compareText(a, b) {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function compareKinds(a, b) {
+  return kindRank(a) - kindRank(b) || compareText(a, b);
+}
+
+function clearKeyList() {
+  keyGroups.clear();
+  listedKeys.clear();
+  keyListEl.innerHTML = "";
+}
+
+function keyGroup(kind) {
+  let group = keyGroups.get(kind);
+  if (group) return group;
+  const el = document.createElement("div");
+  el.className = "redis-group";
+  el.classList.toggle("collapsed", foldedKinds.has(kind));
+  const header = document.createElement("div");
+  header.className = "redis-group-header";
+  const toggle = document.createElement("span");
+  toggle.className = "toggle";
+  header.appendChild(toggle);
+  const name = document.createElement("span");
+  name.textContent = kind;
+  header.appendChild(name);
+  const count = document.createElement("span");
+  count.className = "group-count";
+  header.appendChild(count);
+  header.addEventListener("click", () => {
+    const folded = !foldedKinds.has(kind);
+    if (folded) foldedKinds.add(kind);
+    else foldedKinds.delete(kind);
+    el.classList.toggle("collapsed", folded);
+  });
+  el.appendChild(header);
+  const body = document.createElement("div");
+  body.className = "redis-group-keys";
+  el.appendChild(body);
+  group = { el, count, body, entries: [] };
+  // In order among the groups already shown: before the first that sorts after it.
+  const next = [...keyGroups.keys()].sort(compareKinds).find((k) => compareKinds(kind, k) < 0);
+  keyListEl.insertBefore(el, next ? keyGroups.get(next).el : null);
+  keyGroups.set(kind, group);
+  return group;
+}
+
+function addKeys(entries) {
+  const touched = new Set();
+  for (const entry of entries) {
+    const id = keyId(entry);
+    if (listedKeys.has(id)) continue;
+    listedKeys.add(id);
+    const group = keyGroup(entry.kind);
+    group.entries.push(entry);
+    touched.add(group);
+  }
+  for (const group of touched) {
+    group.entries.sort((a, b) => compareText(a.key, b.key));
+    // The items already shown are moved, not made again (`keyItem` keeps each one).
+    group.body.replaceChildren(...group.entries.map(keyItem));
+  }
+  // "+": more keys may come with "Load more".
+  const more = scanCursor !== "0" ? "+" : "";
+  for (const group of keyGroups.values()) {
+    group.count.textContent = "(" + group.entries.length + more + ")";
+  }
+}
+
+// Each key's item, made once: "Load more" puts the group in order again, and remaking
+// every item each time would grow with the square of the keys.
+const keyItems = new WeakMap();
+
+function keyItem(entry) {
+  let item = keyItems.get(entry);
+  if (item) return item;
+  item = document.createElement("div");
+  keyItems.set(entry, item);
   item.className = "table-list-item";
   item.title = entry.key;
-  const kind = document.createElement("span");
-  kind.className = "redis-kind";
-  kind.textContent = entry.kind;
-  item.appendChild(kind);
   const name = document.createElement("span");
   name.textContent = entry.key;
   item.appendChild(name);
   item.addEventListener("click", () => openKey(entry));
-  keyListEl.appendChild(item);
+  return item;
 }
 
 // ── A key's tab ──
@@ -252,8 +347,7 @@ function addKeyItem(entry) {
 // when the name is binary (not valid UTF-8, or with a control character). Rust opens the
 // key by `raw` when there is one.
 async function openKey(entry) {
-  const id = entry.raw ? "raw:" + entry.raw : "key:" + entry.key;
-  const tab = addTab(id, entry.key, "database", true);
+  const tab = addTab(keyId(entry), entry.key, "database", true);
   await renderKey(entry, tab.pane);
 }
 
@@ -589,6 +683,11 @@ function buildCliTab() {
   cliInput.placeholder = t("redis_cli_placeholder");
   cliInput.spellcheck = false;
   row.appendChild(cliInput);
+  const aiBtn = document.createElement("button");
+  aiBtn.className = "ghost";
+  aiBtn.innerHTML = icon("sparkles") + " " + t("ai_assist");
+  aiBtn.addEventListener("click", openAiAssist);
+  row.appendChild(aiBtn);
   inputArea.appendChild(row);
   tab.pane.appendChild(inputArea);
   cliHelp = document.createElement("div");
@@ -638,6 +737,30 @@ function buildCliTab() {
     }
   });
   updateHelp(true);
+}
+
+// The AI assist (ai-assist.js): redis-cli commands from Rust (`redis_ai_assist`, which
+// tells the AI the key names and types, not the values). An answer goes into the CLI
+// input, one line at a time, and runs only when the user presses Enter.
+function openAiAssist() {
+  openAiAssistModal({
+    chatKey: aiChatKey(profileId, currentDb),
+    placeholder: t("redis_ai_placeholder"),
+    emptyText: t("redis_ai_empty"),
+    request: (prompt, conversationContext, ai) => safeInvoke("redis_ai_assist", {
+      prompt,
+      conversationContext,
+      ...ai,
+    }),
+    insertLabel: t("redis_ai_insert"),
+    insert: (text) => {
+      activateTab("cli");
+      cliInput.value = text;
+      updateHelp();
+      cliInput.focus();
+    },
+    perLine: true,
+  });
 }
 
 function appendCli(text, className) {
@@ -712,11 +835,14 @@ function clearView() {
   listing++;
   cancelCredentialPrompt();
   hideContextMenu();
+  closeAiAssistModal();
+  hideAiModal();
+  foldedKinds.clear();
   removeAllTabs();
   commandDocs = [];
   docsByName = new Map();
   cliHelp = null;
-  keyListEl.innerHTML = "";
+  clearKeyList();
   moreBtn.classList.add("hidden");
   patternInput.value = "";
   explorerEl.classList.add("hidden");
@@ -846,6 +972,7 @@ if (currentWindow) {
       case "theme-dark": setTheme("dark"); break;
       case "lang-en": setLang("en"); break;
       case "lang-ja": setLang("ja"); break;
+      case "ai-settings": showAiModal(); break;
     }
   });
 }

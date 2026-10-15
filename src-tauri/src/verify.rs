@@ -478,6 +478,16 @@ fn verify_redis() {
         docs.as_array().unwrap().len(),
         hset["syntax"]
     );
+    // The AI assist's context: the seeded keys show up with their types (key names only).
+    let (version, db, sample) = redis_client::ai_context(&mut session, || true).unwrap();
+    assert!(
+        sample.contains("musql:verify:hash (hash)"),
+        "the AI context lists the keys"
+    );
+    println!(
+        "verify_redis:   AI context: Redis {version}, DB {db}, {} key line(s)",
+        sample.lines().count()
+    );
 
     let all: Vec<&str> = keys.iter().map(|(key, _)| key.as_str()).collect();
     run(&mut session, &format!("DEL {}", all.join(" ")));
