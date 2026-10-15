@@ -106,6 +106,22 @@ gh release view vX.Y.Z --json isDraft,assets --jq '.isDraft, (.assets[].name)'
 
 署名には GitHub Secrets の `TAURI_SIGNING_PRIVATE_KEY` と `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` が要る（未署名のビルドは updater の検証に失敗する）。
 
+**手でダウンロードする 4 つのファイルに attestation（来歴の証明）が付いていることを確認する**（#130）。ドラフトから落として 1 つずつ検証する:
+
+```bash
+dir=$(mktemp -d)
+gh release download vX.Y.Z --repo kan/musql --dir "$dir" \
+  --pattern '*-setup.exe' --pattern '*.msi' \
+  --pattern 'muSQL-store-x64.exe' --pattern 'muSQL-store-x64.msix'
+ls "$dir"   # 4 件あること
+for f in "$dir"/*; do
+  gh attestation verify "$f" --repo kan/musql \
+    --signer-workflow kan/musql/.github/workflows/release.yml || echo "FAILED: $f"
+done
+```
+
+**4 つとも通ること。** attest のステップはグロブが 1 件も当たらなくても、他が当たれば通るので、取りこぼしは CI の結果からは分からない。1 つでも落ちたら公開せず、直してタグを打ち直す。
+
 ## 6. リリースノートを書いて公開する
 
 ドラフトの本文は "See the assets below to download and install." の固定文になっている。**1 で CHANGELOG に足した節の内容で上書きし、同時に公開する**（別々に書くと、片方にしか無い項目ができる）。
@@ -118,6 +134,10 @@ gh release edit vX.Y.Z --draft=false --notes-file <本文を書いたファイ�
 
 **公開するまで、利用者には何も配られない。** ドラフトは `releases/latest` にならないので、セルフアップデータの確認先（`releases/latest/download/latest.json`）は前の版を返し続ける。逆に言うと、公開した時点で全利用者への配布が始まる。アセットの確認を済ませてから公開すること。
 
+**Immutable releases（リポジトリ設定）が有効だと、公開した時点で成果物とタグが不変になる。** 公開後に `latest.json` の欠けや attestation の漏れに気付いても、成果物の差し替えもタグの打ち直しもできず、次のバージョンを出すしかない（消したリリースのタグ名も再利用できない）。リリースノートの本文とタイトルは公開後も編集できる。
+
+attestation を付けて初めて出すリリース（v0.8.0 の次）では、リリースノートに「ダウンロードしたファイルは `gh attestation verify` で確かめられる（`SECURITY.md` を参照）」旨の 1 行を入れる。そのリリースを公開したら、この段落を消す。
+
 ## 7. 公開後の確認
 
 ```
@@ -125,5 +145,14 @@ gh release list --limit 1 --json tagName,isDraft,isLatest
 ```
 
 先頭が今回のタグで、`isDraft` が `false`、`isLatest` が `true` になっていること。あわせて、リリースした版で閉じる issue が残っていないかを見る。
+
+Immutable releases の状態を見る:
+
+```bash
+gh api repos/kan/musql/immutable-releases -q .enabled
+```
+
+- `true` なら、release attestation を確かめる（`gh release verify vX.Y.Z --repo kan/musql`）
+- `false` なら、有効にするかをユーザーに確認する。attestation 付きのリリースを 1 回公開してから有効にする計画（#130）なので、今回のリリースで 5 の検証が 4 つとも通っていれば有効にしてよい。有効にするのは今回の公開のあと（有効にすると、それ以降に公開するリリースが不変になる）。承認を得たら `gh api -X PUT repos/kan/musql/immutable-releases` で有効にする。有効にしたら、`.claude/skills/release/SKILL.md` のこの項目を「`true` なら」の確認だけに書き換える
 
 Store 版の提出（Partner Center への MSIX のアップロード）は、このスキルの範囲外。ユーザーが行う。

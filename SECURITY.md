@@ -9,6 +9,17 @@
 | latest  | :white_check_mark: |
 | < latest | :x:      |
 
+## Verifying Downloads
+
+v0.8.0 より後のリリースでは、GitHub Releases に置いているファイルに [GitHub の Artifact attestations](https://docs.github.com/en/actions/concepts/security/artifact-attestations)（来歴の証明）を付けています。対象はインストーラ（`-setup.exe` と `.msi`）と、Store 用のファイル（`muSQL-store-x64.exe` と `muSQL-store-x64.msix`）です。ダウンロードしたファイルが、このリポジトリのリリース用ワークフローで作られたものかを、[GitHub CLI](https://cli.github.com/) で確かめられます。
+
+```bash
+gh attestation verify muSQL_X.Y.Z_x64-setup.exe --repo kan/musql \
+  --signer-workflow kan/musql/.github/workflows/release.yml
+```
+
+Microsoft Store からインストールした muSQL は対象外です（Store が配るファイルは Microsoft が署名し直すため）。アプリ内の自動更新は、アプリに埋め込んだ公開鍵による署名の検証で別に守られています。
+
 ## Reporting a Vulnerability
 
 脆弱性を発見した場合は、**公開 issue を作成せず**、以下のいずれかの方法で非公開に報告してください。

@@ -17,6 +17,18 @@ muSQL を初めて使うときの流れをまとめます。
 | **Microsoft Store**（推奨） | 署名済み・自動更新・警告なし |
 | [GitHub Releases](https://github.com/kan/musql/releases/latest) の `.exe` | アプリ内自動更新付き。未署名のため SmartScreen 警告が出る（「詳細情報」→「実行」） |
 
+### ダウンロードしたファイルを確かめる
+
+GitHub Releases に置いているファイルには、GitHub の Artifact attestations（来歴の証明）を付けています。ダウンロードしたファイルが、このリポジトリのリリース用ワークフローで作られたものかを [GitHub CLI](https://cli.github.com/) で確かめられます。
+
+```bash
+gh attestation verify muSQL_x.x.x_x64-setup.exe --repo kan/musql
+```
+
+ビルドしたワークフローまで絞るには、`--signer-workflow kan/musql/.github/workflows/release.yml` を足します。検証に通ると、ビルドしたリポジトリとワークフローが表示されます。ファイルが書き換えられている場合や、別の場所で作られたものである場合は、エラーになります。
+
+v0.8.0 より後のリリースに付いています。Microsoft Store からのインストールは対象外です（Store が配るファイルは Microsoft が署名し直すため）。確かめなくても、インストールと利用はできます。
+
 ## 初回起動
 
 初回は接続プロファイルが無いため、**空のメイン画面**で起動します。ここから接続先を登録していきます。

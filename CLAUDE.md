@@ -72,6 +72,7 @@ Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`
 - **Store dev 確認**: `cargo tauri dev --config src-tauri/tauri.store.conf.json -- --no-default-features --features docker`（要 Developer Command Prompt / RC.EXE in PATH）。
 - Store 用アイコン: `src-tauri/icons/Square44x44Logo.png`, `Square150x150Logo.png`, `StoreLogo.png`。
 - CI: `release.yml` の `build-store` ジョブが Store EXE と MSIX を、`build` ジョブが作ったドラフトの Release にアップロード（`build` の後に直列で走る）。MSIX は `store/AppxManifest.xml` + `store/build-msix.ps1` で生成する（未署名。Microsoft 側で署名される）。
+- Artifact attestations（#130）: `release.yml` の両ジョブが、手でダウンロードする 4 つ（NSIS の `-setup.exe`、`.msi`、`muSQL-store-x64.exe`、`muSQL-store-x64.msix`）に `actions/attest` で来歴の証明を付ける。`.sig` と `latest.json` は対象外（updater の経路は minisign の検証で足りている）。グロブは拡張子の末尾まで書く（`bundle/` には配布しない `.msi.zip` / `.nsis.zip` と `.sig` も並ぶ）。attest は成果物への最後の書き換えのあとに置く（`build-store` では MSIX の生成のあと）。グロブの取りこぼしは CI では分からないので、公開前に 4 つとも検証する手順が `release` スキルにある。SLSA Build L3（ビルドを reusable workflow に切り出し、署名用の secrets を持つジョブから分ける）は狙っていない。
 - Partner Center Identity: `58967CommunitylinksInc.muSQL` / `CN=46BBEF28-6777-4EF5-AD2C-F9AD9123AA82`。
 
 ## コミット前チェック

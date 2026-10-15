@@ -10,6 +10,10 @@ jobs:
     runs-on: windows-latest
     permissions:
       contents: write
+      # Artifact attestations（#130）。署名は Actions の OIDC トークンで Sigstore の
+      # 短命証明書を取って行うので、鍵の secret は増えない。
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -40,6 +44,16 @@ jobs:
           prerelease: false
           uploadUpdaterJson: true
 
+      # 手でダウンロードするインストーラに来歴の証明を付ける（#130）。グロブは拡張子の
+      # 末尾まで書く。bundle/ には配布しない .msi.zip / .nsis.zip と各 .sig も並んでいる。
+      # .sig と latest.json は対象外（updater の経路は minisign の検証で足りている）。
+      - name: Attest the installers
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            src-tauri/target/release/bundle/nsis/*-setup.exe
+            src-tauri/target/release/bundle/msi/*.msi
+
   build-store:
     # build のあとに走らせる。ドラフトの Release を作るのは build の tauri-action で、
     # こちらはそこへアセットを足すだけ。並列だと、先に終わった側が Release を作ることに
@@ -48,6 +62,8 @@ jobs:
     runs-on: windows-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -91,6 +107,16 @@ jobs:
             -Version "${{ steps.msix-version.outputs.version }}" `
             -ExePath  "src-tauri\target\release\musql.exe" `
             -OutputPath "muSQL-store-x64.msix"
+
+      # 成果物への最後の書き換え（MSIX の生成）のあとに置く（#130）。検証はダイジェストで
+      # 行うので、Releases から落としたファイルなら通る。Store が配る MSIX は Microsoft が
+      # 署名し直すので対象外。
+      - name: Attest the Store artifacts
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            muSQL-store-x64.exe
+            muSQL-store-x64.msix
 
       # gh はタグ名からドラフトの Release も引ける。Release が無ければ失敗する
       # (新しく作らない) ので、build が作ったドラフト以外へ上げてしまうことが無い。
