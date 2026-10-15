@@ -7,7 +7,8 @@
 - **settings** (`ui/settings.html`, `ui/settings.js`): プロファイル編集・接続テスト。
 - **query** (`ui/query.html`, `ui/query.js`): DB エクスプローラ（テーブル一覧・Data/Schema/SQL タブ・AI アシスト）。タブはドラッグで並び替え可。全タブ状態（SQL 内容・テーブルタブ・表示順・アクティブタブ）を localStorage に永続化。
 - ウィンドウは `tauri.conf.json` で事前定義、show/hide パターンで管理。
-- **`style.css` / `app.js` / `query.js` / `settings.js` を変えたら、それを読み込む HTML の `?v=N` を 1 つ上げる**（`<link href="./style.css?v=N">` など。`style.css` は 3 つの HTML すべて）。キャッシュされた古いファイルが使われ続けるのを避けるための番号で、上げ忘れても lint もテストも落ちない。`?v=` の付いていない共有スクリプト（`i18n.js` / `icons.js` / `theme.js` / `manual.js` / `about.js` / `op-picker.js` / `error-log.js`）は対象外。
+- **`style.css` / `app.js` / `query.js` / `settings.js` / `result-table.js` を変えたら、それを読み込む HTML の `?v=N` を 1 つ上げる**（`<link href="./style.css?v=N">` など。`style.css` は 3 つの HTML すべて）。キャッシュされた古いファイルが使われ続けるのを避けるための番号で、上げ忘れても lint もテストも落ちない。`?v=` の付いていない共有スクリプト（`i18n.js` / `icons.js` / `theme.js` / `manual.js` / `about.js` / `op-picker.js` / `error-log.js`）は対象外。
+- **結果テーブル**（`renderTable` / `renderPagedTable` / `showRowDetailModal`）は `ui/result-table.js` にある。今は query 画面だけが使い、#98 の Redis 画面と共有するために切り出した。`i18n.js` と `icons.js` の後に読み込む。
 - **ウィンドウタイトルを変えるときは `safeInvoke("set_window_title", { title })` を呼ぶ。** JS の `setTitle` は使わない（dev 版の `[DEBUG]` の目印を Rust 側で付けるため。capabilities から `core:window:allow-set-title` を外してあるので、呼ぶと権限エラーになる。#120）。
 
 ## 機能ごとの実装メモ
