@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.9.0] - 2026-10-15
+
+### Added
+- Redis への接続（#98）。接続プロファイルの DB エンジンで `Redis` を選ぶと、Redis 用の画面で開く。SSH 踏み台、SSL モード、パスワードの保存方針は MySQL と同じ
+  - キーの一覧：`SCAN` で読み、型ごとにまとめて名前の順に並べる。入力に合わせて絞り込み、左上から DB を切り替えられる
+  - キーのタブ：型ごとに値を表示し、TTL とメモリ使用量も出す。表で出る型は CSV / TSV で保存できる
+  - CLI タブ：redis-cli と同じ書き方でコマンドを実行する。補完とヘルプがあり、`FLUSHALL` などの危険なコマンドは実行前に確認する
+  - AI アシスト：やりたいことから redis-cli のコマンドを作る。AI に送るのはキー名と型だけで、値は送らない。作ったコマンドは CLI の入力欄に入り、Enter を押すまで実行しない
+  - 文字として読めない値やキー名は、redis-cli と同じ `\xHH` の表記で表示する
+- Docker 連携で Redis のコンテナも検出する（#98）。コンテナのラベル `musql.engine` で種類を指定できる
+- 接続プロファイルに DB エンジン（MySQL / MariaDB / Redis）を選ぶ欄を足した（#132）
+- GitHub Releases で配るファイルに Artifact attestations（来歴の証明）を付けた（#130）。ダウンロードしたファイルが、このリポジトリのリリース用ワークフローで作られたものかを `gh attestation verify` で確かめられる（`SECURITY.md` を参照）
+
+### Changed
+- この版の知らない SSL モードや DB エンジンが設定に入っていても、値を保ったまま読み込み、接続だけを断る（#131、#132）。同期ファイル経由で、新しい版の設定を書き換えないため
+- 依存関係を更新（tauri-winrt-notification 0.8.1 ほか）
+
+### Fixed
+- SSH 踏み台を経由すると、SSL モード `VERIFY_IDENTITY` が証明書のホスト名を `127.0.0.1` と照合していた問題（#133）。Redis は証明書を接続先のホスト名と正しく照合する。MySQL は照合できないため、`VERIFY_CA` を案内するエラーで断る
+
+### Security
+- rustls を 0.23.46 に更新（RUSTSEC-2026-0346〜0349）
+
 ## [0.8.0] - 2026-10-08
 
 ### Added
@@ -230,6 +253,7 @@
 - アプリ内自動更新（NSIS インストーラー + Ed25519 署名）
 - GitHub Actions CI/CD（cargo check + リリースビルド）
 
+[0.9.0]: https://github.com/kan/musql/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/kan/musql/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/kan/musql/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/kan/musql/compare/v0.6.0...v0.7.0
