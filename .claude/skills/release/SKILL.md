@@ -134,9 +134,7 @@ gh release edit vX.Y.Z --draft=false --notes-file <本文を書いたファイ�
 
 **公開するまで、利用者には何も配られない。** ドラフトは `releases/latest` にならないので、セルフアップデータの確認先（`releases/latest/download/latest.json`）は前の版を返し続ける。逆に言うと、公開した時点で全利用者への配布が始まる。アセットの確認を済ませてから公開すること。
 
-**Immutable releases（リポジトリ設定）が有効だと、公開した時点で成果物とタグが不変になる。** 公開後に `latest.json` の欠けや attestation の漏れに気付いても、成果物の差し替えもタグの打ち直しもできず、次のバージョンを出すしかない（消したリリースのタグ名も再利用できない）。リリースノートの本文とタイトルは公開後も編集できる。
-
-attestation を付けて初めて出すリリース（v0.8.0 の次）では、リリースノートに「ダウンロードしたファイルは `gh attestation verify` で確かめられる（`SECURITY.md` を参照）」旨の 1 行を入れる。そのリリースを公開したら、この段落を消す。
+**Immutable releases（リポジトリ設定。有効にしてある）により、公開した時点で成果物とタグが不変になる。** 公開後に `latest.json` の欠けや attestation の漏れに気付いても、成果物の差し替えもタグの打ち直しもできず、次のバージョンを出すしかない（消したリリースのタグ名も再利用できない）。リリースノートの本文とタイトルは公開後も編集できる。
 
 ## 7. 公開後の確認
 
@@ -146,13 +144,12 @@ gh release list --limit 1 --json tagName,isDraft,isLatest
 
 先頭が今回のタグで、`isDraft` が `false`、`isLatest` が `true` になっていること。あわせて、リリースした版で閉じる issue が残っていないかを見る。
 
-Immutable releases の状態を見る:
+release attestation（公開した時点で GitHub が付ける）を確かめる:
 
 ```bash
-gh api repos/kan/musql/immutable-releases -q .enabled
+gh release verify vX.Y.Z --repo kan/musql
 ```
 
-- `true` なら、release attestation を確かめる（`gh release verify vX.Y.Z --repo kan/musql`）
-- `false` なら、有効にするかをユーザーに確認する。attestation 付きのリリースを 1 回公開してから有効にする計画（#130）なので、今回のリリースで 5 の検証が 4 つとも通っていれば有効にしてよい。有効にするのは今回の公開のあと（有効にすると、それ以降に公開するリリースが不変になる）。承認を得たら `gh api -X PUT repos/kan/musql/immutable-releases` で有効にする。有効にしたら、`.claude/skills/release/SKILL.md` のこの項目を「`true` なら」の確認だけに書き換える
+通らなければ、Immutable releases が有効のままかを見て（`gh api repos/kan/musql/immutable-releases -q .enabled`）、結果を添えてユーザーに報告する。公開済みのリリースは不変なので直せない。設定を有効に戻すかどうかもユーザーが決める。有効にしたのは v0.9.0 の公開のあとなので、v0.9.0 以前のリリースには release attestation が無い。
 
 Store 版の提出（Partner Center への MSIX のアップロード）は、このスキルの範囲外。ユーザーが行う。
