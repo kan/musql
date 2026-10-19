@@ -21,7 +21,9 @@ tauri = { version = "2", features = [] }
 keyring = { version = "3", features = ["windows-native"] }
 russh = { version = "0.64", default-features = false, features = ["ring", "flate2", "rsa"] }
 tokio = { version = "1", features = ["net", "io-util", "time"] }
-tauri-plugin-updater = { version = "2", optional = true }
+# 既定の feature から zip を外す。配布する更新は .exe / .msi で、zip を展開する経路を使わない
+# （zip <9 に RUSTSEC-2026-0367〜0369 がある）
+tauri-plugin-updater = { version = "2", optional = true, default-features = false, features = ["rustls-tls", "system-proxy"] }
 tauri-plugin-window-state = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-opener = "2"
