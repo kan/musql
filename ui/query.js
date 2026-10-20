@@ -444,6 +444,22 @@ function sqliteIndexSql(tableName) {
     "FROM pragma_index_list(" + sqlStringLiteral(tableName) + ") AS il, pragma_index_info(il.name) AS ii ORDER BY il.name, ii.seqno";
 }
 
+// A BLOB column in the row detail (#137). An image, told by its first bytes (PNG, JPEG,
+// GIF, and WebP's RIFF....WEBP, not other RIFF files such as WAV), comes whole up to IMAGE_PREVIEW_MAX_BYTES so the detail can show
+// it; a larger one comes as "(image: N bytes)" (`imagePreview` reads it). Anything else
+// stays "(BLOB)", as in the Data view: a few megabytes of hex would only slow the detail
+// down. HEX, SUBSTR, LENGTH (bytes, for a BLOB) and CONCAT read the same in MySQL and
+// SQLite. NULL is tested first: SQLite's HEX(NULL) is "", not NULL.
+function detailBlobExpr(q) {
+  const bytesAt = (from, n) => "HEX(SUBSTR(" + q + ", " + from + ", " + n + "))";
+  const isImage = "(" + bytesAt(1, 3) + " = 'FFD8FF' OR " + bytesAt(1, 4) + " IN ('89504E47', '47494638')" +
+    " OR (" + bytesAt(1, 4) + " = '52494646' AND " + bytesAt(9, 4) + " = '57454250'))";
+  return "CASE WHEN " + q + " IS NULL THEN NULL " +
+    "WHEN NOT " + isImage + " THEN '(BLOB)' " +
+    "WHEN LENGTH(" + q + ") > " + IMAGE_PREVIEW_MAX_BYTES + " THEN CONCAT('(image: ', LENGTH(" + q + "), ' bytes)') " +
+    "ELSE " + q + " END AS " + q;
+}
+
 // The Schema view's two queries: the columns, and the indexes (one row per column).
 function structureSql(tableName) {
   if (isSqlite()) return ["PRAGMA table_info(" + sqlStringLiteral(tableName) + ")", sqliteIndexSql(tableName)];
@@ -1325,7 +1341,7 @@ function openTableTab(tableName, initialView) {
         }).filter(Boolean);
         if (whereParts.length > 0) {
           const detailCols = allColumns.map((c) => {
-            if (blobCols.includes(c.name)) return "'(BLOB)' AS " + quoteId(c.name);
+            if (blobCols.includes(c.name)) return detailBlobExpr(quoteId(c.name));
             return quoteId(c.name);
           }).join(", ");
           runQuery("SELECT " + detailCols + " FROM " + quoteId(tableName) + " WHERE " + whereParts.join(" AND ") + " LIMIT 1")

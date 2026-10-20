@@ -442,12 +442,24 @@ async function renderKey(entry, pane) {
   body.className = "redis-key-body";
   pane.appendChild(body);
   if (view.text !== null) {
-    const pre = document.createElement("pre");
-    pre.className = "redis-value";
-    pre.textContent = view.binary ? view.text : (prettyJson(view.text) ?? view.text);
-    body.appendChild(pre);
+    const showText = (target) => {
+      const pre = document.createElement("pre");
+      pre.className = "redis-value";
+      pre.textContent = view.binary ? view.text : (prettyJson(view.text) ?? view.text);
+      target.appendChild(pre);
+    };
+    // An image (#137). A value cut at 1 MiB would be a broken image: it is only told apart
+    // by its start, and said so. (The cut keeps every shown value under the preview limit.)
+    const preview = view.truncated ? null : imagePreview(view.text, view.binary);
+    if (preview && preview.dataUrl) {
+      renderImageValue(body, preview, showText);
+    } else {
+      showText(body);
+      if (view.truncated && imageHead(view.text, view.binary)) body.appendChild(imageNote(t("image_truncated")));
+    }
   } else if (view.columns.length > 0) {
-    renderPagedTable(view.columns, view.rows, body, showRowDetailModal);
+    // Values that are binary come in redis-cli's escapes (`imagePreview`).
+    renderPagedTable(view.columns, view.rows, body, (cols, row) => showRowDetailModal(cols, row, { redis: true }));
   } else if (view.kind !== "none") {
     body.textContent = t("redis_unsupported_type", { kind: view.kind });
   }

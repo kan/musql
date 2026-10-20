@@ -1440,10 +1440,34 @@ pre {
   max-height: 300px;
   overflow-y: auto;
 }
-.row-detail-val.monospace {
+.row-detail-val.monospace,
+.value-image-text.monospace {
   font-family: "Consolas", "Cascadia Code", monospace;
   font-size: 12px;
   white-space: pre-wrap;
+}
+
+/* An image value (#137): the row detail and the Redis key tab */
+.value-image img {
+  display: block;
+  max-width: 100%;
+  max-height: 240px;
+  object-fit: contain;
+  /* A checkerboard, so a transparent image is not lost on the background */
+  background: repeating-conic-gradient(var(--line) 0% 25%, transparent 0% 50%) 0 0 / 16px 16px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.value-image-caption,
+.value-image-note {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--sub);
+}
+.value-image-toggle {
+  margin-top: 4px;
+  padding: 2px 8px;
+  font-size: 12px;
 }
 
 /* ── Empty state ── */

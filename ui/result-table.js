@@ -13,9 +13,200 @@ function prettyJson(s) {
   }
 }
 
+// ── Image preview (#137) ──
+// A value that holds a PNG, JPEG, GIF or WebP image is shown as the image. Bytes reach the
+// page in one of three spellings, each reversible: `0x` + hex (MySQL and SQLite bytes that
+// are not UTF-8, `bytes_to_json` in Rust), Base64 (a text column, bare or as a data URL),
+// and redis-cli's escapes (a Redis value, `redis_client::escape`). The image goes into an
+// <img> as a data URL, never as HTML. SVG is left out: it is text, and a guess at it would
+// be loose.
+
+// The largest image shown, in bytes. The query window's row detail fetches a BLOB only up
+// to this size (`detailBlobExpr`), and says "(image: N bytes)" for a larger one.
+const IMAGE_PREVIEW_MAX_BYTES = 5 * 1024 * 1024;
+const IMAGE_TOO_LARGE_MARK = /^\(image: (\d+) bytes\)$/;
+
+// The image type of the bytes that start a value, or null.
+function imageMime(head) {
+  const at = (i, ...bytes) => bytes.every((b, j) => head[i + j] === b);
+  if (at(0, 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)) return "image/png";
+  if (at(0, 0xff, 0xd8, 0xff)) return "image/jpeg";
+  if (at(0, 0x47, 0x49, 0x46, 0x38)) return "image/gif"; // GIF8(7|9)a
+  if (at(0, 0x52, 0x49, 0x46, 0x46) && at(8, 0x57, 0x45, 0x42, 0x50)) return "image/webp"; // RIFF....WEBP
+  return null;
+}
+
+function bytesToBase64(bytes) {
+  let binary = "";
+  // In slices: String.fromCharCode takes its arguments on the stack.
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(binary);
+}
+
+// Hex digits as bytes. The caller checks the digits first (an image's megabytes of hex go
+// through here, so no per-byte substring or parseInt).
+function hexToBytes(hex) {
+  const bytes = new Uint8Array(hex.length >> 1);
+  const nibble = (c) => (c <= 0x39 ? c - 0x30 : (c | 0x20) - 0x57); // 0-9, a-f / A-F
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = (nibble(hex.charCodeAt(2 * i)) << 4) | nibble(hex.charCodeAt(2 * i + 1));
+  }
+  return bytes;
+}
+
+function base64Head(b64) {
+  try {
+    return Uint8Array.from(atob(b64.slice(0, 16)), (c) => c.charCodeAt(0));
+  } catch (_) {
+    return new Uint8Array(0);
+  }
+}
+
+// redis-cli's escapes undone (`redis_client::escape` writes `\\`, `\"`, `\n`, `\r`, `\t`,
+// `\a`, `\b` and `\xHH`; any other character is itself, in UTF-8).
+function unescapeRedis(text) {
+  const out = [];
+  const encoder = new TextEncoder();
+  const simple = { "\\": 0x5c, '"': 0x22, n: 0x0a, r: 0x0d, t: 0x09, a: 0x07, b: 0x08 };
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === "\\" && i + 1 < text.length) {
+      const next = text[i + 1];
+      if (next === "x" && /^[0-9a-fA-F]{2}$/.test(text.substr(i + 2, 2))) {
+        out.push(parseInt(text.substr(i + 2, 2), 16));
+        i += 3;
+        continue;
+      }
+      if (Object.hasOwn(simple, next)) {
+        out.push(simple[next]);
+        i += 1;
+        continue;
+      }
+    }
+    const cp = text.codePointAt(i);
+    if (cp > 0xffff) i++; // the other half of a surrogate pair
+    for (const b of encoder.encode(String.fromCodePoint(cp))) out.push(b);
+  }
+  return Uint8Array.from(out);
+}
+
+// How the image starts in redis-cli's escapes: a value that does not start so is not
+// unescaped (it may be plain text with backslashes of its own).
+const REDIS_IMAGE_STARTS = ["\\x89PNG\\r\\n\\x1a\\n", "\\xff\\xd8\\xff", "GIF8", "RIFF"];
+
+// Whether `val` starts as an image, reading only its start: { mime, spelling, body } or
+// null. A value cut short (a Redis value over 1 MiB) can still be told apart this way.
+// `redis`: the value may be in redis-cli's escapes.
+function imageHead(val, redis) {
+  if (typeof val !== "string" || val.length < 8) return null;
+  if (val.startsWith("0x")) {
+    const mime = imageMime(hexToBytes(val.slice(2, 26)));
+    return mime ? { mime, spelling: "hex", body: val.slice(2) } : null;
+  }
+  const dataUrl = /^data:image\/(png|jpeg|gif|webp);base64,/i.exec(val);
+  const body = dataUrl ? val.slice(dataUrl[0].length) : val;
+  const mime = imageMime(base64Head(body.slice(0, 64).replace(/\s+/g, "")));
+  if (mime) return { mime, spelling: "base64", body };
+  if (redis && REDIS_IMAGE_STARTS.some((s) => val.startsWith(s))) {
+    const redisMime = imageMime(unescapeRedis(val.slice(0, 64)));
+    if (redisMime) return { mime: redisMime, spelling: "redis", body: val };
+  }
+  return null;
+}
+
+// What to show for `val`: { mime, bytes, dataUrl() } for an image, { tooLarge: bytes } for
+// one over IMAGE_PREVIEW_MAX_BYTES, or null. The data URL is built only when the image is
+// shown.
+function imagePreview(val, redis) {
+  if (typeof val !== "string") return null;
+  const tooLarge = IMAGE_TOO_LARGE_MARK.exec(val);
+  if (tooLarge) return { tooLarge: Number(tooLarge[1]) };
+  const head = imageHead(val, redis);
+  if (!head) return null;
+
+  let bytes;
+  let base64;
+  if (head.spelling === "hex") {
+    if (head.body.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(head.body)) return null;
+    bytes = head.body.length / 2;
+    base64 = () => bytesToBase64(hexToBytes(head.body));
+  } else if (head.spelling === "base64") {
+    const b64 = head.body.replace(/\s+/g, "");
+    if (b64.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(b64)) return null;
+    bytes = (b64.length / 4) * 3 - /=*$/.exec(b64)[0].length;
+    base64 = () => b64;
+  } else {
+    const raw = unescapeRedis(head.body);
+    bytes = raw.length;
+    base64 = () => bytesToBase64(raw);
+  }
+  if (bytes > IMAGE_PREVIEW_MAX_BYTES) return { tooLarge: bytes };
+  return { mime: head.mime, bytes, dataUrl: () => "data:" + head.mime + ";base64," + base64() };
+}
+
+function formatBytes(n) {
+  if (n < 1024) return n + " B";
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+  return (n / (1024 * 1024)).toFixed(1) + " MB";
+}
+
+// Shows `preview` (from imagePreview) in `container`, with a button that switches to the
+// value as text. `showText(target)` writes the text into `target`; it runs only when the
+// text is asked for (a value of megabytes is slow to lay out), or when the image cannot
+// be read (it only looked like one), in which case the text replaces the preview.
+function renderImageValue(container, preview, showText) {
+  const wrap = document.createElement("div");
+  wrap.className = "value-image";
+  const img = document.createElement("img");
+  img.alt = "";
+  const caption = document.createElement("div");
+  caption.className = "value-image-caption";
+  const label = (size) => [preview.mime.replace("image/", "").toUpperCase(), size, formatBytes(preview.bytes)]
+    .filter(Boolean).join(", ");
+  caption.textContent = label(null);
+  const toggle = document.createElement("button");
+  toggle.className = "ghost value-image-toggle";
+  const textEl = document.createElement("div");
+  textEl.className = "value-image-text hidden";
+  let textShown = false;
+  const setMode = (asText) => {
+    if (asText && !textShown) {
+      showText(textEl);
+      textShown = true;
+    }
+    img.classList.toggle("hidden", asText);
+    textEl.classList.toggle("hidden", !asText);
+    toggle.textContent = asText ? t("image_show_image") : t("image_show_text");
+  };
+  toggle.addEventListener("click", () => setMode(img.classList.contains("hidden") === false));
+  img.addEventListener("load", () => {
+    caption.textContent = label(img.naturalWidth + "×" + img.naturalHeight);
+  });
+  img.addEventListener("error", () => {
+    container.innerHTML = "";
+    showText(container);
+  });
+  img.src = preview.dataUrl();
+  wrap.append(img, textEl, caption, toggle);
+  container.appendChild(wrap);
+  setMode(false);
+}
+
+// A note under a value that is an image but is not shown (too large, or cut off).
+function imageNote(text) {
+  const note = document.createElement("div");
+  note.className = "value-image-note";
+  note.textContent = text;
+  return note;
+}
+
 // ── Row detail modal ──
 
-function showRowDetailModal(columns, row) {
+// `options.redis`: the values may be in redis-cli's escapes (`imagePreview`).
+function showRowDetailModal(columns, row, options) {
+  const redis = !!(options && options.redis);
   const overlay = document.createElement("div");
   overlay.className = "modal-overlay";
 
@@ -58,12 +249,20 @@ function showRowDetailModal(columns, row) {
       valEl.textContent = "EMPTY";
     } else {
       const s = String(val);
-      const json = prettyJson(s);
-      valEl.textContent = json ?? s;
-      if (json !== null) valEl.classList.add("monospace");
-      // Long values get monospace for readability
-      if (s.length > 200 && !valEl.classList.contains("monospace")) {
-        valEl.classList.add("monospace");
+      const showText = (target) => {
+        const json = prettyJson(s);
+        target.textContent = json ?? s;
+        // JSON and long values get monospace for readability
+        if (json !== null || s.length > 200) target.classList.add("monospace");
+      };
+      const preview = imagePreview(s, redis);
+      if (preview && preview.dataUrl) {
+        renderImageValue(valEl, preview, showText);
+      } else {
+        showText(valEl);
+        if (preview && preview.tooLarge) {
+          valEl.appendChild(imageNote(t("image_too_large", { size: formatBytes(preview.tooLarge) })));
+        }
       }
     }
     grid.appendChild(valEl);
@@ -323,3 +522,9 @@ window.prettyJson = prettyJson;
 window.showRowDetailModal = showRowDetailModal;
 window.renderTable = renderTable;
 window.renderPagedTable = renderPagedTable;
+window.IMAGE_PREVIEW_MAX_BYTES = IMAGE_PREVIEW_MAX_BYTES;
+window.imageHead = imageHead;
+window.imagePreview = imagePreview;
+window.renderImageValue = renderImageValue;
+window.imageNote = imageNote;
+window.formatBytes = formatBytes;
