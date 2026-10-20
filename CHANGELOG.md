@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.10.0] - 2026-10-20
+
+### Added
+- SQLite のファイルを開けるようにした（#97）。接続プロファイルの DB エンジンで `SQLite` を選び、データベースファイルを指定する。MySQL と同じクエリ画面で、テーブルの閲覧、SQL の実行、エクスポート、AI アシストが使える
+  - データベースの選択は出さず、テーブル一覧から始まる
+  - SQL タブはタブごとに接続を持ち続けるので、`BEGIN` から `COMMIT` までのトランザクションや `PRAGMA` の設定が次の文に引き継がれる
+  - 存在しないファイルは開かない（新しいファイルは作らない）
+  - ファイルのパスはマシンごとの設定として扱い、接続の同期には含めない
+- 値が画像のとき、行の詳細で画像として表示する（#137）。PNG、JPEG、GIF、WebP のバイナリ（BLOB）と、それを Base64 にした文字列が対象。Redis のキーのタブでも同じように表示する。「テキストで表示」で元の値に切り替えられる
+
+### Changed
+- 依存関係を更新（tauri 2.12.2、tauri-plugin-notification 2.6.0 ほか）
+
+### Security
+- 更新プラグインから zip の展開機能を外した（RUSTSEC-2026-0367〜0369）。配布する更新は `.exe` と `.msi` で、zip の展開は使っていなかった
+
 ## [0.9.0] - 2026-10-15
 
 ### Added
@@ -253,6 +269,7 @@
 - アプリ内自動更新（NSIS インストーラー + Ed25519 署名）
 - GitHub Actions CI/CD（cargo check + リリースビルド）
 
+[0.10.0]: https://github.com/kan/musql/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/kan/musql/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/kan/musql/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/kan/musql/compare/v0.7.0...v0.7.1
