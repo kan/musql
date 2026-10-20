@@ -44,6 +44,7 @@
 - **SSL 接続** — DISABLED / REQUIRED / VERIFY_CA / VERIFY_IDENTITY
 - **Docker 連携** — 起動中コンテナの MySQL / Redis を自動検出してワンクリック接続（ポート未公開でも socat トンネル、WSL2 dockerd 対応）
 - **Redis** — キーの一覧と型ごとの値の表示、redis-cli 形式の CLI（補完とコマンドのヘルプ付き）
+- **SQLite** — ローカルの SQLite ファイルを MySQL と同じクエリ画面で閲覧、編集
 - **SQL エディタ** — シンタックスハイライト・補完・整形、複数タブ、実行中クエリのキャンセル、履歴、`Ctrl+P` の QuickOpen
 - **データ閲覧** — ページング・ソート・行詳細（JSON 自動整形）
 - **エクスポート** — CSV / TSV / SQL / Markdown（[tbls](https://github.com/k1LoW/tbls) 互換）。文字コード・改行コード選択、クリップボードコピー

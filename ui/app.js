@@ -113,7 +113,7 @@ function confirmDialog(message, opts) {
 
 // Display names of the connection engines (#132). Must match `Engine::display_name` in
 // main.rs. An engine this version does not know shows as stored.
-const ENGINE_NAMES = { mysql: "MySQL", mariadb: "MariaDB", redis: "Redis" };
+const ENGINE_NAMES = { mysql: "MySQL", mariadb: "MariaDB", redis: "Redis", sqlite: "SQLite" };
 
 function getItemHint(item) {
   // MySQL is the default and goes unlabelled; any other engine prefixes the hint. Rust
@@ -130,6 +130,9 @@ function engineName(engine) {
 }
 
 function getAddressHint(item) {
+  // A SQLite profile has a file, not a server (#97). The path is machine-local, so a
+  // profile synced from another machine has none until it is set here.
+  if (item.request.engine === "sqlite") return item.request.mysql.file_path || t('file_not_set');
   const ssh = item.request.ssh;
   const mysqlHost = item.request.mysql.host || t('host_not_set');
   if (!ssh || !ssh.enabled) return mysqlHost;

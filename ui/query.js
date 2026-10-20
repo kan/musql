@@ -339,20 +339,129 @@ function updateWindowTitle() {
 
 // ── Export utilities (CSV and the options dialog are in export.js) ──
 
+// ── SQL dialect ──
+// The window speaks MySQL's SQL, and SQLite's for a SQLite profile (#97). Every piece of
+// SQL that differs between the two is built by the functions in this section.
+
+function isSqlite() {
+  return !!requestCache && requestCache.engine === "sqlite";
+}
+
+// The dialect's name for CodeMirror's mode (`text/x-…`) and sql-formatter's language.
+function sqlDialect() {
+  return isSqlite() ? "sqlite" : "mysql";
+}
+
 function quoteId(name) {
+  if (isSqlite()) return '"' + name.replace(/"/g, '""') + '"';
   return '`' + name.replace(/`/g, '``') + '`';
 }
 
 // A value as a SQL string literal. Every literal built in this file goes through here.
 //
-// Both the backslash and the quote are doubled. `''` is one quote in either sql_mode,
-// so nothing can end the literal early. The backslash is doubled because MySQL treats
-// it as an escape by default: left alone, a value ending in `\` would swallow the
-// closing quote (#123). Under NO_BACKSLASH_ESCAPES a doubled backslash is two
-// characters, so a value containing one fails to match; that is a miss, never an
-// injection. `\'` is not used: under that mode it would close the literal.
+// The quote is doubled: `''` is one quote in either sql_mode, so nothing can end the
+// literal early. On MySQL the backslash is doubled too, because MySQL treats it as an
+// escape by default: left alone, a value ending in `\` would swallow the closing quote
+// (#123). Under NO_BACKSLASH_ESCAPES a doubled backslash is two characters, so a value
+// containing one fails to match; that is a miss, never an injection. `\'` is not used:
+// under that mode it would close the literal. SQLite has no backslash escapes at all.
 function sqlStringLiteral(val) {
-  return "'" + String(val).replace(/\\/g, "\\\\").replace(/'/g, "''") + "'";
+  let s = String(val);
+  if (!isSqlite()) s = s.replace(/\\/g, "\\\\");
+  return "'" + s.replace(/'/g, "''") + "'";
+}
+
+// SQLite's own tables (sqlite_sequence, sqlite_stat1, ...) are left out of the lists.
+const SQLITE_USER_OBJECTS = "name NOT LIKE 'sqlite\\_%' ESCAPE '\\'";
+
+function tableListSql() {
+  if (isSqlite()) {
+    return "SELECT name FROM sqlite_master WHERE type IN ('table', 'view') AND " + SQLITE_USER_OBJECTS + " ORDER BY name";
+  }
+  return "SHOW TABLES";
+}
+
+// The CREATE statement of a table (or view), or "" when it cannot be read.
+async function fetchCreateSql(tableName) {
+  try {
+    if (isSqlite()) {
+      const res = await runQuery("SELECT sql FROM sqlite_master WHERE type IN ('table', 'view') AND name = " + sqlStringLiteral(tableName));
+      return res.rows.length > 0 ? (res.rows[0][0] || "") : "";
+    }
+    const res = await runQuery("SHOW CREATE TABLE " + quoteId(tableName));
+    return res.rows.length > 0 ? (res.rows[0][1] || "") : "";
+  } catch (_) {
+    return "";
+  }
+}
+
+// The columns of a table, in order: [{ name, dataType (lower case), columnKey ("PRI" for
+// the primary key) }].
+async function fetchColumnMeta(tableName) {
+  if (isSqlite()) {
+    const res = await runQuery("SELECT name, type, pk FROM pragma_table_info(" + sqlStringLiteral(tableName) + ") ORDER BY cid");
+    return res.rows.map((r) => ({ name: r[0], dataType: (r[1] || "").toLowerCase(), columnKey: Number(r[2]) > 0 ? "PRI" : "" }));
+  }
+  const res = await runQuery(
+    "SELECT COLUMN_NAME, DATA_TYPE, COLUMN_KEY " +
+    "FROM INFORMATION_SCHEMA.COLUMNS " +
+    "WHERE TABLE_SCHEMA = " + sqlStringLiteral(currentDb) + " " +
+    "AND TABLE_NAME = " + sqlStringLiteral(tableName) + " " +
+    "ORDER BY ORDINAL_POSITION"
+  );
+  return res.rows.map((r) => ({ name: r[0], dataType: (r[1] || "").toLowerCase(), columnKey: r[2] || "" }));
+}
+
+const MYSQL_BLOB_TYPES = ["blob", "tinyblob", "mediumblob", "longblob", "binary", "varbinary"];
+const MYSQL_TEXT_TYPES = ["text", "tinytext", "mediumtext", "longtext"];
+
+// "blob" for a column the Data view hides, "text" for one it cuts to 200 characters,
+// else null. SQLite's declared types are free text, so they are matched by the words
+// SQLite itself reads them by (a declared BLOB, or TEXT / CLOB).
+function columnKind(dataType) {
+  if (isSqlite()) {
+    if (dataType.includes("blob")) return "blob";
+    if (dataType.includes("text") || dataType.includes("clob")) return "text";
+    return null;
+  }
+  if (MYSQL_BLOB_TYPES.includes(dataType)) return "blob";
+  if (MYSQL_TEXT_TYPES.includes(dataType)) return "text";
+  return null;
+}
+
+// A text column cut to its first 200 characters, keeping its name.
+function truncatedTextExpr(q) {
+  if (isSqlite()) {
+    return "CASE WHEN length(" + q + ") > 200 THEN substr(" + q + ", 1, 200) || '…' ELSE " + q + " END AS " + q;
+  }
+  return "CASE WHEN CHAR_LENGTH(" + q + ") > 200 THEN CONCAT(LEFT(" + q + ", 200), '…') ELSE " + q + " END AS " + q;
+}
+
+// A SQLite table's indexes, one row per column: index_name, unique, origin, partial,
+// seqno, column_name.
+function sqliteIndexSql(tableName) {
+  return "SELECT il.name AS index_name, il.\"unique\", il.origin, il.partial, ii.seqno, ii.name AS column_name " +
+    "FROM pragma_index_list(" + sqlStringLiteral(tableName) + ") AS il, pragma_index_info(il.name) AS ii ORDER BY il.name, ii.seqno";
+}
+
+// The Schema view's two queries: the columns, and the indexes (one row per column).
+function structureSql(tableName) {
+  if (isSqlite()) return ["PRAGMA table_info(" + sqlStringLiteral(tableName) + ")", sqliteIndexSql(tableName)];
+  return ["DESCRIBE " + quoteId(tableName), "SHOW INDEX FROM " + quoteId(tableName)];
+}
+
+// Where a syntax error points: { near, line (0-based) }, or null. MySQL says
+// "... near 'xxx' at line N". SQLite's message names no line, and searching the whole
+// editor for the word could mark it in another statement, so it is not marked.
+function sqlErrorPosition(errorMsg) {
+  if (isSqlite()) return null;
+  const m = /near\s+'([\s\S]*?)'\s+at\s+line\s+(\d+)/i.exec(errorMsg);
+  return m ? { near: m[1], line: parseInt(m[2], 10) - 1 } : null;
+}
+
+// The first line of the SQL export.
+function sqlDumpHeader() {
+  return isSqlite() ? "-- muSQL export (SQLite)" : "-- mysqldump-compatible export";
 }
 
 function sqlEscapeValue(val) {
@@ -362,18 +471,14 @@ function sqlEscapeValue(val) {
 }
 
 async function generateInsertSql(tableName, newline) {
-  let createSql = "";
-  try {
-    const res = await runQuery("SHOW CREATE TABLE " + quoteId(tableName));
-    if (res.rows.length > 0) createSql = res.rows[0][1];
-  } catch (_) { /* ignore */ }
+  const createSql = await fetchCreateSql(tableName);
 
   const dataRes = await runQuery("SELECT * FROM " + quoteId(tableName), 0);
   const columns = dataRes.columns;
   const rows = dataRes.rows;
 
   const lines = [];
-  lines.push("-- mysqldump-compatible export");
+  lines.push(sqlDumpHeader());
   lines.push("-- Table: " + tableName);
   lines.push("-- Exported: " + new Date().toISOString());
   lines.push("");
@@ -401,10 +506,102 @@ async function generateInsertSql(tableName, newline) {
   return lines.join(newline || "\n");
 }
 
+// The pieces of a table's schema that the Markdown export writes, gathered per dialect
+// (`fetchMysqlSchemaParts`, `fetchSqliteSchemaParts`) and written by
+// `renderMarkdownSchema`:
+// - createSql, tableComment: strings, "" when there is none
+// - columns: [{ name, type, defaultStr, nullable ("true" / "false"), extra, comment }]
+// - fkParents, fkChildren: column -> [{ table, column, constraint }]
+// - fkConstraints: constraint name -> { columns, refTable, refColumns }
+// - indexes: [{ name, primary, unique, columns, using (null when unknown) }], in order
+// - primaryKey: the primary key's columns when no index holds it (a SQLite table whose
+//   key is its rowid), else null
 async function generateMarkdownSchema(tableName, newline) {
+  const parts = isSqlite() ? await fetchSqliteSchemaParts(tableName) : await fetchMysqlSchemaParts(tableName);
+  return renderMarkdownSchema(tableName, parts, newline);
+}
+
+async function fetchSqliteSchemaParts(tableName) {
+  const lit = sqlStringLiteral(tableName);
+  const [createSql, infoRes, indexRes, fkRes, childRes] = await Promise.all([
+    fetchCreateSql(tableName),
+    runQuery("SELECT name, type, \"notnull\", dflt_value, pk FROM pragma_table_info(" + lit + ") ORDER BY cid"),
+    runQuery(sqliteIndexSql(tableName)),
+    runQuery("SELECT id, \"table\", \"from\", \"to\" FROM pragma_foreign_key_list(" + lit + ") ORDER BY id, seq"),
+    // Table names compare without case in SQLite, as in a foreign key's REFERENCES.
+    runQuery(
+      "SELECT m.name, fk.\"from\", fk.\"to\", fk.id FROM sqlite_master AS m, pragma_foreign_key_list(m.name) AS fk " +
+      "WHERE m.type = 'table' AND fk.\"table\" = " + lit + " COLLATE NOCASE"
+    ),
+  ]);
+
+  const columns = infoRes.rows.map((r) => ({
+    name: r[0],
+    type: r[1] || "",
+    defaultStr: r[3] == null ? "" : String(r[3]),
+    nullable: Number(r[2]) ? "false" : "true",
+    extra: "",
+    comment: "",
+  }));
+  const primaryKey = infoRes.rows
+    .filter((r) => Number(r[4]) > 0)
+    .sort((a, b) => Number(a[4]) - Number(b[4]))
+    .map((r) => r[0]);
+
+  // SQLite's foreign keys have no names; tbls calls them by their id, as here.
+  const fkName = (id) => "- (Foreign key ID: " + id + ")";
+  const fkParents = {};
+  const fkConstraints = {};
+  for (const row of fkRes.rows) {
+    const name = fkName(row[0]);
+    const refTable = row[1];
+    const from = row[2];
+    // No "to": the parent's primary key, whose name this table does not record.
+    const to = row[3] || "";
+    if (!fkParents[from]) fkParents[from] = [];
+    fkParents[from].push({ table: refTable, column: to, constraint: name });
+    if (!fkConstraints[name]) fkConstraints[name] = { columns: [], refTable, refColumns: [] };
+    fkConstraints[name].columns.push(from);
+    fkConstraints[name].refColumns.push(to);
+  }
+  const fkChildren = {};
+  for (const row of childRes.rows) {
+    // No "to": the child points at this table's primary key.
+    const col = row[2] || primaryKey[0];
+    if (!col) continue;
+    if (!fkChildren[col]) fkChildren[col] = [];
+    fkChildren[col].push({ table: row[0], column: row[1], constraint: fkName(row[3]) });
+  }
+
+  // indexRes: index_name, unique, origin, partial, seqno, column_name (one row per column).
+  const indexes = [];
+  const byName = {};
+  for (const row of indexRes.rows) {
+    const name = row[0];
+    if (!byName[name]) {
+      // origin "pk": the index SQLite made for a PRIMARY KEY that is not the rowid.
+      byName[name] = { name, primary: row[2] === "pk", unique: Number(row[1]) === 1, columns: [], using: null };
+      indexes.push(byName[name]);
+    }
+    byName[name].columns.push(row[5] == null ? "(expression)" : row[5]);
+  }
+
+  return {
+    createSql,
+    tableComment: "",
+    columns,
+    fkParents,
+    fkChildren,
+    fkConstraints,
+    indexes,
+    primaryKey: primaryKey.length > 0 && !indexes.some((i) => i.primary) ? primaryKey : null,
+  };
+}
+
+async function fetchMysqlSchemaParts(tableName) {
   const tableLiteral = sqlStringLiteral(tableName);
-  const [createRes, descRes, indexRes, commentRes, colCommentRes, fkParentRes, fkChildRes] = await Promise.all([
-    runQuery("SHOW CREATE TABLE " + quoteId(tableName)).catch(() => null),
+  const [createSql, descRes, indexRes, commentRes, colCommentRes, fkParentRes, fkChildRes] = await Promise.all([
+    fetchCreateSql(tableName),
     runQuery("DESCRIBE " + quoteId(tableName)),
     runQuery("SHOW INDEX FROM " + quoteId(tableName)),
     runQuery("SELECT TABLE_COMMENT FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = " + tableLiteral),
@@ -457,6 +654,13 @@ async function generateMarkdownSchema(tableName, newline) {
       indexMap[key].columns.sort((a, b) => a.seq - b.seq);
     }
   }
+  const indexes = Object.entries(indexMap).map(([name, idx]) => ({
+    name,
+    primary: name === "PRIMARY",
+    unique: idx.nonUnique === 0,
+    columns: idx.columns.map((c) => c.col),
+    using: idx.indexType,
+  }));
 
   // FK constraint map: constraintName -> { columns, refTable, refColumns }
   const fkConstraints = {};
@@ -469,6 +673,37 @@ async function generateMarkdownSchema(tableName, newline) {
     }
   }
 
+  const columns = [];
+  if (descRes && descRes.rows) {
+    const ci = {};
+    for (let i = 0; i < descRes.columns.length; i++) ci[descRes.columns[i]] = i;
+    for (const row of descRes.rows) {
+      const field = row[ci["Field"]] || "";
+      const defVal = row[ci["Default"]];
+      columns.push({
+        name: field,
+        type: row[ci["Type"]] || "",
+        defaultStr: (defVal === null || defVal === undefined) ? "" : String(defVal),
+        nullable: (row[ci["Null"]] === "YES") ? "true" : "false",
+        extra: row[ci["Extra"]] || "",
+        comment: colComments[field] || "",
+      });
+    }
+  }
+
+  return {
+    createSql,
+    tableComment: (commentRes && commentRes.rows && commentRes.rows.length > 0) ? (commentRes.rows[0][0] || "") : "",
+    columns,
+    fkParents,
+    fkChildren,
+    fkConstraints,
+    indexes,
+    primaryKey: null,
+  };
+}
+
+function renderMarkdownSchema(tableName, parts, newline) {
   const lines = [];
 
   // Title
@@ -476,69 +711,59 @@ async function generateMarkdownSchema(tableName, newline) {
   lines.push("");
 
   // Description
-  const tableComment = (commentRes && commentRes.rows && commentRes.rows.length > 0) ? (commentRes.rows[0][0] || "") : "";
-  if (tableComment) {
+  if (parts.tableComment) {
     lines.push("## Description");
     lines.push("");
-    lines.push(tableComment);
+    lines.push(parts.tableComment);
     lines.push("");
   }
 
   // Table Definition
-  if (createRes && createRes.rows && createRes.rows.length > 0) {
-    const createSql = createRes.rows[0][1] || "";
-    if (createSql) {
-      lines.push("<details>");
-      lines.push("<summary><strong>Table Definition</strong></summary>");
-      lines.push("");
-      lines.push("```sql");
-      createSql.split(/\r?\n/).forEach((l) => lines.push(l));
-      lines.push("```");
-      lines.push("");
-      lines.push("</details>");
-      lines.push("");
-    }
+  if (parts.createSql) {
+    lines.push("<details>");
+    lines.push("<summary><strong>Table Definition</strong></summary>");
+    lines.push("");
+    lines.push("```sql");
+    parts.createSql.split(/\r?\n/).forEach((l) => lines.push(l));
+    lines.push("```");
+    lines.push("");
+    lines.push("</details>");
+    lines.push("");
   }
 
   // Columns
-  if (descRes && descRes.rows && descRes.rows.length > 0) {
-    const ci = {};
-    for (let i = 0; i < descRes.columns.length; i++) ci[descRes.columns[i]] = i;
-
+  if (parts.columns.length > 0) {
     lines.push("## Columns");
     lines.push("");
     lines.push("| Name | Type | Default | Nullable | Extra Definition | Children | Parents | Comment |");
     lines.push("| ---- | ---- | ------- | -------- | ---------------- | -------- | ------- | ------- |");
 
-    for (const row of descRes.rows) {
-      const field = row[ci["Field"]] || "";
-      const type = row[ci["Type"]] || "";
-      const nullable = (row[ci["Null"]] === "YES") ? "true" : "false";
-      const defVal = row[ci["Default"]];
-      const defaultStr = (defVal === null || defVal === undefined) ? "" : String(defVal);
-      const extra = row[ci["Extra"]] || "";
+    for (const col of parts.columns) {
       // Backslashes first: otherwise a comment ending in "\" would un-escape the pipe.
-      const comment = (colComments[field] || "").replace(/\\/g, "\\\\").replace(/\|/g, "\\|");
+      const comment = col.comment.replace(/\\/g, "\\\\").replace(/\|/g, "\\|");
 
-      const children = (fkChildren[field] || []).map(c => "[" + c.table + "](" + c.table + ".md)").join(" ");
-      const parents = (fkParents[field] || []).map(p => "[" + p.table + "](" + p.table + ".md)").join(" ");
+      const children = (parts.fkChildren[col.name] || []).map(c => "[" + c.table + "](" + c.table + ".md)").join(" ");
+      const parents = (parts.fkParents[col.name] || []).map(p => "[" + p.table + "](" + p.table + ".md)").join(" ");
 
-      lines.push("| " + field + " | " + type + " | " + defaultStr + " | " + nullable + " | " + extra + " | " + children + " | " + parents + " | " + comment + " |");
+      lines.push("| " + col.name + " | " + col.type + " | " + col.defaultStr + " | " + col.nullable + " | " + col.extra + " | " + children + " | " + parents + " | " + comment + " |");
     }
     lines.push("");
   }
 
   // Constraints
   const constraints = [];
-  for (const [keyName, idx] of Object.entries(indexMap)) {
-    const cols = idx.columns.map(c => c.col).join(", ");
-    if (keyName === "PRIMARY") {
-      constraints.push({ name: "PRIMARY", type: "PRIMARY KEY", definition: "PRIMARY KEY (" + cols + ")" });
-    } else if (idx.nonUnique === 0) {
-      constraints.push({ name: keyName, type: "UNIQUE", definition: "UNIQUE KEY " + keyName + " (" + cols + ")" });
+  if (parts.primaryKey) {
+    constraints.push({ name: "PRIMARY", type: "PRIMARY KEY", definition: "PRIMARY KEY (" + parts.primaryKey.join(", ") + ")" });
+  }
+  for (const idx of parts.indexes) {
+    const cols = idx.columns.join(", ");
+    if (idx.primary) {
+      constraints.push({ name: idx.name, type: "PRIMARY KEY", definition: "PRIMARY KEY (" + cols + ")" });
+    } else if (idx.unique) {
+      constraints.push({ name: idx.name, type: "UNIQUE", definition: "UNIQUE KEY " + idx.name + " (" + cols + ")" });
     }
   }
-  for (const [name, fk] of Object.entries(fkConstraints)) {
+  for (const [name, fk] of Object.entries(parts.fkConstraints)) {
     constraints.push({
       name: name,
       type: "FOREIGN KEY",
@@ -558,19 +783,19 @@ async function generateMarkdownSchema(tableName, newline) {
   }
 
   // Indexes
-  const indexEntries = Object.entries(indexMap);
-  if (indexEntries.length > 0) {
+  if (parts.indexes.length > 0) {
     lines.push("## Indexes");
     lines.push("");
     lines.push("| Name | Definition |");
     lines.push("| ---- | ---------- |");
-    for (const [keyName, idx] of indexEntries) {
-      const cols = idx.columns.map(c => c.col).join(", ");
+    for (const idx of parts.indexes) {
+      const cols = idx.columns.join(", ");
       let prefix;
-      if (idx.nonUnique === 0 && keyName === "PRIMARY") prefix = "PRIMARY KEY";
-      else if (idx.nonUnique === 0) prefix = "UNIQUE KEY";
+      if (idx.unique && idx.primary) prefix = "PRIMARY KEY";
+      else if (idx.unique) prefix = "UNIQUE KEY";
       else prefix = "KEY";
-      lines.push("| " + keyName + " | " + prefix + " (" + cols + ") USING " + idx.indexType + " |");
+      const using = idx.using ? " USING " + idx.using : "";
+      lines.push("| " + idx.name + " | " + prefix + " (" + cols + ")" + using + " |");
     }
     lines.push("");
   }
@@ -918,9 +1143,20 @@ async function selectDatabase(dbName) {
 
 // ── Explorer ──
 
+// A SQLite file is the one database (#97): there is none to choose, so the database list is
+// skipped. The file's name stands in for the database name (the title, the sidebar, the AI
+// chat's key).
+async function openSqliteFile() {
+  const path = requestCache.mysql.file_path || "";
+  currentDb = path.split(/[\\/]/).pop();
+  updateWindowTitle();
+  await showExplorer();
+}
+
 async function showExplorer() {
   explorerEl.classList.remove("hidden");
   sidebarDbName.textContent = currentDb;
+  dbSwitchBtn.classList.toggle("hidden", isSqlite());
   await loadTableList();
   const { tabs, activeTabId } = loadDrafts();
   if (tabs.length > 0) {
@@ -947,7 +1183,7 @@ async function loadTableList() {
   loadingEl.textContent = t('loading');
   tableListEl.appendChild(loadingEl);
   try {
-    const res = await runQuery("SHOW TABLES");
+    const res = await runQuery(tableListSql());
     tableListEl.innerHTML = "";
     const tables = res.rows.map((r) => r[0]);
     currentTables = tables;
@@ -1043,7 +1279,7 @@ function openTableTab(tableName, initialView) {
     let lastRows = [];
     const sortState = { colIndex: -1, dir: null, column: null };
 
-    // Column metadata from INFORMATION_SCHEMA
+    // Column metadata (fetchColumnMeta)
     let allColumns = [];
     let blobCols = [];
     let textCols = [];
@@ -1054,17 +1290,9 @@ function openTableTab(tableName, initialView) {
 
     async function detectColumns() {
       if (columnsDetected) return;
-      const sql = "SELECT COLUMN_NAME, DATA_TYPE, COLUMN_KEY " +
-        "FROM INFORMATION_SCHEMA.COLUMNS " +
-        "WHERE TABLE_SCHEMA = " + sqlStringLiteral(currentDb) + " " +
-        "AND TABLE_NAME = " + sqlStringLiteral(tableName) + " " +
-        "ORDER BY ORDINAL_POSITION";
-      const res = await runQuery(sql);
-      allColumns = res.rows.map((r) => ({ name: r[0], dataType: (r[1] || "").toLowerCase(), columnKey: r[2] || "" }));
-      const blobTypes = ["blob", "tinyblob", "mediumblob", "longblob", "binary", "varbinary"];
-      const textTypes = ["text", "tinytext", "mediumtext", "longtext"];
-      blobCols = allColumns.filter((c) => blobTypes.includes(c.dataType)).map((c) => c.name);
-      textCols = allColumns.filter((c) => textTypes.includes(c.dataType)).map((c) => c.name);
+      allColumns = await fetchColumnMeta(tableName);
+      blobCols = allColumns.filter((c) => columnKind(c.dataType) === "blob").map((c) => c.name);
+      textCols = allColumns.filter((c) => columnKind(c.dataType) === "text").map((c) => c.name);
       pkCols = allColumns.filter((c) => c.columnKey === "PRI").map((c) => c.name);
       hasTruncatable = blobCols.length > 0 || textCols.length > 0;
       columnsDetected = true;
@@ -1075,7 +1303,7 @@ function openTableTab(tableName, initialView) {
       return allColumns.map((c) => {
         const q = quoteId(c.name);
         if (blobCols.includes(c.name)) return "'(BLOB)' AS " + q;
-        if (textCols.includes(c.name)) return "CASE WHEN CHAR_LENGTH(" + q + ") > 200 THEN CONCAT(LEFT(" + q + ", 200), '\u2026') ELSE " + q + " END AS " + q;
+        if (textCols.includes(c.name)) return truncatedTextExpr(q);
         return q;
       }).join(", ");
     }
@@ -1140,7 +1368,8 @@ function openTableTab(tableName, initialView) {
         const selectExpr = buildSelectExpr();
         const orderBy = buildOrderByClause();
         const res = await runQuery(
-          "SELECT " + selectExpr + " FROM " + quoteId(tableName) + orderBy + " LIMIT " + offset + ", " + pageSize
+          // LIMIT … OFFSET reads the same in MySQL and SQLite.
+          "SELECT " + selectExpr + " FROM " + quoteId(tableName) + orderBy + " LIMIT " + pageSize + " OFFSET " + offset
         );
         lastColumns = res.columns;
         lastRows = res.rows;
@@ -1164,10 +1393,7 @@ function openTableTab(tableName, initialView) {
       tableContainer.innerHTML = "";
       footerBar.innerHTML = "";
       try {
-        const [descRes, indexRes] = await Promise.all([
-          runQuery("DESCRIBE " + quoteId(tableName)),
-          runQuery("SHOW INDEX FROM " + quoteId(tableName)),
-        ]);
+        const [descRes, indexRes] = await Promise.all(structureSql(tableName).map((sql) => runQuery(sql)));
         info.textContent = t('n_columns', { n: descRes.rows.length });
         renderTable(descRes.columns, descRes.rows, tableContainer, (cols, row) => showRowDetailModal(cols, row));
 
@@ -1353,7 +1579,7 @@ function addSqlTab(initialContent, tabNum) {
     let editorTouched = false;
 
     const editor = CodeMirror(editorDiv, {
-      mode: "text/x-mysql",
+      mode: "text/x-" + sqlDialect(),
       lineNumbers: true,
       indentWithTabs: true,
       smartIndent: true,
@@ -1479,11 +1705,11 @@ function addSqlTab(initialContent, tabNum) {
     formatBtn.addEventListener("click", () => {
       const selection = editor.getSelection();
       if (selection) {
-        const formatted = window.sqlFormatter.format(selection, { language: "mysql" });
+        const formatted = window.sqlFormatter.format(selection, { language: sqlDialect() });
         editor.replaceSelection(formatted);
       } else {
         const cursor = editor.getCursor();
-        const formatted = window.sqlFormatter.format(editor.getValue(), { language: "mysql" });
+        const formatted = window.sqlFormatter.format(editor.getValue(), { language: sqlDialect() });
         editor.setValue(formatted);
         editor.setCursor(cursor);
       }
@@ -1564,11 +1790,10 @@ function addSqlTab(initialContent, tabNum) {
     }
 
     function markSqlError(errorMsg) {
-      // MySQL error: "... near 'xxx' at line N"
-      const m = /near\s+'([\s\S]*?)'\s+at\s+line\s+(\d+)/i.exec(errorMsg);
-      if (!m) return;
-      const nearText = m[1];
-      const errorLine = parseInt(m[2], 10) - 1; // 0-indexed
+      const pos = sqlErrorPosition(errorMsg);
+      if (!pos) return;
+      const nearText = pos.near;
+      const errorLine = pos.line;
       if (nearText.length === 0) return;
 
       // Find nearText in the editor starting from errorLine
@@ -1993,6 +2218,8 @@ function resetExplorer() {
 // ── Event wiring ──
 
 dbSwitchBtn.addEventListener("click", () => {
+  // The menu's "switch database" clicks this even while it is hidden.
+  if (isSqlite()) return;
   saveDrafts();
   tabManager.removeAll();
   showDbModal();
@@ -2024,7 +2251,9 @@ if (eventApi && eventApi.listen) {
       }
 
       // If profile already has a database set, auto-select it
-      if (requestCache.mysql.database) {
+      if (isSqlite()) {
+        await openSqliteFile();
+      } else if (requestCache.mysql.database) {
         setDatabase(requestCache.mysql.database);
         await showExplorer();
       } else {

@@ -19,6 +19,10 @@ const sslModeSelect = document.getElementById("mysql-ssl-mode");
 const caCertRow = document.getElementById("ca-cert-row");
 const caCertInput = document.getElementById("mysql-ca-cert");
 const caCertBrowseBtn = document.getElementById("mysql-ca-cert-browse");
+const sqliteFileRow = document.getElementById("sqlite-file-row");
+const sqliteFileInput = document.getElementById("sqlite-file");
+const sqliteFileBrowseBtn = document.getElementById("sqlite-file-browse");
+const sshSection = document.getElementById("ssh-section");
 const sshKeyBrowseBtn = document.getElementById("ssh-key-browse");
 const sshAuthMethodSelect = document.getElementById("ssh-auth-method");
 const sshKeyRow = document.getElementById("ssh-key-row");
@@ -44,6 +48,7 @@ function applySettingsLabels() {
   cancelBtn.innerHTML = icon('x') + t('cancel');
   deleteBtn.innerHTML = icon('trash-2') + t('delete');
   caCertBrowseBtn.innerHTML = icon('folder-open') + t('browse');
+  sqliteFileBrowseBtn.innerHTML = icon('folder-open') + t('browse');
   sshKeyBrowseBtn.innerHTML = icon('folder-open') + t('browse');
 }
 applySettingsLabels();
@@ -375,11 +380,14 @@ sshEnabledCheck.addEventListener("change", updateSshFieldVisibility);
 function updateCaCertVisibility() {
   const mode = sslModeSelect.value;
   const show = mode === "VERIFY_CA" || mode === "VERIFY_IDENTITY";
-  caCertRow.classList.toggle("hidden", !show);
+  caCertRow.classList.toggle("hidden", !show || engineFields(dbEngineSelect.value).file);
 }
 sslModeSelect.addEventListener("change", updateCaCertVisibility);
 
 // Per-engine defaults and labels (#98). The database field is the DB number on Redis.
+// `file`: the engine opens a database file instead of a server (SQLite, #97), so only the
+// file field shows. Its port and user are MySQL's, so that switching away from it still
+// moves untouched defaults on.
 // Every engine Rust knows has an entry (a test in main.rs checks the keys); only an engine
 // from a newer version falls back to MySQL's.
 const MYSQL_FIELDS = { port: 3306, user: "root", dbLabel: "database", dbPlaceholder: "optional" };
@@ -387,6 +395,7 @@ const ENGINE_FIELDS = {
   mysql: MYSQL_FIELDS,
   mariadb: MYSQL_FIELDS,
   redis: { port: 6379, user: "", dbLabel: "redis_db_number", dbPlaceholder: "redis_db_placeholder" },
+  sqlite: { ...MYSQL_FIELDS, file: true },
 };
 function engineFields(engine) {
   return Object.hasOwn(ENGINE_FIELDS, engine) ? ENGINE_FIELDS[engine] : MYSQL_FIELDS;
@@ -405,6 +414,13 @@ function applyEngineFields(switching) {
     const userInput = document.getElementById("mysql-user");
     if (Number(portInput.value) === previous.port) portInput.value = fields.port;
     if (userInput.value === previous.user) userInput.value = fields.user;
+    // A saved SQLite profile has its server fields blank (`collectRequest`): back on a
+    // server, they start from the defaults again.
+    if (previous.file) {
+      const hostInput = document.getElementById("mysql-host");
+      if (!hostInput.value.trim()) hostInput.value = "127.0.0.1";
+      if (!userInput.value.trim()) userInput.value = fields.user;
+    }
     // A database name is not a DB number (and the reverse), so a value whose meaning
     // changes is cleared rather than carried over.
     if (fields.dbLabel !== previous.dbLabel) dbInput.value = "";
@@ -414,6 +430,11 @@ function applyEngineFields(switching) {
   dbLabel.textContent = t(fields.dbLabel);
   dbInput.setAttribute("data-i18n-placeholder", fields.dbPlaceholder);
   dbInput.placeholder = t(fields.dbPlaceholder);
+  const file = !!fields.file;
+  sqliteFileRow.classList.toggle("hidden", !file);
+  document.querySelectorAll(".server-field").forEach((el) => el.classList.toggle("hidden", file));
+  sshSection.classList.toggle("hidden", file);
+  updateCaCertVisibility();
   shownEngine = dbEngineSelect.value;
 }
 dbEngineSelect.addEventListener("change", () => applyEngineFields(true));
@@ -451,7 +472,37 @@ sshKeyBrowseBtn.addEventListener("click", () => {
   browseFile(document.getElementById("ssh-key"), t('select_identity_file'), null, null);
 });
 
+// No extension filter: SQLite files come with any extension, or none.
+sqliteFileBrowseBtn.addEventListener("click", () => {
+  browseFile(sqliteFileInput, t('select_sqlite_file'), null, null);
+});
+
 function collectRequest() {
+  const request = collectServerRequest();
+  if (!engineFields(dbEngineSelect.value).file) return request;
+  // A database file (#97): the server fields are blanked, so the profile carries
+  // nothing left over from a server it was switched from. `host`, `port` and
+  // `username` are still written: versions before `engine` require them.
+  return {
+    engine: request.engine,
+    mysql: {
+      ...request.mysql,
+      host: "",
+      port: 0,
+      database: null,
+      username: "",
+      password: "",
+      ssl_mode: "DISABLED",
+      tls_ca_cert_path: null,
+      save_password: true,
+      op_ref: null,
+      file_path: sqliteFileInput.value.trim() || null,
+    },
+    ssh: null,
+  };
+}
+
+function collectServerRequest() {
   const sshEnabled = document.getElementById("ssh-enabled").checked;
 
   return {
@@ -491,6 +542,7 @@ function applyRequest(request) {
   document.getElementById("mysql-db").value = request.mysql.database || "";
   document.getElementById("mysql-user").value = request.mysql.username || "";
   document.getElementById("mysql-pass").value = request.mysql.password || "";
+  sqliteFileInput.value = request.mysql.file_path || "";
   setSelectKeepingUnknown(dbEngineSelect, request.engine, "db_engine_unknown");
   applyEngineFields(false);
   setSelectKeepingUnknown(sslModeSelect, request.mysql.ssl_mode || "DISABLED", "ssl_mode_unknown");

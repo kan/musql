@@ -1198,6 +1198,7 @@ mod tests {
             tls_ca_cert_path: None,
             save_password: true,
             op_ref: None,
+            file_path: None,
             tls_enabled: false,
             tls_skip_verify: false,
         }

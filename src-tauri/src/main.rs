@@ -24,6 +24,7 @@ mod docker;
 mod docs_consistency;
 mod onepassword;
 mod redis_client;
+mod sqlite_client;
 mod toast;
 mod vdesk;
 #[cfg(test)]
@@ -47,6 +48,10 @@ struct MySqlConfig {
     // keyring entry. A pointer, not a secret, so it syncs with the profile (#80).
     #[serde(default)]
     op_ref: Option<String>,
+    /// The database file of a SQLite connection (#97), which has no server: host, port and
+    /// user are left blank. Machine-local, like the CA path (`clear_machine_local_paths`).
+    #[serde(default)]
+    file_path: Option<String>,
     // Legacy (read-only, never re-saved)
     #[serde(default, skip_serializing)]
     tls_enabled: bool,
@@ -152,6 +157,8 @@ enum Engine {
     Mariadb,
     /// A key-value store (#98): its own connection (`redis_client`) and window.
     Redis,
+    /// A database file (#97): its own connection (`sqlite_client`), the query window.
+    Sqlite,
     /// An engine this version does not know, such as one a later version added. Its
     /// spelling is kept so that saving does not turn it into MySQL, and nothing connects
     /// to it as MySQL.
@@ -164,6 +171,7 @@ impl From<String> for Engine {
             "mysql" => Self::Mysql,
             "mariadb" => Self::Mariadb,
             "redis" => Self::Redis,
+            "sqlite" => Self::Sqlite,
             _ => Self::Unknown(name),
         }
     }
@@ -175,6 +183,7 @@ impl From<Engine> for String {
             Engine::Mysql => "mysql".to_owned(),
             Engine::Mariadb => "mariadb".to_owned(),
             Engine::Redis => "redis".to_owned(),
+            Engine::Sqlite => "sqlite".to_owned(),
             Engine::Unknown(name) => name,
         }
     }
@@ -187,6 +196,7 @@ impl Engine {
             Engine::Mysql => "MySQL",
             Engine::Mariadb => "MariaDB",
             Engine::Redis => "Redis",
+            Engine::Sqlite => "SQLite",
             Engine::Unknown(name) => name,
         }
     }
@@ -197,6 +207,7 @@ impl Engine {
         match self {
             Engine::Mysql | Engine::Mariadb => Ok(Protocol::Mysql),
             Engine::Redis => Ok(Protocol::Redis),
+            Engine::Sqlite => Ok(Protocol::Sqlite),
             Engine::Unknown(name) => Err(unknown_engine_error(name)),
         }
     }
@@ -204,7 +215,7 @@ impl Engine {
     /// The window that opens a profile of this engine.
     fn window(&self) -> Result<&'static str, String> {
         match self.protocol()? {
-            Protocol::Mysql => Ok(WIN_QUERY),
+            Protocol::Mysql | Protocol::Sqlite => Ok(WIN_QUERY),
             Protocol::Redis => Ok(WIN_REDIS),
         }
     }
@@ -214,15 +225,18 @@ impl Engine {
         match self.protocol()? {
             Protocol::Mysql => Ok(()),
             Protocol::Redis => Err("This is a Redis connection, not a MySQL one.".to_owned()),
+            Protocol::Sqlite => Err("This is a SQLite connection, not a MySQL one.".to_owned()),
         }
     }
 }
 
-/// The wire protocols muSQL speaks; several engines can share one (MySQL and MariaDB).
+/// The ways muSQL talks to a database; several engines can share one (MySQL and MariaDB).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Protocol {
     Mysql,
     Redis,
+    /// A local file opened in-process (#97): no server, SSH tunnel or credentials.
+    Sqlite,
 }
 
 fn unknown_engine_error(name: &str) -> String {
@@ -448,19 +462,57 @@ impl russh::client::Handler for SshHandler {
 
 struct ConnectionCache {
     fingerprint: String,
-    pool: Pool,
+    backend: Backend,
     /// Names the server in the AI prompts, which get the connection from here.
     engine: Engine,
     _tunnel: Option<SshTunnel>,
 }
 
-struct RunningQueryEntry {
-    connection_id: u32,
-    pool: Pool,
+/// What the query window's connection is.
+#[derive(Clone)]
+enum Backend {
+    Mysql(Pool),
+    /// The database file (#97), with a connection per tab (see `sqlite_client`).
+    Sqlite(Arc<sqlite_client::SqliteSession>),
+}
+
+/// A statement running for a tab, which `cancel_query` stops.
+enum RunningQueryEntry {
+    /// `KILL QUERY` on another connection of the pool.
+    Mysql { connection_id: u32, pool: Pool },
+    /// Interrupted on the tab's own connection.
+    Sqlite(Arc<sqlite_client::TabConnection>),
 }
 
 static RUNNING_QUERIES: std::sync::LazyLock<Mutex<HashMap<String, RunningQueryEntry>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// The key a tab's statement is filed under in `RUNNING_QUERIES`. Queries sent without a
+/// tab (the table list, the Data view) share one.
+fn running_query_key(tab_id: Option<String>) -> String {
+    tab_id.unwrap_or_else(|| "__internal__".to_owned())
+}
+
+/// Files a running statement in `RUNNING_QUERIES` for `cancel_query`, and takes it off
+/// again when dropped, whichever way the statement ends.
+struct RunningQueryGuard(String);
+
+impl RunningQueryGuard {
+    fn register(key: String, entry: RunningQueryEntry) -> Self {
+        if let Ok(mut map) = RUNNING_QUERIES.lock() {
+            map.insert(key.clone(), entry);
+        }
+        Self(key)
+    }
+}
+
+impl Drop for RunningQueryGuard {
+    fn drop(&mut self) {
+        if let Ok(mut map) = RUNNING_QUERIES.lock() {
+            map.remove(&self.0);
+        }
+    }
+}
 
 static SCHEMA_CACHE: std::sync::LazyLock<Mutex<HashMap<String, SchemaInfo>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -499,15 +551,46 @@ fn connection_fingerprint(request: &ConnectionRequest) -> String {
         _ => String::new(),
     };
     format!(
-        "{}:{}:{}:{}:ssl={:?}:ca={}|{}",
+        "{}:{}:{}:{}:ssl={:?}:ca={}:file={}|{}",
         String::from(request.engine.clone()),
         request.mysql.host,
         request.mysql.port,
         request.mysql.username,
         request.mysql.ssl_mode,
         request.mysql.tls_ca_cert_path.as_deref().unwrap_or(""),
+        request.mysql.sqlite_file(),
         ssh_part
     )
+}
+
+/// The query window's session on `request`'s database file (#97), which replaces any
+/// other connection. Nothing is opened here: each tab opens the file on its first query.
+fn use_sqlite_file(
+    cache: &Mutex<Option<ConnectionCache>>,
+    request: &ConnectionRequest,
+) -> Result<Arc<sqlite_client::SqliteSession>, String> {
+    let fingerprint = connection_fingerprint(request);
+    let mut guard = cache.lock().map_err(|e| format!("Lock error: {e}"))?;
+    if let Some(ConnectionCache {
+        fingerprint: cached,
+        backend: Backend::Sqlite(session),
+        ..
+    }) = guard.as_ref()
+    {
+        if *cached == fingerprint {
+            return Ok(Arc::clone(session));
+        }
+    }
+    let session = Arc::new(sqlite_client::SqliteSession::new(
+        request.mysql.sqlite_file().to_owned(),
+    ));
+    *guard = Some(ConnectionCache {
+        fingerprint,
+        backend: Backend::Sqlite(Arc::clone(&session)),
+        engine: request.engine.clone(),
+        _tunnel: None,
+    });
+    Ok(session)
 }
 
 async fn get_or_create_pool_async(
@@ -520,9 +603,14 @@ async fn get_or_create_pool_async(
     // Check cache (short lock, no await)
     {
         let guard = cache.lock().map_err(|e| format!("Lock error: {e}"))?;
-        if let Some(ref cached) = *guard {
-            if cached.fingerprint == fp {
-                return Ok(cached.pool.clone());
+        if let Some(ConnectionCache {
+            fingerprint,
+            backend: Backend::Mysql(pool),
+            ..
+        }) = guard.as_ref()
+        {
+            if *fingerprint == fp {
+                return Ok(pool.clone());
             }
         }
     }
@@ -555,7 +643,7 @@ async fn get_or_create_pool_async(
         let mut guard = cache.lock().map_err(|e| format!("Lock error: {e}"))?;
         *guard = Some(ConnectionCache {
             fingerprint: fp,
-            pool: pool.clone(),
+            backend: Backend::Mysql(pool.clone()),
             engine: request.engine.clone(),
             _tunnel: tunnel,
         });
@@ -612,6 +700,11 @@ fn unknown_ssl_mode_error(name: &str) -> String {
 }
 
 impl MySqlConfig {
+    /// The database file of a SQLite connection; blank when none is set.
+    fn sqlite_file(&self) -> &str {
+        self.file_path.as_deref().map(str::trim).unwrap_or("")
+    }
+
     /// The CA certificate to check the server against; a blank path means none.
     fn ca_cert_path(&self) -> Option<&str> {
         self.tls_ca_cert_path
@@ -722,12 +815,13 @@ fn read_sync_path(app: &AppHandle) -> String {
 }
 
 // Fields holding a path into the local filesystem. These are meaningless (or wrong) on
-// another machine — the same key/certificate lives under a different user directory, or
-// not at all — so they are excluded from the sync file and never overwrite a local value
-// on import (#80). `config_host` is deliberately NOT machine-local: it is an alias into
+// another machine — the same key/certificate (or SQLite file, #97) lives under a different
+// user directory, or not at all — so they are excluded from the sync file and never
+// overwrite a local value on import (#80). `config_host` is deliberately NOT machine-local: it is an alias into
 // the user's own ~/.ssh/config, which is typically kept identical across machines.
 fn clear_machine_local_paths(profile: &mut ConnectionProfile) {
     profile.request.mysql.tls_ca_cert_path = None;
+    profile.request.mysql.file_path = None;
     if let Some(ssh) = profile.request.ssh.as_mut() {
         ssh.private_key_path = None;
     }
@@ -858,6 +952,11 @@ fn carry_over_machine_local_paths(local: &ConnectionProfile, incoming: &mut Conn
         .mysql
         .tls_ca_cert_path
         .clone_from(&local.request.mysql.tls_ca_cert_path);
+    incoming
+        .request
+        .mysql
+        .file_path
+        .clone_from(&local.request.mysql.file_path);
     if let Some(new_ssh) = incoming.request.ssh.as_mut() {
         new_ssh.private_key_path = local
             .request
@@ -1243,31 +1342,39 @@ fn fetch_schema(pool: &Pool, database: &str) -> Result<SchemaInfo, String> {
         )
         .map_err(|e| format!("Schema query failed: {e}"))?;
 
+    let columns = rows
+        .into_iter()
+        .map(|row| {
+            let table_name: String = row.get(0).unwrap_or_default();
+            let col = SchemaColumn {
+                name: row.get(1).unwrap_or_default(),
+                data_type: row.get(2).unwrap_or_default(),
+                column_key: row.get(3).unwrap_or_default(),
+                is_nullable: row.get(4).unwrap_or_default(),
+            };
+            (table_name, col)
+        })
+        .collect();
+    Ok(group_schema(database, columns))
+}
+
+/// Gathers (table, column) pairs, in column order, into the schema for the AI prompts:
+/// the first 100 tables by name.
+fn group_schema(database: &str, columns: Vec<(String, SchemaColumn)>) -> SchemaInfo {
     let mut table_map: std::collections::BTreeMap<String, Vec<SchemaColumn>> =
         std::collections::BTreeMap::new();
-
-    for row in rows {
-        let table_name: String = row.get(0).unwrap_or_default();
-        let col = SchemaColumn {
-            name: row.get(1).unwrap_or_default(),
-            data_type: row.get(2).unwrap_or_default(),
-            column_key: row.get(3).unwrap_or_default(),
-            is_nullable: row.get(4).unwrap_or_default(),
-        };
+    for (table_name, col) in columns {
         table_map.entry(table_name).or_default().push(col);
     }
-
-    // Limit to 100 tables
     let tables: Vec<SchemaTable> = table_map
         .into_iter()
         .take(100)
         .map(|(name, columns)| SchemaTable { name, columns })
         .collect();
-
-    Ok(SchemaInfo {
+    SchemaInfo {
         database: database.to_owned(),
         tables,
-    })
+    }
 }
 
 // ── AI prompt building ──
@@ -1472,11 +1579,11 @@ async fn connection_schema(
     state: &Mutex<Option<ConnectionCache>>,
     database: &str,
 ) -> Result<(Engine, SchemaInfo), String> {
-    let (pool, fingerprint, engine) = {
+    let (backend, fingerprint, engine) = {
         let guard = state.lock().map_err(|e| format!("Lock error: {e}"))?;
         match guard.as_ref() {
             Some(cached) => (
-                cached.pool.clone(),
+                cached.backend.clone(),
                 cached.fingerprint.clone(),
                 cached.engine.clone(),
             ),
@@ -1497,9 +1604,12 @@ async fn connection_schema(
     }
 
     let db = database.to_owned();
-    let schema = tauri::async_runtime::spawn_blocking(move || fetch_schema(&pool, &db))
-        .await
-        .map_err(|e| format!("Task error: {e}"))??;
+    let schema = tauri::async_runtime::spawn_blocking(move || match backend {
+        Backend::Mysql(pool) => fetch_schema(&pool, &db),
+        Backend::Sqlite(session) => sqlite_client::schema(session.path(), &db),
+    })
+    .await
+    .map_err(|e| format!("Task error: {e}"))??;
     if let Ok(mut cache) = SCHEMA_CACHE.lock() {
         cache.insert(cache_key, schema.clone());
     }
@@ -2063,6 +2173,8 @@ fn tunnel_tls(request: &ConnectionRequest) -> Result<Option<redis_client::Tunnel
                 .to_owned(),
         ),
         Protocol::Redis => redis_client::tunnel_tls(&request.mysql).map(Some),
+        // A local file: never reaches the tunnel.
+        Protocol::Sqlite => Ok(None),
     }
 }
 
@@ -2208,10 +2320,7 @@ async fn start_ssh_tunnel(
 fn mysql_value_to_json(value: Value) -> serde_json::Value {
     match value {
         Value::NULL => serde_json::Value::Null,
-        Value::Bytes(v) => match String::from_utf8(v.clone()) {
-            Ok(s) => json!(s),
-            Err(_) => json!(format!("0x{}", hex::encode(v))),
-        },
+        Value::Bytes(v) => bytes_to_json(&v),
         Value::Int(v) => json!(v),
         Value::UInt(v) => json!(v),
         Value::Float(v) => json!(v),
@@ -2226,6 +2335,14 @@ fn mysql_value_to_json(value: Value) -> serde_json::Value {
             let sign = if is_neg { "-" } else { "" };
             json!(format!("{sign}{d} {h:02}:{m:02}:{s:02}.{:06}", micros))
         }
+    }
+}
+
+/// Bytes as the result tables show them: as text when they are UTF-8, else as hex.
+fn bytes_to_json(bytes: &[u8]) -> serde_json::Value {
+    match std::str::from_utf8(bytes) {
+        Ok(s) => json!(s),
+        Err(_) => json!(format!("0x{}", hex::encode(bytes))),
     }
 }
 
@@ -2309,10 +2426,14 @@ async fn run_connection_test(
 ) -> Result<String, String> {
     // Before the credentials: resolving them can run the 1Password CLI.
     let protocol = request.engine.protocol()?;
-    resolve_credentials(&mut request, profile_id.as_deref()).await?;
-
-    // Set up SSH tunnel if needed (async)
-    let (target_host, target_port, tunnel) = connect_target(&request).await?;
+    let (target_host, target_port, tunnel) = if protocol == Protocol::Sqlite {
+        // A local file: no credentials, and no server to tunnel to.
+        (String::new(), 0, None)
+    } else {
+        resolve_credentials(&mut request, profile_id.as_deref()).await?;
+        // Set up SSH tunnel if needed (async)
+        connect_target(&request).await?
+    };
     let tls_by_tunnel = SshTunnel::makes_tls(&tunnel);
 
     // The connection test itself (blocking). The tunnel stays open until it ends.
@@ -2333,6 +2454,7 @@ async fn run_connection_test(
                     redis_client::client(&mysql, &target_host, target_port, tls_by_tunnel)?;
                 redis_client::ping(&client)?;
             }
+            Protocol::Sqlite => sqlite_client::ping(mysql.sqlite_file())?,
         }
         Ok("Connection succeeded.".to_owned())
     })
@@ -2352,14 +2474,24 @@ async fn run_query(
     if query.trim().is_empty() {
         return Err("Query is empty".to_owned());
     }
+    let limit = max_rows.unwrap_or(500);
+    let cache = Arc::clone(&state);
+
+    if request.engine.protocol()? == Protocol::Sqlite {
+        let session = use_sqlite_file(&cache, &request)?;
+        let tab_key = running_query_key(tab_id);
+        return tauri::async_runtime::spawn_blocking(move || {
+            run_sqlite_query(&session, &query, limit, tab_key)
+        })
+        .await
+        .map_err(|e| format!("Task error: {e}"))?;
+    }
 
     // Before the credentials: resolving them can run the 1Password CLI (#132).
     request.engine.ensure_mysql_protocol()?;
     resolve_credentials(&mut request, profile_id.as_deref()).await?;
-    let limit = max_rows.unwrap_or(500);
 
     // Get or create pool (async — SSH tunnel creation is async)
-    let cache = Arc::clone(&state);
     // Safe to log: this fails before any statement runs, so `e` cannot contain SQL.
     // Errors from the statement itself (below) are never logged.
     let pool = get_or_create_pool_async(&cache, &request)
@@ -2370,81 +2502,95 @@ async fn run_query(
         })?;
 
     let db = request.mysql.database.clone();
-    let tab_key = tab_id.unwrap_or_else(|| "__internal__".to_owned());
-    let tab_key_cleanup = tab_key.clone();
+    let tab_key = running_query_key(tab_id);
     tauri::async_runtime::spawn_blocking(move || {
         let mut conn = pool
             .get_conn()
             .map_err(|e| format!("Failed to get connection: {e}"))?;
 
         // Store connection ID + pool for cancel support (per tab)
-        let cid = conn.connection_id();
-        if let Ok(mut map) = RUNNING_QUERIES.lock() {
-            map.insert(
-                tab_key,
-                RunningQueryEntry {
-                    connection_id: cid,
-                    pool: pool.clone(),
-                },
-            );
+        let _running = RunningQueryGuard::register(
+            tab_key,
+            RunningQueryEntry::Mysql {
+                connection_id: conn.connection_id(),
+                pool: pool.clone(),
+            },
+        );
+
+        // Switch database if specified
+        if let Some(ref db) = db {
+            if !db.trim().is_empty() {
+                conn.query_drop(format!("USE {}", escape_identifier(db)))
+                    .map_err(|e| format!("Failed to switch database: {e}"))?;
+            }
         }
 
-        let result = (|| -> Result<QueryResult, String> {
-            // Switch database if specified
-            if let Some(ref db) = db {
-                if !db.trim().is_empty() {
-                    conn.query_drop(format!("USE {}", escape_identifier(db)))
-                        .map_err(|e| format!("Failed to switch database: {e}"))?;
-                }
+        let mut qr = conn
+            .query_iter(&query)
+            .map_err(|e| format!("Query failed: {e}"))?;
+
+        let columns = qr
+            .columns()
+            .as_ref()
+            .iter()
+            .map(|c| c.name_str().to_string())
+            .collect::<Vec<_>>();
+
+        let mut rows: Vec<Vec<serde_json::Value>> = Vec::new();
+        for next_row in qr.by_ref() {
+            let row = next_row.map_err(|e| format!("Row read failed: {e}"))?;
+            rows.push(row_to_json(row));
+            if limit > 0 && rows.len() >= limit {
+                break;
             }
-
-            let mut qr = conn
-                .query_iter(&query)
-                .map_err(|e| format!("Query failed: {e}"))?;
-
-            let columns = qr
-                .columns()
-                .as_ref()
-                .iter()
-                .map(|c| c.name_str().to_string())
-                .collect::<Vec<_>>();
-
-            let mut rows: Vec<Vec<serde_json::Value>> = Vec::new();
-            for next_row in qr.by_ref() {
-                let row = next_row.map_err(|e| format!("Row read failed: {e}"))?;
-                rows.push(row_to_json(row));
-                if limit > 0 && rows.len() >= limit {
-                    break;
-                }
-            }
-
-            Ok(QueryResult {
-                columns,
-                rows,
-                affected_rows: qr.affected_rows(),
-            })
-        })();
-
-        if let Ok(mut map) = RUNNING_QUERIES.lock() {
-            map.remove(&tab_key_cleanup);
         }
-        result
+
+        Ok(QueryResult {
+            columns,
+            rows,
+            affected_rows: qr.affected_rows(),
+        })
     })
     .await
     .map_err(|e| format!("Task error: {e}"))?
 }
 
+/// Runs one statement on the connection of the tab `tab_key`, which `cancel_query` can
+/// interrupt meanwhile.
+fn run_sqlite_query(
+    session: &sqlite_client::SqliteSession,
+    query: &str,
+    limit: usize,
+    tab_key: String,
+) -> Result<QueryResult, String> {
+    // Safe to log: this fails before any statement runs, so `e` cannot contain SQL.
+    let tab = session.tab(&tab_key).inspect_err(|e| {
+        app_log::warn_throttled(app_log::BRIEF, &format!("connection failed: {e}"))
+    })?;
+    let conn = tab.lock();
+    let _running =
+        RunningQueryGuard::register(tab_key, RunningQueryEntry::Sqlite(Arc::clone(&tab)));
+    sqlite_client::run(&conn, query, limit)
+}
+
 #[tauri::command]
 async fn cancel_query(tab_id: Option<String>) -> Result<(), String> {
-    let tab_key = tab_id.unwrap_or_else(|| "__internal__".to_owned());
-    let entry = {
+    let tab_key = running_query_key(tab_id);
+    let (cid, pool) = {
         let map = RUNNING_QUERIES
             .lock()
             .map_err(|e| format!("Lock error: {e}"))?;
-        map.get(&tab_key).map(|e| (e.connection_id, e.pool.clone()))
-    };
-    let Some((cid, pool)) = entry else {
-        return Ok(());
+        match map.get(&tab_key) {
+            Some(RunningQueryEntry::Mysql {
+                connection_id,
+                pool,
+            }) => (*connection_id, pool.clone()),
+            Some(RunningQueryEntry::Sqlite(tab)) => {
+                tab.interrupt();
+                return Ok(());
+            }
+            None => return Ok(()),
+        }
     };
     if cid == 0 {
         return Ok(());
@@ -3002,6 +3148,13 @@ fn save_profile(
         } else if !ssh.save_ssh_password {
             delete_ssh_password(&profile.id);
         }
+    }
+    // A SQLite profile has no credentials (#97): drop those it kept from a server it was
+    // switched from, so switching back does not bring them back unasked.
+    if profile.request.engine.protocol() == Ok(Protocol::Sqlite) {
+        delete_password(&profile.id);
+        delete_ssh_passphrase(&profile.id);
+        delete_ssh_password(&profile.id);
     }
     let saved_id = profile.id.clone();
     let mut store = load_profiles(&app)?;
@@ -4358,6 +4511,7 @@ Host myserver
                 tls_ca_cert_path: None,
                 save_password: true,
                 op_ref: None,
+                file_path: None,
                 tls_enabled: false,
                 tls_skip_verify: false,
             },
@@ -4515,6 +4669,16 @@ Host myserver
         }
     }
 
+    // SQLite opens in the query window, but never through the MySQL client (#97).
+    #[test]
+    fn sqlite_engine_opens_the_query_window_without_mysql() {
+        let engine: Engine = serde_json::from_str("\"sqlite\"").unwrap();
+        assert_eq!(engine, Engine::Sqlite);
+        assert_eq!(serde_json::to_string(&engine).unwrap(), "\"sqlite\"");
+        assert_eq!(engine.window(), Ok(WIN_QUERY));
+        assert!(engine.ensure_mysql_protocol().is_err());
+    }
+
     // An engine from a later version must keep its spelling through a save (the sync
     // mirror would otherwise turn it into MySQL on every machine), and must never be
     // connected to as MySQL.
@@ -4529,11 +4693,20 @@ Host myserver
 
     /// Every engine this version knows, with its stored name.
     fn known_engines() -> Vec<(String, Engine)> {
-        let engines = [Engine::Mysql, Engine::Mariadb, Engine::Redis];
+        let engines = [
+            Engine::Mysql,
+            Engine::Mariadb,
+            Engine::Redis,
+            Engine::Sqlite,
+        ];
         for engine in &engines {
             // No wildcard: a new variant stops this compiling until it is listed above.
             match engine {
-                Engine::Mysql | Engine::Mariadb | Engine::Redis | Engine::Unknown(_) => {}
+                Engine::Mysql
+                | Engine::Mariadb
+                | Engine::Redis
+                | Engine::Sqlite
+                | Engine::Unknown(_) => {}
             }
         }
         engines
@@ -4964,6 +5137,7 @@ Host myserver
             Some(make_ssh(Some("C:\\Users\\alice\\.ssh\\id_ed25519"))),
         );
         profile.request.mysql.tls_ca_cert_path = Some("C:\\Users\\alice\\certs\\ca.pem".to_owned());
+        profile.request.mysql.file_path = Some("C:\\Users\\alice\\data\\app.db".to_owned());
         let store = ConnectionProfileStore {
             version: 1,
             app_version: None,
@@ -5006,6 +5180,7 @@ Host myserver
         profile.clear_password = true;
         profile.clear_ssh_passphrase = true;
         profile.clear_ssh_password = true;
+        profile.request.mysql.file_path = Some("C:\\Users\\alice\\app.db".to_owned());
         {
             let ssh = profile.request.ssh.as_mut().unwrap();
             ssh.passphrase = "pp".to_owned();
@@ -5015,6 +5190,8 @@ Host myserver
         scrub_incoming_profile(&mut profile);
 
         assert!(profile.request.mysql.password.is_empty());
+        // Another machine's SQLite file path (#97), like the other machine-local paths.
+        assert!(profile.request.mysql.file_path.is_none());
         let ssh = profile.request.ssh.as_ref().unwrap();
         assert!(ssh.passphrase.is_empty());
         assert!(ssh.ssh_password.is_empty());
@@ -5027,6 +5204,7 @@ Host myserver
     fn carry_over_keeps_local_paths() {
         let mut local = make_profile("p1", Some(make_ssh(Some("/home/local/.ssh/id_rsa"))));
         local.request.mysql.tls_ca_cert_path = Some("/home/local/ca.pem".to_owned());
+        local.request.mysql.file_path = Some("/home/local/app.db".to_owned());
         // The sync file has these stripped, so the incoming side is empty.
         let mut incoming = make_profile("p1", Some(make_ssh(None)));
 
@@ -5039,6 +5217,10 @@ Host myserver
         assert_eq!(
             incoming.request.mysql.tls_ca_cert_path.as_deref(),
             Some("/home/local/ca.pem")
+        );
+        assert_eq!(
+            incoming.request.mysql.file_path.as_deref(),
+            Some("/home/local/app.db")
         );
     }
 
@@ -5062,11 +5244,13 @@ Host myserver
         let local = make_profile("p1", Some(make_ssh(None)));
         let mut incoming = make_profile("p1", Some(make_ssh(Some("/home/other/id_rsa"))));
         incoming.request.mysql.tls_ca_cert_path = Some("/home/other/ca.pem".to_owned());
+        incoming.request.mysql.file_path = Some("/home/other/app.db".to_owned());
 
         carry_over_machine_local_paths(&local, &mut incoming);
 
         assert!(incoming.request.ssh.unwrap().private_key_path.is_none());
         assert!(incoming.request.mysql.tls_ca_cert_path.is_none());
+        assert!(incoming.request.mysql.file_path.is_none());
     }
 
     // A sync file written before #80 still contains the origin machine's paths.

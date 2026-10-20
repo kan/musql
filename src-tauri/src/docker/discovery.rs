@@ -52,6 +52,8 @@ fn classify(label: impl Fn(&str) -> Option<String>, exposed: &[u16]) -> Option<(
         let engine = Engine::from(name.trim().to_ascii_lowercase());
         let default_port = match engine {
             Engine::Redis => REDIS_PORT,
+            // A file, not a server (#97): a container has nothing to connect to.
+            Engine::Sqlite => return None,
             _ => MYSQL_PORT,
         };
         return Some((engine, port_label.unwrap_or(default_port)));
@@ -236,6 +238,8 @@ mod tests {
             classify_with(&[("musql.engine", "postgres")], &[3306]),
             found("postgres", 3306)
         );
+        // SQLite is a file, not a server: such a label lists nothing.
+        assert_eq!(classify_with(&[("musql.engine", "sqlite")], &[3306]), None);
     }
 
     #[test]

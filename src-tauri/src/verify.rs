@@ -101,6 +101,7 @@ fn mysql_from_env() -> Option<MySqlConfig> {
         tls_ca_cert_path: env("MUSQL_VERIFY_MYSQL_CA_CERT"),
         save_password: false,
         op_ref: None,
+        file_path: None,
         tls_enabled: false,
         tls_skip_verify: false,
     })
@@ -354,6 +355,7 @@ fn verify_redis() {
         tls_ca_cert_path: env("MUSQL_VERIFY_REDIS_CA"),
         save_password: false,
         op_ref: None,
+        file_path: None,
         tls_enabled: false,
         tls_skip_verify: false,
     };
