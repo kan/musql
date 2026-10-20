@@ -81,12 +81,13 @@ git push origin :refs/tags/vX.Y.Z && git tag -d vX.Y.Z
 
 ## 5. ワークフローの完了待ちとアセットの確認
 
-タグ push で `Release` ワークフローが起動する。ジョブは 2 つで、**`build` → `build-store` の順に直列で走る**。両方の完了を待つ。
+タグ push で `Release` ワークフローが起動する。ジョブは 3 つで、**`build` と `build-store` が並列に走り、両方が終わってから `publish-store` が走る**（#138）。3 つすべての完了を待つ。
 
 - `build` … NSIS と MSI のインストーラ、`latest.json`（セルフアップデータ用）をビルドし、**ドラフトの Release を作る**
-- `build-store` … Store 用の EXE と MSIX をビルドし、同じドラフトへ追加する
+- `build-store` … Store 用の EXE と MSIX をビルドして attestation を付け、artifact として残す（Release には触らない）
+- `publish-store` … `build-store` の artifact を、`build` が作ったドラフトへ追加する
 
-Windows のフルビルドが 2 回なので、合わせて 20〜40 分かかる。`gh run watch <id> --exit-status` をバックグラウンドで走らせて待つ（ポーリングを前景で回さない）。
+Windows のフルビルド 2 回が並列なので、15〜20 分ほどかかる見込み（#138 の見積もり。実測で更新する）。`gh run watch <id> --exit-status` をバックグラウンドで走らせて待つ（ポーリングを前景で回さない）。
 
 完了したら、**公開する前に**ドラフトのアセットを確認する:
 

@@ -5,6 +5,13 @@ on:
     tags:
       - "v*"
 
+env:
+  # 両ジョブが使う Tauri CLI（npm のビルド済みのもの）の版。完全な版で固定する（#138）。
+  # 固定しないと、タグを打った時点の最新が検証されないまま走り、attestation の付く
+  # 成果物を作る。2 つのジョブで版がずれることも防ぐ。dependabot は上げないので、
+  # tauri クレート（src-tauri/Cargo.lock）を上げたときに手で合わせる。
+  TAURI_CLI: "@tauri-apps/cli@2.12.3"
+
 jobs:
   build:
     runs-on: windows-latest
@@ -22,10 +29,10 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Rust cache
-        uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: src-tauri
+      # rust-cache は使わない（#138）。タグの run が読めるのはデフォルトブランチの
+      # キャッシュだけで、前回のタグが保存した分は読めない。main の CI のキャッシュは
+      # キー（ジョブ）もプロファイル（dev と release）も違うので当たらない。保存の
+      # 時間だけがかかる。
 
       - name: Build and release
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
@@ -34,6 +41,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
+          # 指定しないと、tauri-action は npm の @tauri-apps/cli@v2 の最新を入れる。
+          tauriScript: npx --yes ${{ env.TAURI_CLI }}
           tagName: ${{ github.ref_name }}
           releaseName: "muSQL ${{ github.ref_name }}"
           releaseBody: "See the assets below to download and install."
@@ -55,13 +64,13 @@ jobs:
             src-tauri/target/release/bundle/msi/*.msi
 
   build-store:
-    # build のあとに走らせる。ドラフトの Release を作るのは build の tauri-action で、
-    # こちらはそこへアセットを足すだけ。並列だと、先に終わった側が Release を作ることに
-    # なり、どちらが作るかで公開状態が変わってしまう。
-    needs: build
+    # build と並列に走らせる（#138）。Release には触らず、ファイルを artifact で
+    # publish-store へ渡す。ドラフトの Release を作るのは build の tauri-action だけに
+    # しておく（両方が作りに行くと、先に終わった側が作ることになり、どちらが作るかで
+    # 公開状態が変わってしまう）。
     runs-on: windows-latest
     permissions:
-      contents: write
+      contents: read
       id-token: write
       attestations: write
     steps:
@@ -72,17 +81,11 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Rust cache
-        uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: src-tauri
-          key: store
-
-      - name: Install Tauri CLI
-        run: cargo install tauri-cli --locked
-
+      # rust-cache を使わない理由は build と同じ。
+      # Tauri CLI は npm のビルド済みのものを使う（#138。`cargo install tauri-cli` は
+      # 毎回ソースからコンパイルして 7 分かかる）。版は先頭の env の TAURI_CLI。
       - name: Build Store variant
-        run: cargo tauri build --config tauri.store.conf.json -- --no-default-features --features docker
+        run: npx --yes ${{ env.TAURI_CLI }} build --config tauri.store.conf.json -- --no-default-features --features docker
         working-directory: src-tauri
 
       - name: Rename Store EXE
@@ -117,6 +120,30 @@ jobs:
           subject-path: |
             muSQL-store-x64.exe
             muSQL-store-x64.msix
+
+      # attestation はダイジェストで検証するので、artifact を経由しても通る。
+      - name: Hand the Store artifacts to publish-store
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: store
+          path: |
+            muSQL-store-x64.exe
+            muSQL-store-x64.msix
+          if-no-files-found: error
+          # build の失敗を直して「Re-run failed jobs」で publish-store だけを
+          # 走らせ直せるように、数日は残す。
+          retention-days: 7
+
+  publish-store:
+    # build がドラフトの Release を作ったあとに、Store のファイルをそこへ足す。
+    needs: [build, build-store]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: store
 
       # gh はタグ名からドラフトの Release も引ける。Release が無ければ失敗する
       # (新しく作らない) ので、build が作ったドラフト以外へ上げてしまうことが無い。
