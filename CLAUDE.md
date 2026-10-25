@@ -75,6 +75,13 @@ Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`
 - Artifact attestations（#130）: `release.yml` の `build` と `build-store` が、手でダウンロードする 4 つ（NSIS の `-setup.exe`、`.msi`、`muSQL-store-x64.exe`、`muSQL-store-x64.msix`）に `actions/attest` で来歴の証明を付ける。`.sig` と `latest.json` は対象外（updater の経路は minisign の検証で足りている）。グロブは拡張子の末尾まで書く（`bundle/` には配布しない `.msi.zip` / `.nsis.zip` と `.sig` も並ぶ）。attest は成果物への最後の書き換えのあとに置く（`build-store` では MSIX の生成のあと）。グロブの取りこぼしは CI では分からないので、公開前に 4 つとも検証する手順が `release` スキルにある。SLSA Build L3（ビルドを reusable workflow に切り出し、署名用の secrets を持つジョブから分ける）は狙っていない。
 - Partner Center Identity: `58967CommunitylinksInc.muSQL` / `CN=46BBEF28-6777-4EF5-AD2C-F9AD9123AA82`。
 
+## action の固定（workflow lockfile、#139）
+- **action は `.github/workflows/actions.lock` でコミットに固定する**（GitHub Actions の workflow lockfile、public preview。pike と同じ運用）。生成と更新は GitHub CLI の拡張 `gh actions-lock`（`gh extension install github/gh-actions-lock`）で行い、**手で編集しない**。推移的な依存（composite action が呼ぶ action。今は `extractions/setup-just` の中の `extractions/setup-crate` と、`actions-rust-lang/audit` の中の `actions/cache`）と、参照先リポジトリの ID も記録される。`github/codeql-action/init` と `/analyze` のようなサブパス付きの参照は、リポジトリ単位の 1 エントリになる。
+- **`uses:` には SHA を書かず、タグかブランチで書く**（`actions/checkout@v7.0.1`）。SHA を直接書くと lockfile に入らず、生成そのものが失敗する（解決できない参照が 1 つでもあると何も書き込まれない）。
+- **`uses:` を足す・消す・ワークフローを足したら `gh actions-lock` を流し直し、lockfile も同じコミットに入れる。** 載っていない参照があると、そのワークフローはジョブが始まる前に startup_failure で止まる。コミット前の確認は `gh actions-lock --verify`（書き込まずに検査する。ネットワークに出る）。
+- **タグの更新は Dependabot が lockfile ごと上げる**（github-actions の更新 PR が対応するエントリも作り直す）。`@v4` のような部分版は生成時に完全な版（`@v4.0.0`）へ書き換わる。
+- **`dtolnay/rust-toolchain` は `@master` で参照する**（ツールチェーンは `toolchain: stable` の入力で選ぶ）。この action の `stable` などのブランチは上流で作り直されるため、固定した SHA がどのブランチにもタグにも無くなり、lockfile に拒否される（pike で起きた）。ブランチ参照は Dependabot が追わないので、上げるときは `gh actions-lock --relock` で全参照を解決し直し、`commit` の差分を確かめてからコミットする。
+
 ## コミット前チェック
 
 **コミットの前は、変更の種類に応じて次を実行し、指摘を反映してからコミットする。**

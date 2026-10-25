@@ -18,21 +18,21 @@ jobs:
     if: github.event_name != 'schedule'
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
           components: clippy, rustfmt
 
       - name: Rust cache
-        uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: swatinem/rust-cache@v2.9.2
         with:
           workspaces: src-tauri
 
       - name: Install just
-        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        uses: extractions/setup-just@v4.0.0
 
       - name: cargo fmt
         run: just fmt
@@ -48,11 +48,11 @@ jobs:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: biomejs/setup-biome@4c91541eaada48f67d7dbd7833600ce162b68f51 # v2.7.1
+      - uses: actions/checkout@v7.0.1
+      - uses: biomejs/setup-biome@v2.7.1
         with:
           version: 2.4.10
-      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+      - uses: extractions/setup-just@v4.0.0
       - name: Biome lint
         # just lint-ui は PATH の biome (setup-biome が入れたもの) を優先し、
         # 無ければ npx にフォールバックする
@@ -61,8 +61,8 @@ jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions-rust-lang/audit@72c09e02f132669d52284a3323acdb503cfc1a24 # v1.2.7
+      - uses: actions/checkout@v7.0.1
+      - uses: actions-rust-lang/audit@v1.2.7
         with:
           file: src-tauri/Cargo.lock
           # 起票は無効。この action は権限があると push/schedule 毎に warning (unmaintained/

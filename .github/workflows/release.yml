@@ -22,10 +22,10 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # stable
+        uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
 
@@ -35,7 +35,7 @@ jobs:
       # 時間だけがかかる。
 
       - name: Build and release
-        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
+        uses: tauri-apps/tauri-action@v1.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -57,7 +57,7 @@ jobs:
       # 末尾まで書く。bundle/ には配布しない .msi.zip / .nsis.zip と各 .sig も並んでいる。
       # .sig と latest.json は対象外（updater の経路は minisign の検証で足りている）。
       - name: Attest the installers
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        uses: actions/attest@v4.2.2
         with:
           subject-path: |
             src-tauri/target/release/bundle/nsis/*-setup.exe
@@ -74,10 +74,10 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # stable
+        uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
 
@@ -115,7 +115,7 @@ jobs:
       # 行うので、Releases から落としたファイルなら通る。Store が配る MSIX は Microsoft が
       # 署名し直すので対象外。
       - name: Attest the Store artifacts
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        uses: actions/attest@v4.2.2
         with:
           subject-path: |
             muSQL-store-x64.exe
@@ -123,7 +123,7 @@ jobs:
 
       # attestation はダイジェストで検証するので、artifact を経由しても通る。
       - name: Hand the Store artifacts to publish-store
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: store
           path: |
@@ -141,7 +141,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      - uses: actions/download-artifact@v8.0.2
         with:
           name: store
 
