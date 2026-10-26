@@ -582,7 +582,7 @@
         56
       ],
       "url": "https://github.com/RustCrypto/crypto-bigint",
-      "version": "0.7.5"
+      "version": "0.7.8"
     },
     {
       "license": "MIT OR Apache-2.0",
@@ -660,7 +660,7 @@
         62
       ],
       "url": "https://github.com/RustCrypto/utils",
-      "version": "0.4.2"
+      "version": "0.4.5"
     },
     {
       "license": "BSD-3-Clause",
@@ -1915,7 +1915,7 @@
         162
       ],
       "url": "https://github.com/blackbeam/rust-mysql-simple",
-      "version": "28.0.3"
+      "version": "28.0.4"
     },
     {
       "authors": [],
@@ -2683,7 +2683,7 @@
         123
       ],
       "url": "https://github.com/rustls/rustls-native-certs",
-      "version": "0.8.4"
+      "version": "0.8.5"
     },
     {
       "license": "MIT OR Apache-2.0",
@@ -2712,7 +2712,7 @@
         211
       ],
       "url": "https://github.com/rustls/webpki",
-      "version": "0.103.15"
+      "version": "0.103.16"
     },
     {
       "license": "MIT OR Apache-2.0",
@@ -3369,7 +3369,7 @@
         242
       ],
       "url": "https://github.com/tauri-apps/plugins-workspace",
-      "version": "2.6.0"
+      "version": "2.7.0"
     },
     {
       "license": "Apache-2.0 OR MIT",
@@ -3380,7 +3380,7 @@
         242
       ],
       "url": "https://github.com/tauri-apps/plugins-workspace",
-      "version": "2.7.1"
+      "version": "2.7.2"
     },
     {
       "license": "Apache-2.0 OR MIT",
@@ -3432,7 +3432,7 @@
         242
       ],
       "url": "https://github.com/tauri-apps/tauri",
-      "version": "2.10.1"
+      "version": "2.10.2"
     },
     {
       "license": "MIT OR Apache-2.0",
@@ -3575,7 +3575,7 @@
         256
       ],
       "url": "https://github.com/tokio-rs/tokio",
-      "version": "1.53.2"
+      "version": "1.53.3"
     },
     {
       "license": "MIT",

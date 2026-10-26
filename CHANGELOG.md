@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.1] - 2026-10-26
+
+### Changed
+- 依存関係を更新（mysql 28.0.4、tokio 1.53.3、tauri-plugin-notification 2.7.0 ほか）
+
+### Security
+- TLS の証明書検証と暗号処理の依存を更新（RUSTSEC-2026-0382、0383、0385、0387）
+  - rustls-webpki 0.103.16：失効した中間証明書を受け入れうる問題を修正
+  - webpki-root-certs 1.0.11：失効した emSign の中間証明書を信頼しないようにした
+  - crypto-bigint 0.7.8、ctutils 0.4.5：定数時間でない演算を修正
+
 ## [0.10.0] - 2026-10-20
 
 ### Added
@@ -269,6 +280,7 @@
 - アプリ内自動更新（NSIS インストーラー + Ed25519 署名）
 - GitHub Actions CI/CD（cargo check + リリースビルド）
 
+[0.10.1]: https://github.com/kan/musql/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/kan/musql/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/kan/musql/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/kan/musql/compare/v0.7.1...v0.8.0
