@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.11.0] - 2026-10-31
+
+### Added
+- PostgreSQL への接続を足した（#96）。接続プロファイルの DB エンジンで `PostgreSQL` を選ぶと、MySQL と同じクエリ画面で、テーブルの閲覧、SQL の実行、エクスポート、AI アシストが使える
+  - テーブル一覧はスキーマごとのツリーで表示する
+  - SQL タブはタブごとに接続を持ち続けるので、`BEGIN` から `COMMIT` までのトランザクションや `SET` の設定が次の文に引き継がれる
+  - Docker 連携で、5432 番を公開しているコンテナを PostgreSQL として検出する
+- TablePlus（Windows 版）の接続設定を取り込めるようにした（#99）。メイン画面のメニューの「TablePlus から取り込む」から、MySQL、MariaDB、PostgreSQL、Redis、SQLite の接続を、グループ、色、タグごと取り込む。パスワードは取り込まないので、取り込んだプロファイルは接続のたびに入力する
+- SSL モードに `PREFERRED` を足した。サーバーが TLS に対応していれば証明書を検証せずに TLS を使い、対応していなければ暗号化せずに接続する（MySQL、Redis、PostgreSQL）。Docker で見つけた MySQL の既定もこれにした
+- 接続の同期で、OneDrive と Dropbox のフォルダを自動で見つけて選べるようにした（#143）。選ぶと `muSQL\profiles-sync.json` を同期ファイルにするので、どのマシンでも同じフォルダを選べば同じファイルを共有する
+
+### Changed
+- 仮想デスクトップの記憶を、View メニューの「仮想デスクトップを記憶」で切り替えられるようにし、既定を OFF にした（#144）
+- 接続の同期の書き出しを安全にした（#143）
+  - 書きかけのファイルが同期されないよう、一時ファイルに書いてから置き換える
+  - 書き出す前に同期ファイルを読み直し、ほかのマシンが変えたプロファイルを先に取り込む
+  - OneDrive や Dropbox が作る競合コピーを取り込み、同期ファイルへ書き出せたら削除する
+- マニュアルのスクリーンショットを最新の画面に撮り直した
+
 ## [0.10.1] - 2026-10-26
 
 ### Changed
@@ -280,6 +299,7 @@
 - アプリ内自動更新（NSIS インストーラー + Ed25519 署名）
 - GitHub Actions CI/CD（cargo check + リリースビルド）
 
+[0.11.0]: https://github.com/kan/musql/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/kan/musql/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/kan/musql/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/kan/musql/compare/v0.8.0...v0.9.0

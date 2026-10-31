@@ -2983,7 +2983,7 @@ checksum = "743fb55ba31b18fb1ecef6bdc9aa2743314978ac084044301a7eee33fb99a20d"
 
 [[package]]
 name = "musql"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "bollard",
  "encoding_rs",
