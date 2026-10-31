@@ -3678,6 +3678,7 @@ enum MenuAction {
     Github,
     OpenLogs,
     About,
+    RememberDesktop,
     // query
     NewSqlTab,
     Close,
@@ -3707,7 +3708,7 @@ impl MenuAction {
         use MenuAction::*;
         match self {
             NewProfile | NewGroup | Import | Export | SyncSettings | Exit | CheckUpdate
-            | Manual | Github | OpenLogs | About => &[WIN_MAIN],
+            | Manual | Github | OpenLogs | About | RememberDesktop => &[WIN_MAIN],
             NewSqlTab | SwitchDb | ToggleNotify | Run | RunAll | Cancel | Format => &[WIN_QUERY],
             AiSettings => &[WIN_QUERY, WIN_REDIS],
             Close => &CONNECTION_WINDOWS,
@@ -3732,6 +3733,12 @@ impl MenuAction {
             OpenLogs => Some(|app, _| {
                 if let Err(e) = app_log::open_dir(app) {
                     log::warn!("failed to open the log directory: {e}");
+                }
+            }),
+            // The popup menu is built afresh each time, from the setting (`build_main_menu`).
+            RememberDesktop => Some(|app, _| {
+                if let Err(e) = vdesk::set_enabled(app, !vdesk::is_enabled(app)) {
+                    log::warn!("failed to save the virtual desktop setting: {e}");
                 }
             }),
             // Not in the Store build's menu.
@@ -3820,6 +3827,7 @@ fn menu_label(lang: &str, item: MenuAction) -> &'static str {
             Github => ("GitHub Repository", "GitHub リポジトリ"),
             OpenLogs => ("Open Log Folder", "ログフォルダを開く"),
             About => ("About muSQL", "muSQL について"),
+            RememberDesktop => ("Remember Virtual Desktop", "仮想デスクトップを記憶"),
             NewSqlTab => ("New SQL Tab", "新規 SQL タブ"),
             Close => ("Close Window", "ウィンドウを閉じる"),
             SwitchDb => ("Switch Database", "データベース切替"),
@@ -3965,7 +3973,22 @@ fn build_main_menu(handle: &AppHandle<Wry>, lang: &str, theme: &str) -> tauri::R
         ],
     )?;
     let edit_menu = build_edit_submenu(handle, lang)?;
-    let view_menu = build_view_submenu(handle, lang, theme, WIN_MAIN, &[])?;
+    // Read each time the menu is built: the popup is built afresh on every opening.
+    let remember_desktop = check_menu_item(
+        handle,
+        lang,
+        WIN_MAIN,
+        MenuAction::RememberDesktop,
+        vdesk::is_enabled(handle),
+    )?;
+    let remember_sep = PredefinedMenuItem::separator(handle)?;
+    let view_menu = build_view_submenu(
+        handle,
+        lang,
+        theme,
+        WIN_MAIN,
+        &[&remember_desktop, &remember_sep],
+    )?;
     let manual_item = item(MenuAction::Manual, None)?;
     let github_item = item(MenuAction::Github, None)?;
     let open_logs_item = item(MenuAction::OpenLogs, None)?;
@@ -4392,7 +4415,9 @@ fn main() {
             // First, so that failures in the rest of setup are written too.
             app_log::init(app.handle());
             setup_menus(app.handle())?;
-            // Back to the virtual desktop main was last on (#126).
+            // Back to the virtual desktop main was last on (#126), when that is turned on
+            // (#144). The mutex is taken either way (see `vdesk::claim`).
+            vdesk::claim(app.handle());
             if let Some(main_win) = app.get_webview_window(WIN_MAIN) {
                 vdesk::restore(app.handle(), &main_win);
             }

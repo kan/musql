@@ -1,4 +1,15 @@
-//! The main window opens on the virtual desktop it was last on (#126).
+//! The main window opens on the virtual desktop it was last on (#126), when that is turned
+//! on (#144).
+//!
+//! ## Off unless turned on
+//!
+//! A window that jumps to another desktop at startup is a surprise to someone who started
+//! muSQL on the desktop they are working on, so this is off by default and turned on from
+//! the main window's View menu. The choice is the AppConfig file `remember_desktop`
+//! (`1` when on), read by Rust at startup, before any page could. It is per machine and
+//! never synced. Off, nothing is recorded or restored. Switching it either way forgets the
+//! desktop remembered, so that turning it on never jumps to one recorded before (by an
+//! earlier version, which always recorded, or before it was last turned off).
 //!
 //! Size and position are restored by `tauri-plugin-window-state`, which knows nothing
 //! about virtual desktops: a window opens on whichever desktop is showing. This remembers
@@ -28,7 +39,7 @@
 //! Recreating desktops needs the private `IVirtualDesktopManagerInternal`, which breaks
 //! with Windows updates; not used.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicIsize, Ordering};
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -47,8 +58,8 @@ const NULL_GUID: GUID = GUID::from_u128(0);
 /// How long after `setup` the move is tried again.
 const RETRY_AFTER: Duration = Duration::from_millis(500);
 
-/// Whether this process started while no other muSQL was running. Decided once, in
-/// `restore`.
+/// Whether this process started while no other muSQL was running. Decided once, by
+/// `claim` (or `restore`, whichever runs first).
 static FIRST_INSTANCE: OnceLock<bool> = OnceLock::new();
 
 /// The mutex that says "a muSQL is running", as a raw handle; 0 when not held.
@@ -142,6 +153,64 @@ fn store(app: &AppHandle) -> Option<PathBuf> {
         .ok()
 }
 
+/// Where the choice to remember the desktop is kept (#144).
+fn setting(app: &AppHandle) -> Option<PathBuf> {
+    app.path()
+        .resolve("remember_desktop", tauri::path::BaseDirectory::AppConfig)
+        .ok()
+}
+
+/// Whether the desktop is remembered. Off when the setting was never made.
+pub(crate) fn is_enabled(app: &AppHandle) -> bool {
+    setting(app).is_some_and(|path| read_flag(&path))
+}
+
+/// Turns remembering the desktop on or off.
+pub(crate) fn set_enabled(app: &AppHandle, on: bool) -> Result<(), String> {
+    let setting = setting(app).ok_or("No place for the setting")?;
+    let remembered = store(app).ok_or("No place for the remembered desktop")?;
+    set_enabled_at(&setting, &remembered, on)
+}
+
+/// Either way, the desktop remembered is forgotten first: what is there was recorded
+/// before this choice (by an earlier version, which always recorded, or before the
+/// setting was last turned off), and turning on must not restore it if the session then
+/// ends without recording a new one. First, so that a failure leaves the setting as it
+/// was rather than off with the old desktop still there.
+fn set_enabled_at(setting: &Path, remembered: &Path, on: bool) -> Result<(), String> {
+    remove_if_present(remembered)?;
+    write_flag(setting, on)
+}
+
+fn read_flag(path: &Path) -> bool {
+    std::fs::read_to_string(path).is_ok_and(|text| text.trim() == "1")
+}
+
+fn write_flag(path: &Path, on: bool) -> Result<(), String> {
+    if !on {
+        return remove_if_present(path);
+    }
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(path, "1").map_err(|e| e.to_string())
+}
+
+fn remove_if_present(path: &Path) -> Result<(), String> {
+    match std::fs::remove_file(path) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
+        _ => Ok(()),
+    }
+}
+
+/// At startup, whatever the setting: takes the mutex that says a muSQL is running. An
+/// instance that started with the setting off must hold it too, or one started after it
+/// with the setting on would take itself for the only muSQL and move to its desktop.
+/// Call it from `setup`, before `restore`; a second call does nothing.
+pub(crate) fn claim(app: &AppHandle) -> bool {
+    *FIRST_INSTANCE.get_or_init(|| claim_first_instance(&app.config().identifier))
+}
+
 /// Moves the window and switches to that desktop.
 ///
 /// Moving alone does not switch desktops; focusing the window does. Without it the app
@@ -156,11 +225,11 @@ fn move_and_show(window: &WebviewWindow, id: &str) -> bool {
     moved
 }
 
-/// At startup: moves `window` (main) back to the desktop it was last on, if this is the
-/// only muSQL running. Call it once, from `setup`.
+/// At startup: moves `window` (main) back to the desktop it was last on, if that is turned
+/// on and this is the only muSQL running. Call it once, from `setup`, after `claim` (it
+/// takes the mutex itself if `claim` was not called, so the order cannot lose it).
 pub(crate) fn restore(app: &AppHandle, window: &WebviewWindow) {
-    let first = *FIRST_INSTANCE.get_or_init(|| claim_first_instance(&app.config().identifier));
-    if !first {
+    if !claim(app) || !is_enabled(app) {
         return;
     }
     let Some(id) = store(app).and_then(|p| std::fs::read_to_string(p).ok()) else {
@@ -189,7 +258,8 @@ pub(crate) fn restore(app: &AppHandle, window: &WebviewWindow) {
     });
 }
 
-/// At quit: remembers the desktop this instance is on, and stops counting as running.
+/// At quit: remembers the desktop this instance is on (when that is turned on), and stops
+/// counting as running.
 ///
 /// `windows` are tried in order and the first one that is on a desktop decides: main,
 /// then the connection windows (main is hidden while one is open, and a hidden window is
@@ -200,7 +270,8 @@ pub(crate) fn on_quit(app: &AppHandle, windows: &[&str]) {
     let id = windows
         .iter()
         .filter_map(|label| app.get_webview_window(label))
-        .find_map(|w| desktop_id(&w));
+        .find_map(|w| desktop_id(&w))
+        .filter(|_| is_enabled(app));
     if let (Some(id), Some(path)) = (id, store(app)) {
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
@@ -214,5 +285,71 @@ pub(crate) fn on_quit(app: &AppHandle, windows: &[&str]) {
     let handle = INSTANCE_MUTEX.swap(0, Ordering::SeqCst);
     if handle != 0 {
         let _ = unsafe { CloseHandle(HANDLE(handle as *mut _)) };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A directory of its own under the temp directory, removed when dropped (also when
+    /// an assertion fails).
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(name: &str) -> Self {
+            let dir = std::env::temp_dir()
+                .join(format!("musql-vdesk-test-{}-{name}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            TempDir(dir)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    // Off unless turned on (#144): a setting never made, or turned off, reads as off.
+    #[test]
+    fn the_setting_is_off_until_turned_on() {
+        let dir = TempDir::new("flag");
+        let path = dir.0.join("remember_desktop");
+        assert!(!read_flag(&path));
+
+        write_flag(&path, true).unwrap();
+        assert!(read_flag(&path));
+        write_flag(&path, false).unwrap();
+        assert!(!read_flag(&path));
+        assert!(!path.exists());
+        // Off again, with nothing to remove.
+        write_flag(&path, false).unwrap();
+
+        std::fs::write(&path, "yes").unwrap();
+        assert!(!read_flag(&path), "only 1 means on");
+    }
+
+    // A desktop recorded before the choice (by a version that always recorded) is not
+    // restored after turning the setting on, nor kept after turning it off.
+    #[test]
+    fn switching_the_setting_forgets_the_desktop() {
+        let dir = TempDir::new("switch");
+        let setting = dir.0.join("remember_desktop");
+        let remembered = dir.0.join("main_desktop");
+        std::fs::create_dir_all(&dir.0).unwrap();
+
+        for on in [true, false] {
+            std::fs::write(&remembered, "{00000000-0000-0000-0000-000000000001}").unwrap();
+            set_enabled_at(&setting, &remembered, on).unwrap();
+            assert_eq!(read_flag(&setting), on);
+            assert!(
+                !remembered.exists(),
+                "turned {}",
+                if on { "on" } else { "off" }
+            );
+        }
+        // Nothing remembered yet is fine too.
+        set_enabled_at(&setting, &remembered, true).unwrap();
     }
 }
