@@ -790,8 +790,11 @@ let syncModalOpen = false;
 async function openSyncModal() {
   if (syncModalOpen) return; // single instance
   syncModalOpen = true;
-  let current = "";
-  try { current = await safeInvoke("get_sync_path"); } catch (_) { /* ignore */ }
+  // OneDrive / Dropbox folders on this PC (#143). Detection failing only hides the list.
+  const [current, folders] = await Promise.all([
+    safeInvoke("get_sync_path").catch(() => ""),
+    safeInvoke("sync_folder_candidates").catch(() => []),
+  ]);
 
   const overlay = document.createElement("div");
   overlay.className = "modal-overlay";
@@ -812,6 +815,53 @@ async function openSyncModal() {
   desc.style.whiteSpace = "pre-wrap";
   desc.textContent = t('sync_desc');
   box.appendChild(desc);
+
+  // Picking a folder fills the path below with <folder>\muSQL\profiles-sync.json, the same
+  // file on every PC that picks it; Save then joins as before.
+  const foldersBox = document.createElement("div");
+  foldersBox.style.margin = "8px 0 12px";
+  const foldersTitle = document.createElement("span");
+  foldersTitle.textContent = t('sync_folders_label');
+  foldersBox.appendChild(foldersTitle);
+  const folderButtons = [];
+  if (folders.length === 0) {
+    const none = document.createElement("p");
+    none.className = "modal-status";
+    none.textContent = t('sync_folders_none');
+    foldersBox.appendChild(none);
+  } else {
+    const recommended = folders.find((f) => f.service.startsWith("onedrive"));
+    for (const folder of folders) {
+      const btn = document.createElement("button");
+      btn.className = "ghost sync-folder-item";
+      const title = document.createElement("div");
+      title.className = "sync-folder-name";
+      title.textContent = t(`sync_service_${folder.service}`)
+        + (folder === recommended ? t('sync_recommended') : "");
+      const where = document.createElement("div");
+      where.className = "sync-folder-path";
+      where.textContent = folder.folder;
+      btn.appendChild(title);
+      btn.appendChild(where);
+      if (folder.exists) {
+        const note = document.createElement("div");
+        note.className = "sync-folder-note";
+        note.textContent = t('sync_file_exists');
+        btn.appendChild(note);
+      }
+      btn.addEventListener("click", () => {
+        input.value = folder.file;
+        markSelectedFolder();
+      });
+      folderButtons.push({ btn, file: folder.file });
+      foldersBox.appendChild(btn);
+    }
+    const hint = document.createElement("p");
+    hint.className = "modal-status";
+    hint.textContent = t('sync_folders_hint');
+    foldersBox.appendChild(hint);
+  }
+  box.appendChild(foldersBox);
 
   const label = document.createElement("label");
   const span = document.createElement("span");
@@ -877,8 +927,18 @@ async function openSyncModal() {
   }
   function setBusy(b) {
     busy = b;
-    [importBtn, exportBtn, saveBtn, browseBtn, input].forEach((el) => { el.disabled = b; });
+    [importBtn, exportBtn, saveBtn, browseBtn, input, ...folderButtons.map((f) => f.btn)]
+      .forEach((el) => { el.disabled = b; });
   }
+  // Paths on Windows are case-insensitive.
+  function markSelectedFolder() {
+    const value = input.value.trim().toLowerCase();
+    for (const { btn, file } of folderButtons) {
+      btn.classList.toggle("selected", file.toLowerCase() === value);
+    }
+  }
+  input.addEventListener("input", markSelectedFolder);
+  markSelectedFolder();
   function showStatus(msg, ok) {
     status.style.color = ok ? "var(--success)" : "var(--danger)";
     status.textContent = msg;
@@ -887,7 +947,7 @@ async function openSyncModal() {
   browseBtn.addEventListener("click", async () => {
     try {
       const picked = await safeInvoke("pick_sync_path");
-      if (picked) input.value = picked;
+      if (picked) { input.value = picked; markSelectedFolder(); }
     } catch (error) { showStatus(String(error), false); }
   });
 
@@ -941,6 +1001,8 @@ async function openSyncModal() {
     try {
       await persistPath();
       const ok = await safeInvoke("sync_export");
+      // The export merges what another PC changed since the last read, so reload the list.
+      if (ok) { profileData = await safeInvoke("list_profiles"); renderTree(); }
       showStatus(ok ? t('sync_exported') : t('sync_disabled'), ok);
     } catch (error) { showStatus(syncErrorMessage(error), false); }
     setBusy(false);

@@ -19,4 +19,4 @@
 | `ai-settings.png` | ai-assist | AI 設定モーダル。プロバイダ（Claude/OpenAI/Gemini）とモデルのプルダウン、API キー入力欄 |
 | `ai-chat.png` | ai-assist | AI アシストのチャット。自然言語プロンプトと生成 SQL（コピー/エディタ挿入ボタン付き） |
 | `export-options.png` | export | エクスポートで形式選択後のオプションダイアログ。文字コード（UTF-8/BOM/Shift_JIS/EUC-JP）・改行（LF/CRLF）、保存/コピー/キャンセル |
-| `sync-settings.png` | sync | メニュー →「接続の同期…」のモーダル。同期ファイルパス入力＋参照、今すぐ読み込む/書き出す/保存 |
+| `sync-settings.png` | sync | メニュー →「接続の同期…」のモーダル。この PC の同期フォルダの一覧、同期ファイルパス入力＋参照、今すぐ読み込む/書き出す/保存 |

@@ -26,6 +26,7 @@ mod onepassword;
 mod postgres_client;
 mod redis_client;
 mod sqlite_client;
+mod sync_folder;
 mod tableplus;
 mod toast;
 mod vdesk;
@@ -920,18 +921,24 @@ fn load_profiles(app: &AppHandle) -> Result<ConnectionProfileStore, String> {
 }
 
 fn save_profiles(app: &AppHandle, store: &ConnectionProfileStore) -> Result<(), String> {
+    write_local_profiles(app, store)?;
+    // Mirror to the external sync file (if configured) so every profile change from
+    // any window is pushed out automatically (#47). Passwords are keyring-only and are
+    // already empty in the store, so no secret is written.
+    mirror_to_sync(app, store);
+    Ok(())
+}
+
+/// Writes the local `profiles.json` only. The sync code uses this while it holds
+/// `SYNC_STATE`, because `save_profiles` would mirror and take the lock again.
+fn write_local_profiles(app: &AppHandle, store: &ConnectionProfileStore) -> Result<(), String> {
     let path = profiles_path(app)?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("Failed to create config dir: {e}"))?;
     }
     let data = serde_json::to_string_pretty(store)
         .map_err(|e| format!("Failed to serialize profiles: {e}"))?;
-    std::fs::write(&path, data).map_err(|e| format!("Failed to write profiles: {e}"))?;
-    // Mirror to the external sync file (if configured) so every profile change from
-    // any window is pushed out automatically (#47). Passwords are keyring-only and are
-    // already empty in the store, so no secret is written.
-    mirror_to_sync(app, store);
-    Ok(())
+    std::fs::write(&path, data).map_err(|e| format!("Failed to write profiles: {e}"))
 }
 
 // ── External profile sync (path-based) (#47) ──
@@ -985,18 +992,13 @@ fn sanitized_store_json(store: &ConnectionProfileStore) -> Result<String, serde_
     serde_json::to_string_pretty(&clone)
 }
 
-// True when the sync file at `path` was last written by a strictly newer musql than this
+// True when the sync file `store` was last written by a strictly newer musql than this
 // build (#81). Such a file may carry fields this build doesn't understand; serde would drop
 // them on read, so writing our view back would silently strip them for every machine. When
-// the file is missing / unreadable / malformed, or carries no (or an unparseable) version,
-// we return false — writing is allowed, matching the pre-#81 behavior for those cases.
-fn sync_file_written_by_newer(path: &str) -> bool {
-    let Ok(content) = std::fs::read_to_string(path) else {
-        return false;
-    };
-    let Ok(store) = serde_json::from_str::<ConnectionProfileStore>(&content) else {
-        return false;
-    };
+// the file carries no (or an unparseable) version we return false, and a missing or
+// malformed file never gets here (`read_sync_for_write` lets the write go ahead), matching
+// the pre-#81 behavior for those cases.
+fn store_written_by_newer(store: &ConnectionProfileStore) -> bool {
     let Some(other) = store.app_version.as_deref() else {
         return false;
     };
@@ -1009,38 +1011,210 @@ fn sync_file_written_by_newer(path: &str) -> bool {
     }
 }
 
-// Write the (secret-stripped) store to the sync file, creating parent dirs. Returns an
-// error so callers that want a truthful result (manual export) can surface it.
-fn write_sync_file(path: &str, store: &ConnectionProfileStore) -> Result<(), String> {
-    let data =
-        sanitized_store_json(store).map_err(|e| format!("Failed to serialize sync data: {e}"))?;
-    if let Some(parent) = std::path::Path::new(path).parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create sync dir: {e}"))?;
+/// The sync file as this process last read or wrote it (#143). Comparing against it tells
+/// which profiles another machine changed since, so a merge takes those and keeps this
+/// machine's version of the rest. Held in memory only; the first import after startup
+/// fills it, and `set_sync_path` clears it.
+struct SyncBaseline {
+    /// The file's text, to skip the merge (and the write) when nothing changed.
+    text: String,
+    store: ConnectionProfileStore,
+}
+
+/// Every read-merge-write of the sync file runs under this lock, which also guards the
+/// baseline. Never call `save_profiles` while holding it (its mirror takes the lock).
+static SYNC_STATE: Mutex<Option<SyncBaseline>> = Mutex::new(None);
+
+fn sync_state() -> std::sync::MutexGuard<'static, Option<SyncBaseline>> {
+    SYNC_STATE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Takes `SYNC_STATE` for code that then loads the local store under it. The store must be
+/// loaded under the lock (a save landing between the load and the lock would be lost), but
+/// a migration in `load_profiles` saves, which mirrors and takes the lock. So load once
+/// before the lock to run any migration; the caller's load under the lock then has none.
+fn load_profiles_for_sync(
+    app: &AppHandle,
+) -> Result<std::sync::MutexGuard<'static, Option<SyncBaseline>>, String> {
+    load_profiles(app)?;
+    Ok(sync_state())
+}
+
+/// Parses sync-file text with every profile already scrubbed, so the incoming side and the
+/// baseline compare like for like.
+fn parse_sync_store(text: &str) -> Result<ConnectionProfileStore, String> {
+    let mut store: ConnectionProfileStore =
+        serde_json::from_str(text).map_err(|e| e.to_string())?;
+    store.items.iter_mut().for_each(scrub_incoming_profile);
+    Ok(store)
+}
+
+fn same_json<T: Serialize>(a: &T, b: &T) -> bool {
+    match (serde_json::to_value(a), serde_json::to_value(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
+/// Merges one list (groups or profiles) of the sync file into the local one, by id.
+/// - An entry that is the same as in `baseline` was not changed by another machine since
+///   this process last saw the file, so the local entry stays (and one deleted here stays
+///   deleted).
+/// - Any other entry is taken from the file; `take` carries over what must stay local.
+/// - `prefer_local` (a write, whose `local` holds what the user just saved) keeps the local
+///   entry instead when this machine changed it too, or when there is no baseline to tell.
+///   Without it (an import), the file wins those, as it did before #143.
+///
+/// `normalize` turns a local entry into the form the sync file holds, for comparing it
+/// with the baseline. Returns whether `local` changed.
+fn merge_sync_entries<T: Clone + Serialize>(
+    local: &mut Vec<T>,
+    incoming: &[T],
+    baseline: Option<&[T]>,
+    prefer_local: bool,
+    id: impl Fn(&T) -> &str,
+    normalize: impl Fn(&T) -> T,
+    take: impl Fn(&T, &mut T),
+) -> bool {
+    let mut changed = false;
+    for it in incoming {
+        let base = baseline.and_then(|b| b.iter().find(|x| id(x) == id(it)));
+        if base.is_some_and(|b| same_json(b, it)) {
+            continue;
+        }
+        match local.iter_mut().find(|x| id(x) == id(it)) {
+            Some(existing) => {
+                // No baseline at all also leaves `base` empty, which counts as changed.
+                let local_changed = base.is_none_or(|b| !same_json(b, &normalize(existing)));
+                if prefer_local && local_changed {
+                    continue;
+                }
+                let mut new = it.clone();
+                take(existing, &mut new);
+                if !same_json(existing, &new) {
+                    *existing = new;
+                    changed = true;
+                }
+            }
+            None => {
+                local.push(it.clone());
+                changed = true;
+            }
         }
     }
-    std::fs::write(path, data).map_err(|e| format!("Failed to write sync file: {e}"))
+    changed
+}
+
+/// Merges a parsed (scrubbed) sync file into `local`. Deletions do not propagate. Returns
+/// whether `local` changed.
+fn merge_sync(
+    local: &mut ConnectionProfileStore,
+    incoming: &ConnectionProfileStore,
+    baseline: Option<&ConnectionProfileStore>,
+    prefer_local: bool,
+) -> bool {
+    let groups = merge_sync_entries(
+        &mut local.groups,
+        &incoming.groups,
+        baseline.map(|b| b.groups.as_slice()),
+        prefer_local,
+        |g| &g.id,
+        Clone::clone,
+        |_, _| {},
+    );
+    let items = merge_sync_entries(
+        &mut local.items,
+        &incoming.items,
+        baseline.map(|b| b.items.as_slice()),
+        prefer_local,
+        |p| &p.id,
+        |p| {
+            let mut p = p.clone();
+            scrub_incoming_profile(&mut p);
+            p
+        },
+        carry_over_machine_local_paths,
+    );
+    groups || items
+}
+
+/// Reads the sync file before writing it: its text (`None` when there is no file yet) and
+/// its parsed store (`None` when malformed, which is overwritten as before #143). Refuses
+/// with `SYNC_BLOCKED_NEWER` when a newer muSQL wrote it (#81).
+fn read_sync_for_write(
+    path: &str,
+) -> Result<(Option<String>, Option<ConnectionProfileStore>), String> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((None, None)),
+        // Don't overwrite what we could not read (a cloud placeholder that failed to
+        // download, a locked file): it may hold another machine's changes.
+        Err(e) => return Err(format!("Failed to read sync file: {e}")),
+    };
+    let store = parse_sync_store(&text).ok();
+    if store.as_ref().is_some_and(store_written_by_newer) {
+        return Err(SYNC_BLOCKED_NEWER.to_owned());
+    }
+    Ok((Some(text), store))
+}
+
+/// Writes `store` to the sync file at `path`. The file is read first: if another machine
+/// changed it since `state`'s baseline, those changes are merged into `store` (and the local
+/// profiles) before writing, so they are not overwritten. Refuses with `SYNC_BLOCKED_NEWER`
+/// when a newer muSQL wrote the file (#81). Caller holds `SYNC_STATE`.
+fn push_to_sync_locked(
+    app: &AppHandle,
+    path: &str,
+    state: &mut Option<SyncBaseline>,
+    store: &mut ConnectionProfileStore,
+) -> Result<(), String> {
+    let (current, incoming) = read_sync_for_write(path)?;
+    if let Some(incoming) = incoming {
+        let baseline = state.as_ref();
+        if baseline.is_none_or(|b| Some(&b.text) != current.as_ref())
+            && merge_sync(store, &incoming, baseline.map(|b| &b.store), true)
+        {
+            write_local_profiles(app, store)?;
+        }
+    }
+
+    let data =
+        sanitized_store_json(store).map_err(|e| format!("Failed to serialize sync data: {e}"))?;
+    // Rewriting the same content would only make the sync client upload it again.
+    if current.as_ref() != Some(&data) {
+        sync_folder::write_atomic(std::path::Path::new(path), data.as_bytes())
+            .map_err(|e| format!("Failed to write sync file: {e}"))?;
+    }
+    *state = Some(SyncBaseline {
+        store: parse_sync_store(&data)?,
+        text: data,
+    });
+    Ok(())
 }
 
 // Best-effort mirror on every save (the sync folder may be temporarily offline; a failure
 // here must not fail the profile save).
 fn mirror_to_sync(app: &AppHandle, store: &ConnectionProfileStore) {
+    // The path is read under the lock, so `set_sync_path` cannot switch it in between.
+    let mut state = sync_state();
     let path = read_sync_path(app);
     if path.is_empty() {
         return;
     }
-    // Don't let this build overwrite a file a newer musql wrote — we'd strip fields we can't
-    // round-trip (#81). Silently skipping matches the best-effort contract of this mirror.
-    if sync_file_written_by_newer(&path) {
-        app_log::warn_throttled(
+    let mut store = store.clone();
+    match push_to_sync_locked(app, &path, &mut state, &mut store) {
+        Ok(()) => {}
+        // Don't let this build overwrite a file a newer musql wrote — we'd strip fields we
+        // can't round-trip (#81). Silently skipping matches the best-effort contract.
+        Err(e) if e == SYNC_BLOCKED_NEWER => app_log::warn_throttled(
             app_log::LONG,
             &format!("sync mirror skipped: {path} was written by a newer muSQL"),
-        );
-        return;
-    }
-    if let Err(e) = write_sync_file(&path, store) {
-        app_log::warn_throttled(app_log::LONG, &format!("sync mirror to {path} failed: {e}"));
+        ),
+        Err(e) => {
+            app_log::warn_throttled(app_log::LONG, &format!("sync mirror to {path} failed: {e}"));
+        }
     }
 }
 
@@ -1059,7 +1233,15 @@ fn set_sync_path(app: AppHandle, path: String) -> Result<(), String> {
     if let Some(dir) = file.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("Failed to create config dir: {e}"))?;
     }
-    std::fs::write(&file, path.trim()).map_err(|e| format!("Failed to write sync path: {e}"))?;
+    // Under the lock, so a mirror in flight cannot store the old file's baseline after the
+    // switch. The baseline describes the old file, so drop it only when the path changes
+    // (the sync modal saves the path before every import and export).
+    let mut state = sync_state();
+    let path = path.trim();
+    if read_sync_path(&app) != path {
+        *state = None;
+    }
+    std::fs::write(&file, path).map_err(|e| format!("Failed to write sync path: {e}"))?;
     Ok(())
 }
 
@@ -1104,9 +1286,10 @@ fn carry_over_machine_local_paths(local: &ConnectionProfile, incoming: &mut Conn
     }
 }
 
-// Pull the external sync file and merge it into the local store (id-based; the file
-// wins for existing entries except machine-local paths, local-only entries are kept,
-// deletions do not propagate).
+// Pull the external sync file and merge it into the local store (`merge_sync`: id-based,
+// profiles another machine changed win except machine-local paths, local-only entries are
+// kept, deletions do not propagate). Conflict copies the sync client left next to the file
+// are merged too, then deleted once the merged result is written (#143).
 // Runs on a blocking thread — the sync file may be a cloud on-demand placeholder that
 // blocks for seconds while it hydrates, which must not stall the IPC thread.
 #[tauri::command]
@@ -1123,11 +1306,13 @@ fn sync_import_blocking(app: AppHandle) -> Result<ProfileListResponse, String> {
     if path.is_empty() {
         return list_profiles(app);
     }
-    let incoming: ConnectionProfileStore = match std::fs::read_to_string(&path)
+    // The sync file is externally writable (a shared cloud folder, possibly hand edited), so
+    // `parse_sync_store` scrubs secrets and the transient clear_* commands from every profile.
+    let (text, incoming) = match std::fs::read_to_string(&path)
         .map_err(|e| e.to_string())
-        .and_then(|c| serde_json::from_str(&c).map_err(|e| e.to_string()))
+        .and_then(|text| parse_sync_store(&text).map(|store| (text, store)))
     {
-        Ok(store) => store,
+        Ok(read) => read,
         Err(e) => {
             // Runs on every window focus, so an unreachable file would otherwise add a
             // line each time.
@@ -1138,32 +1323,73 @@ fn sync_import_blocking(app: AppHandle) -> Result<ProfileListResponse, String> {
             return list_profiles(app);
         }
     };
+    // Read before taking the lock (the reads may wait on a cloud download, and every
+    // profile save waits on the lock). Only sync files muSQL wrote count: a JSON file that
+    // merely has a similar name and no version stamp is left alone. A copy from a newer
+    // muSQL is neither merged nor deleted (#81).
+    let copies: Vec<(PathBuf, ConnectionProfileStore)> =
+        sync_folder::conflict_copies(std::path::Path::new(&path))
+            .into_iter()
+            .filter_map(|copy| {
+                let store = parse_sync_store(&std::fs::read_to_string(&copy).ok()?).ok()?;
+                (store.app_version.is_some() && !store_written_by_newer(&store))
+                    .then_some((copy, store))
+            })
+            .collect();
 
+    let mut state = load_profiles_for_sync(&app)?;
+    // The path changed while the file was read: the next import reads the new one.
+    if read_sync_path(&app) != path {
+        drop(state);
+        return list_profiles(app);
+    }
     let mut store = load_profiles(&app)?;
-    let before = serde_json::to_string(&store).unwrap_or_default();
-    for g in incoming.groups {
-        if let Some(existing) = store.groups.iter_mut().find(|x| x.id == g.id) {
-            *existing = g;
-        } else {
-            store.groups.push(g);
-        }
-    }
-    for mut it in incoming.items {
-        // The sync file is externally writable (a shared cloud folder, possibly hand
-        // edited), so never let it carry secrets or the transient clear_* commands into
-        // the local store.
-        scrub_incoming_profile(&mut it);
-        if let Some(existing) = store.items.iter_mut().find(|x| x.id == it.id) {
-            carry_over_machine_local_paths(existing, &mut it);
-            *existing = it;
-        } else {
-            store.items.push(it);
-        }
-    }
     // Only persist (and re-mirror) when the merge actually changed something, so the
-    // frequent startup/focus refresh doesn't churn disk or bounce the sync file.
-    if serde_json::to_string(&store).unwrap_or_default() != before {
-        save_profiles(&app, &store)?;
+    // frequent startup/focus refresh doesn't churn disk or bounce the sync file. A file
+    // unchanged since the baseline (most focus refreshes) can change nothing.
+    let file_changed = state.as_ref().is_none_or(|b| b.text != text);
+    let mut changed = false;
+    if file_changed || !copies.is_empty() {
+        let baseline = state.as_ref().map(|b| &b.store);
+        changed = merge_sync(&mut store, &incoming, baseline, false);
+        // A copy is a write that lost the race, of unknown age: it may predate what the
+        // main file holds now. So it only adds the profiles and groups missing here, and
+        // never overrides an existing one (no baseline, local preferred).
+        for (_, copy) in &copies {
+            changed |= merge_sync(&mut store, copy, None, true);
+        }
+    }
+    if changed {
+        write_local_profiles(&app, &store)?;
+    }
+    // Only now: if the local write failed, the next import must still see the file as new.
+    if file_changed {
+        *state = Some(SyncBaseline {
+            text,
+            store: incoming,
+        });
+    }
+    // Write the merged result, and drop the conflict copies only once it is in the file.
+    let pushed = (changed || !copies.is_empty())
+        .then(|| push_to_sync_locked(&app, &path, &mut state, &mut store));
+    match pushed {
+        None => {}
+        Some(Ok(())) => {
+            if !copies.is_empty() {
+                log::info!("merged {} sync conflict copies", copies.len());
+            }
+            for (copy, _) in &copies {
+                if let Err(e) = std::fs::remove_file(copy) {
+                    log::warn!(
+                        "failed to delete sync conflict copy {}: {e}",
+                        copy.display()
+                    );
+                }
+            }
+        }
+        Some(Err(e)) => {
+            app_log::warn_throttled(app_log::LONG, &format!("sync mirror to {path} failed: {e}"))
+        }
     }
     Ok(ProfileListResponse {
         groups: store.groups,
@@ -1172,21 +1398,28 @@ fn sync_import_blocking(app: AppHandle) -> Result<ProfileListResponse, String> {
     })
 }
 
-// Manually push the current store to the external sync file (surfaces write errors).
+// Manually push the current store to the external sync file (surfaces write errors). Like
+// the auto-mirror, it first merges what another machine changed since the last read, so the
+// UI reloads the list afterwards.
 #[tauri::command]
 fn sync_export(app: AppHandle) -> Result<bool, String> {
+    let mut state = load_profiles_for_sync(&app)?;
     let path = read_sync_path(&app);
     if path.is_empty() {
         return Ok(false);
     }
-    // A manual export must not clobber a file a newer musql wrote (#81). Unlike the silent
-    // auto-mirror, tell the user why their explicit action was refused.
-    if sync_file_written_by_newer(&path) {
-        return Err(SYNC_BLOCKED_NEWER.to_owned());
-    }
-    let store = load_profiles(&app)?;
-    write_sync_file(&path, &store)?;
+    let mut store = load_profiles(&app)?;
+    // A manual export must not clobber a file a newer musql wrote (#81): unlike the silent
+    // auto-mirror, the SYNC_BLOCKED_NEWER error tells the user why it was refused.
+    push_to_sync_locked(&app, &path, &mut state, &mut store)?;
     Ok(true)
+}
+
+// The synced folders found on this machine (OneDrive, Dropbox), offered as destinations
+// in the sync settings (#143).
+#[tauri::command]
+fn sync_folder_candidates() -> Vec<sync_folder::SyncFolder> {
+    sync_folder::candidates()
 }
 
 // Native save-dialog that returns the chosen path without writing (for choosing the
@@ -4634,6 +4867,7 @@ fn main() {
             sync_import,
             sync_export,
             pick_sync_path,
+            sync_folder_candidates,
             show_popup_menu,
             check_update,
             install_update,
@@ -5743,6 +5977,138 @@ Host myserver
         assert!(incoming.request.ssh.is_none());
     }
 
+    // ── Merging against the baseline (#143) ──
+
+    fn store_of(items: Vec<ConnectionProfile>) -> ConnectionProfileStore {
+        ConnectionProfileStore {
+            version: 2,
+            app_version: None,
+            groups: vec![],
+            items,
+        }
+    }
+
+    // What another process reads back after `store` was written to the sync file.
+    fn as_synced(store: &ConnectionProfileStore) -> ConnectionProfileStore {
+        parse_sync_store(&sanitized_store_json(store).unwrap()).unwrap()
+    }
+
+    fn renamed(id: &str, name: &str) -> ConnectionProfile {
+        let mut p = make_profile(id, None);
+        name.clone_into(&mut p.name);
+        p
+    }
+
+    fn names(store: &ConnectionProfileStore) -> Vec<(&str, &str)> {
+        store
+            .items
+            .iter()
+            .map(|p| (p.id.as_str(), p.name.as_str()))
+            .collect()
+    }
+
+    // A save on this machine must not undo what another machine wrote meanwhile, and the
+    // other machine's write must not undo the save.
+    #[test]
+    fn write_keeps_the_local_edit_and_takes_remote_edits_to_others() {
+        let baseline = as_synced(&store_of(vec![renamed("p1", "a"), renamed("p2", "b")]));
+        let remote = as_synced(&store_of(vec![renamed("p1", "a"), renamed("p2", "b2")]));
+        let mut local = store_of(vec![renamed("p1", "a-local"), renamed("p2", "b")]);
+
+        merge_sync(&mut local, &remote, Some(&baseline), true);
+
+        assert_eq!(names(&local), vec![("p1", "a-local"), ("p2", "b2")]);
+    }
+
+    #[test]
+    fn write_keeps_the_local_edit_when_both_changed_it() {
+        let baseline = as_synced(&store_of(vec![renamed("p1", "a")]));
+        let remote = as_synced(&store_of(vec![renamed("p1", "a-remote")]));
+        let mut local = store_of(vec![renamed("p1", "a-local")]);
+
+        merge_sync(&mut local, &remote, Some(&baseline), true);
+
+        assert_eq!(names(&local), vec![("p1", "a-local")]);
+    }
+
+    #[test]
+    fn import_takes_remote_edits_and_keeps_unsent_local_ones() {
+        let baseline = as_synced(&store_of(vec![renamed("p1", "a"), renamed("p2", "b")]));
+        let remote = as_synced(&store_of(vec![
+            renamed("p1", "a"),
+            renamed("p2", "b-remote"),
+        ]));
+        // p1 changed here only (say the mirror failed offline); p2 changed on both sides.
+        let mut local = store_of(vec![renamed("p1", "a-local"), renamed("p2", "b-local")]);
+
+        merge_sync(&mut local, &remote, Some(&baseline), false);
+
+        assert_eq!(names(&local), vec![("p1", "a-local"), ("p2", "b-remote")]);
+    }
+
+    #[test]
+    fn local_deletion_stays_unless_the_profile_changed_remotely() {
+        let baseline = as_synced(&store_of(vec![renamed("p1", "a"), renamed("p2", "b")]));
+        let remote = as_synced(&store_of(vec![
+            renamed("p1", "a"),
+            renamed("p2", "b-remote"),
+            renamed("p3", "new"),
+        ]));
+        let mut local = store_of(vec![]);
+
+        merge_sync(&mut local, &remote, Some(&baseline), true);
+
+        assert_eq!(names(&local), vec![("p2", "b-remote"), ("p3", "new")]);
+    }
+
+    #[test]
+    fn without_a_baseline_import_takes_the_file_and_write_keeps_local() {
+        let remote = as_synced(&store_of(vec![
+            renamed("p1", "remote"),
+            renamed("p2", "new"),
+        ]));
+
+        let mut imported = store_of(vec![renamed("p1", "local")]);
+        merge_sync(&mut imported, &remote, None, false);
+        assert_eq!(names(&imported), vec![("p1", "remote"), ("p2", "new")]);
+
+        let mut written = store_of(vec![renamed("p1", "local")]);
+        merge_sync(&mut written, &remote, None, true);
+        assert_eq!(names(&written), vec![("p1", "local"), ("p2", "new")]);
+    }
+
+    // The baseline holds the file's form (paths stripped), the local store this machine's
+    // paths. That difference alone must not count as a local edit.
+    #[test]
+    fn machine_local_paths_are_not_a_local_change() {
+        let mut p1 = make_profile("p1", Some(make_ssh(Some("C:\\Users\\me\\id_ed25519"))));
+        p1.request.mysql.tls_ca_cert_path = Some("C:\\Users\\me\\ca.pem".to_owned());
+        let baseline = as_synced(&store_of(vec![p1.clone()]));
+        let mut remote_p1 = p1.clone();
+        "remote".clone_into(&mut remote_p1.name);
+        let remote = as_synced(&store_of(vec![remote_p1]));
+        let mut local = store_of(vec![p1]);
+
+        merge_sync(&mut local, &remote, Some(&baseline), true);
+
+        let merged = &local.items[0];
+        assert_eq!(merged.name, "remote");
+        assert_eq!(
+            merged
+                .request
+                .ssh
+                .as_ref()
+                .unwrap()
+                .private_key_path
+                .as_deref(),
+            Some("C:\\Users\\me\\id_ed25519")
+        );
+        assert_eq!(
+            merged.request.mysql.tls_ca_cert_path.as_deref(),
+            Some("C:\\Users\\me\\ca.pem")
+        );
+    }
+
     // ── App-version write guard (#81) ──
 
     #[test]
@@ -5756,6 +6122,14 @@ Host myserver
         let parsed: ConnectionProfileStore =
             serde_json::from_str(&sanitized_store_json(&store).unwrap()).unwrap();
         assert_eq!(parsed.app_version.as_deref(), Some(APP_VERSION));
+    }
+
+    // Whether a write to the sync file at `path` is refused because a newer muSQL wrote it.
+    fn sync_file_written_by_newer(path: &str) -> bool {
+        match read_sync_for_write(path) {
+            Err(e) => e == SYNC_BLOCKED_NEWER,
+            Ok(_) => false,
+        }
     }
 
     // Write a sync file carrying `app_version` and return whether this build considers it

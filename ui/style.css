@@ -635,6 +635,19 @@ pre {
 .docker-item-meta { flex: 1; min-width: 0; }
 .docker-item-sub { font-size: 12px; color: var(--sub); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* Synced folders offered in the sync settings (#143) */
+.sync-folder-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin-top: 6px;
+  border: 2px solid transparent;
+}
+.sync-folder-item.selected { border-color: var(--accent); }
+.sync-folder-name { font-weight: 600; }
+.sync-folder-path { font-size: 12px; color: var(--sub); word-break: break-all; }
+.sync-folder-note { font-size: 12px; color: var(--success); }
+
 /* ── Explorer layout ── */
 .explorer {
   display: grid;
