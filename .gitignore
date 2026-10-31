@@ -10,3 +10,5 @@ src-tauri/gen/
 !.claude/skills/
 .claude/settings.local.json
 *.msix
+# just screenshots の出力（マニュアルへは中身を見てから docs/manual/img/ へ手で入れる）
+artifacts/

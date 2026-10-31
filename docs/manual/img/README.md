@@ -4,6 +4,22 @@
 
 > 推奨: ダークテーマ・ウィンドウは既定サイズ・サンプルデータ（本番情報は写さない）で撮影してください。撮影用の環境（Docker の MySQL + 架空の接続プロファイル）は [`../fixtures/README.md`](../fixtures/README.md) の手順で用意できます。
 
+## 自動撮影
+
+次の 4 枚は自動で撮れます（対象は `src-tauri/src/screenshots.rs` の `SHOTS` が決めます）。
+
+- `profile-list-colored.png`
+- `profile-edit.png`
+- `query-sql.png`
+- `sync-settings.png`
+
+撮り方は 2 つあります。
+
+- **GitHub Actions**：Actions の画面から `Screenshots` のワークフローを手で起動します。撮った画像は、実行結果のアーティファクト `screenshots` に入ります。
+- **手元**：撮影用の MySQL を起動してから（[`../fixtures/README.md`](../fixtures/README.md) の手順 1）、`just screenshots-build` と `just screenshots` を実行します。画像は `artifacts/screenshots/` に出ます。
+
+どちらも `docs/manual/img/` には自動で入りません。中身を確かめてから、同じ名前で置き換えてコミットしてください。自動撮影の画像はページの中だけを写し、ウィンドウの枠（タイトルバー）は含みません。
+
 | ファイル名 | 使用ページ | 撮影シチュエーション |
 |-----------|-----------|--------------------|
 | `overview.png` | README | query 画面全体。左にテーブル一覧、中央に Data タブ（結果テーブルが数十行）、上部にタブが 2〜3 枚 |

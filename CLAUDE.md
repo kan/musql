@@ -14,7 +14,7 @@ Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`
 
 ## Docs の役割分担
 - `README.md` = 人間向け（概要・ダウンロード・機能ハイライト）。`docs/manual/` = エンドユーザーマニュアル（機能別・日本語）。このファイル = 開発/エージェント向け内部情報。重複を避け、各々の役割に閉じる。
-- **ユーザー向け挙動を変えたら `docs/manual/` の該当ページも更新する**（画像は `docs/manual/img/`、撮影リストは `docs/manual/img/README.md`）。マニュアルは pike 構成に倣い、見出しアンカーは GitHub slug。校正は下の「ドキュメント校正ルール」に従う。
+- **ユーザー向け挙動を変えたら `docs/manual/` の該当ページも更新する**（画像は `docs/manual/img/`、撮影リストは `docs/manual/img/README.md`。一部の画像は自動で撮れる：`.claude/rules/testing.md` の「マニュアルのスクリーンショット」）。マニュアルは pike 構成に倣い、見出しアンカーは GitHub slug。校正は下の「ドキュメント校正ルール」に従う。
 
 ### ドキュメント校正ルール
 
@@ -71,7 +71,7 @@ Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`
 - **Store**: `cargo tauri build --config tauri.store.conf.json -- --no-default-features --features docker` — アップデータ無効・Docker有効。Store 用 EXE を生成。
 - **Store dev 確認**: `cargo tauri dev --config src-tauri/tauri.store.conf.json -- --no-default-features --features docker`（要 Developer Command Prompt / RC.EXE in PATH）。
 - Store 用アイコン: `src-tauri/icons/Square44x44Logo.png`, `Square150x150Logo.png`, `StoreLogo.png`。
-- CI: `release.yml` の `build-store` ジョブが Store EXE と MSIX をビルドし（`build` と並列。Tauri CLI は npm のビルド済みのもので、両ジョブとも `release.yml` 先頭の `TAURI_CLI` の版を使う。dependabot は上げないので、`tauri` クレートを上げたら手で合わせる）、artifact で渡された `publish-store` ジョブが、`build` ジョブの作ったドラフトの Release にアップロードする（#138）。ドラフトを作るのは `build` の tauri-action だけにしておく（`build-store` に Release を触らせない）。リリースのジョブは rust-cache を使わない（毎回新しいタグで走るので復元されず、保存の時間だけがかかる）。MSIX は `store/AppxManifest.xml` + `store/build-msix.ps1` で生成する（未署名。Microsoft 側で署名される）。
+- CI: `release.yml` の `build-store` ジョブが Store EXE と MSIX をビルドし（`build` と並列。Tauri CLI は npm のビルド済みのもので、両ジョブとも `release.yml` 先頭の `TAURI_CLI` の版を使う。dependabot は上げないので、`tauri` クレートを上げたら手で合わせる。`screenshots.yml` の `TAURI_CLI` も同じ版にそろえる）、artifact で渡された `publish-store` ジョブが、`build` ジョブの作ったドラフトの Release にアップロードする（#138）。ドラフトを作るのは `build` の tauri-action だけにしておく（`build-store` に Release を触らせない）。リリースのジョブは rust-cache を使わない（毎回新しいタグで走るので復元されず、保存の時間だけがかかる）。MSIX は `store/AppxManifest.xml` + `store/build-msix.ps1` で生成する（未署名。Microsoft 側で署名される）。
 - Artifact attestations（#130）: `release.yml` の `build` と `build-store` が、手でダウンロードする 4 つ（NSIS の `-setup.exe`、`.msi`、`muSQL-store-x64.exe`、`muSQL-store-x64.msix`）に `actions/attest` で来歴の証明を付ける。`.sig` と `latest.json` は対象外（updater の経路は minisign の検証で足りている）。グロブは拡張子の末尾まで書く（`bundle/` には配布しない `.msi.zip` / `.nsis.zip` と `.sig` も並ぶ）。attest は成果物への最後の書き換えのあとに置く（`build-store` では MSIX の生成のあと）。グロブの取りこぼしは CI では分からないので、公開前に 4 つとも検証する手順が `release` スキルにある。SLSA Build L3（ビルドを reusable workflow に切り出し、署名用の secrets を持つジョブから分ける）は狙っていない。
 - Partner Center Identity: `58967CommunitylinksInc.muSQL` / `CN=46BBEF28-6777-4EF5-AD2C-F9AD9123AA82`。
 

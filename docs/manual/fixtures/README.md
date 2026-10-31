@@ -38,6 +38,12 @@
 
 4. 「ローカル開発 (Docker)」プロファイルを設定画面で開き、パスワード `demo1234` を入力して保存（パスワードは keyring 保存のため JSON では配布できない）。以降はワンクリックで接続できる。
 
+## 自動撮影
+
+`just screenshots` は手順 2 と手順 4 を自分で行う。プロファイルは撮影用の identifier（`jp.co.communitylinks.musql.screenshots`）の側に置き、パスワードは撮影の間だけ入れる。先に起動しておくのは手順 1 の MySQL だけでよい。
+
+GitHub Actions の `Screenshots` ワークフローは、ランナーに Windows 版の MySQL を入れて `init/` の SQL を流す。Windows のランナーでは Linux のコンテナが動かないため。手順は `../img/README.md` の「自動撮影」を参照。
+
 ## 接続情報
 
 | 項目 | 値 |

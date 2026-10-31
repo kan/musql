@@ -1,0 +1,48 @@
+{
+  "identifier": "jp.co.communitylinks.musql.screenshots",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "muSQL",
+        "width": 740,
+        "height": 760,
+        "resizable": true,
+        "maximizable": false,
+        "dragDropEnabled": false,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --force-device-scale-factor=1.5"
+      },
+      {
+        "label": "settings",
+        "title": "muSQL Settings",
+        "url": "settings.html",
+        "width": 640,
+        "height": 820,
+        "visible": false,
+        "resizable": false,
+        "maximizable": false,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --force-device-scale-factor=1.5"
+      },
+      {
+        "label": "query",
+        "title": "muSQL Query",
+        "url": "query.html",
+        "width": 1200,
+        "height": 820,
+        "visible": false,
+        "resizable": true,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --force-device-scale-factor=1.5"
+      },
+      {
+        "label": "redis",
+        "title": "muSQL Redis",
+        "url": "redis.html",
+        "width": 1100,
+        "height": 780,
+        "visible": false,
+        "resizable": true,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --force-device-scale-factor=1.5"
+      }
+    ]
+  }
+}

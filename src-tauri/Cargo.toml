@@ -57,6 +57,9 @@ strum = { version = "0.28", features = ["derive"] }
 plist = "1"
 bollard = { version = "0.21", optional = true }
 futures-util = { version = "0.3", optional = true }
+# WebView2 の CapturePreview でページを撮る（`screenshots` feature だけ）。tauri（wry）経由で既に
+# 依存ツリーにいるので、tauri が引く版に揃える
+webview2-com = { version = "0.39", optional = true }
 
 # クリックで戻れるデスクトップ通知（#113、`src/toast.rs`）。
 # - tauri-winrt-notification は tauri-plugin-notification 経由（notify-rust → これ）で
@@ -100,6 +103,9 @@ single_char_pattern = "warn"
 default = ["self-updater", "docker"]
 self-updater = ["tauri-plugin-updater"]
 docker = ["bollard", "futures-util"]
+# マニュアルのスクリーンショットを撮る（`just screenshots`、`src/screenshots.rs`）。既定では入れず、
+# 配布するビルドには含めない
+screenshots = ["dep:webview2-com"]
 
 [profile.release]
 codegen-units = 1

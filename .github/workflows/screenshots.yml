@@ -1,0 +1,101 @@
+name: Screenshots
+
+# マニュアルのスクリーンショットを Windows ランナーで撮る（`just screenshots`、仕組みは
+# `src-tauri/src/screenshots.rs`）。手で起動し、撮った画像はアーティファクトに上げるだけにする。
+# 中身を見てから、手元で docs/manual/img/ へ入れてコミットする（ワークフローに書き込みの権限を
+# 持たせない）。
+#
+# 手元の撮影（日本語の Windows、拡大率 150%）と同じ絵にするための前提:
+#
+# - 表示倍率 1.5 … ランナーの画面は 100% 固定。撮影用の設定（`tauri.screenshots.conf.json`）が
+#   WebView2 に `--force-device-scale-factor=1.5` を渡し、撮影がウィンドウの大きさを合わせる
+# - フォント … UI は "Segoe UI", "Yu Gothic UI" を名指ししていて、どちらもランナーに入っている
+# - タイムゾーン … 日本時間にする（画面とフィクスチャの日時を手元とそろえる）
+# - データ … docs/manual/fixtures の MySQL。Windows のランナーでは Linux のコンテナが動かないので、
+#   Windows 版の MySQL を入れて init SQL を流す
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: screenshots
+  cancel-in-progress: true
+
+env:
+  # release.yml の TAURI_CLI と同じ版にする（dependabot は上げない）
+  TAURI_CLI: "@tauri-apps/cli@2.12.3"
+  MYSQL_VERSION: 8.0.43
+
+jobs:
+  capture:
+    name: Capture screenshots
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - uses: swatinem/rust-cache@v2.9.3
+        with:
+          workspaces: "src-tauri -> target/screenshots"
+          # ci.yml の check と分ける（あちらは target/ を既定の feature で作る）
+          key: screenshots
+          # 撮影のステップが落ちても、ビルドの分は次の実行で使えるように残す
+          cache-on-failure: true
+
+      - uses: extractions/setup-just@v4.0.0
+
+      - name: Set time zone to JST
+        run: tzutil /s "Tokyo Standard Time"
+
+      # fixtures/docker-compose.yml と同じ構成（文字コード、照合順序、demo ユーザー）にする
+      - name: Start MySQL with the demo databases
+        shell: pwsh
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP 'mysql.zip'
+          Invoke-WebRequest "https://cdn.mysql.com/archives/mysql-8.0/mysql-$env:MYSQL_VERSION-winx64.zip" -OutFile $zip
+          # Expand-Archive は数百 MB の zip で数分かかる。Windows の tar（bsdtar）は zip も展開できる
+          tar -xf $zip -C $env:RUNNER_TEMP
+          if ($LASTEXITCODE) { throw 'extracting MySQL failed' }
+          $bin = Join-Path $env:RUNNER_TEMP "mysql-$env:MYSQL_VERSION-winx64\bin"
+          $data = Join-Path $env:RUNNER_TEMP 'mysql-data'
+          & "$bin\mysqld.exe" --initialize-insecure "--datadir=$data"
+          if ($LASTEXITCODE) { throw 'mysqld --initialize-insecure failed' }
+          Start-Process "$bin\mysqld.exe" -ArgumentList "--datadir=$data", '--port=3306',
+            '--character-set-server=utf8mb4', '--collation-server=utf8mb4_ja_0900_as_cs'
+          for ($i = 0; $i -lt 60; $i++) {
+            & "$bin\mysqladmin.exe" -uroot ping 2>$null
+            if ($LASTEXITCODE -eq 0) { break }
+            Start-Sleep -Seconds 1
+          }
+          if ($LASTEXITCODE) { throw 'MySQL did not start' }
+          & "$bin\mysql.exe" -uroot -e "CREATE DATABASE ec_demo; CREATE USER 'demo'@'%' IDENTIFIED BY 'demo1234'; GRANT ALL PRIVILEGES ON ec_demo.* TO 'demo'@'%';"
+          if ($LASTEXITCODE) { throw 'creating the demo user failed' }
+          foreach ($sql in Get-ChildItem docs/manual/fixtures/init/*.sql | Sort-Object Name) {
+            $path = $sql.FullName -replace '\\', '/'
+            & "$bin\mysql.exe" -uroot --default-character-set=utf8mb4 -e "source $path"
+            if ($LASTEXITCODE) { throw "loading $($sql.Name) failed" }
+          }
+
+      - name: Build capture binary
+        env:
+          MUSQL_TAURI_CLI: npx --yes ${{ env.TAURI_CLI }}
+        run: just screenshots-build
+
+      - name: Capture
+        run: just screenshots
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: screenshots
+          path: artifacts/screenshots/
+          if-no-files-found: warn

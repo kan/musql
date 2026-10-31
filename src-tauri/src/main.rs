@@ -25,6 +25,8 @@ mod docs_consistency;
 mod onepassword;
 mod postgres_client;
 mod redis_client;
+#[cfg(feature = "screenshots")]
+mod screenshots;
 mod sqlite_client;
 mod sync_folder;
 mod tableplus;
@@ -1419,6 +1421,11 @@ fn sync_export(app: AppHandle) -> Result<bool, String> {
 // in the sync settings (#143).
 #[tauri::command]
 fn sync_folder_candidates() -> Vec<sync_folder::SyncFolder> {
+    // Fixed folders in the manual's screenshot, not the capturing machine's own.
+    #[cfg(feature = "screenshots")]
+    if screenshots::active() {
+        return screenshots::sync_folders();
+    }
     sync_folder::candidates()
 }
 
@@ -4741,10 +4748,16 @@ fn main() {
     {
         builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
     }
+    #[cfg(feature = "screenshots")]
+    if screenshots::active() {
+        builder = builder.plugin(screenshots::plugin());
+    }
     builder
         .setup(|app| {
             // First, so that failures in the rest of setup are written too.
             app_log::init(app.handle());
+            #[cfg(feature = "screenshots")]
+            screenshots::start(app.handle());
             setup_menus(app.handle())?;
             // Back to the virtual desktop main was last on (#126), when that is turned on
             // (#144). The mutex is taken either way (see `vdesk::claim`).
@@ -5975,6 +5988,31 @@ Host myserver
         let mut incoming = make_profile("p1", None);
         carry_over_machine_local_paths(&local, &mut incoming);
         assert!(incoming.request.ssh.is_none());
+    }
+
+    // The screenshot build's config replaces the whole window list (a merged config replaces
+    // arrays), so it must repeat tauri.conf.json's windows, adding only the scale argument
+    // that `screenshots.rs` checks for.
+    #[test]
+    fn screenshot_config_repeats_the_windows() {
+        let windows = |text: &str| -> Vec<serde_json::Value> {
+            let config: serde_json::Value = serde_json::from_str(text).unwrap();
+            config["app"]["windows"].as_array().unwrap().clone()
+        };
+        let base = windows(include_str!("../tauri.conf.json"));
+        let mut shots = windows(include_str!("../tauri.screenshots.conf.json"));
+        for window in &mut shots {
+            let args = window
+                .as_object_mut()
+                .unwrap()
+                .remove("additionalBrowserArgs");
+            let args = args.as_ref().and_then(serde_json::Value::as_str);
+            assert!(
+                args.is_some_and(|a| a.contains("--force-device-scale-factor=1.5")),
+                "{window}: {args:?}"
+            );
+        }
+        assert_eq!(base, shots);
     }
 
     // ── Merging against the baseline (#143) ──

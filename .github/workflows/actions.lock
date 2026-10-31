@@ -20,6 +20,12 @@ workflows:
         - 'actions/upload-artifact@v7.0.2'
         - 'dtolnay/rust-toolchain@master'
         - 'tauri-apps/tauri-action@v1.0.0'
+    '.github/workflows/screenshots.yml':
+        - 'actions/checkout@v7.0.1'
+        - 'actions/upload-artifact@v7.0.2'
+        - 'dtolnay/rust-toolchain@master'
+        - 'extractions/setup-just@v4.0.0'
+        - 'swatinem/rust-cache@v2.9.3'
 dependencies:
     'actions-rust-lang/audit@v1.2.7':
         ref: 'v1.2.7'

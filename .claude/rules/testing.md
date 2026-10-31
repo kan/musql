@@ -7,6 +7,12 @@
 - **GUI の挙動は自動テストで担保しない**。接続・タブ操作・メニューは実際に `just dev` で触って確認する。コミット前にユーザーの動作確認 OK を取るのはこのため（CLAUDE.md「Git workflow」参照）。
 - **UI の静的検査**は Biome（`just lint-ui`）のみ。JS のユニットテストは持たない（Node.js を要求しない方針のため）。
 
+## マニュアルのスクリーンショット
+- **撮影は `src-tauri/src/screenshots.rs` が行う**（`just screenshots-build` → `just screenshots`、CI は手で起動する `screenshots.yml`）。Cargo の `screenshots` feature を付けたビルドで、環境変数 `MUSQL_SCREENSHOTS_OUT` があるときだけ動く。`SHOTS` の順に各ウィンドウのページへ JS を流して画面を整え（`WebviewWindow::eval`。ページは `screenshots:done` のイベントで終わりを返す）、WebView2 の `CapturePreview` でページを PNG にする。撮り終えたらアプリが終了し、失敗すれば終了コードが 1 になる。**WebdriverIO（pike の方式）にしないこと**（Node.js の依存が要り、複数のウィンドウを扱うのも手間が増えるため）。
+- **配布するビルドに入れないこと**（feature は既定で外してある。撮影用のビルドは identifier が `.screenshots`、更新機能も外す。更新のバナーが写らないように）。撮影の前処理（`PRELUDE`）は localStorage の `musql:` のキーを消し、日本語とダークテーマにする。同期フォルダの候補は撮影用の架空のパス（`screenshots::sync_folders`）に差し替える（撮る人の OneDrive のパスが写らないように）。
+- 表示倍率は 1.5（Windows の 150%）にそろえる。撮影用の設定 `tauri.screenshots.conf.json` が WebView2 に `--force-device-scale-factor=1.5` を渡し、撮影はウィンドウの大きさを `tauri.conf.json` の値の 1.5 倍（物理ピクセル）に合わせる。`devicePixelRatio` と画像の寸法が合わなければ失敗させる（違う絵を黙って撮らないため）。**`tauri.conf.json` のウィンドウを変えたら `tauri.screenshots.conf.json` も合わせる**（設定の結合は配列を丸ごと置き換える。テスト `screenshot_config_repeats_the_windows` が照合する）。
+- 撮れるのはページの中だけで、ウィンドウの枠（タイトルバー）は写らない。データは `docs/manual/fixtures/` のプロファイルと MySQL を使う。撮った画像は `artifacts/screenshots/` に出るだけで、`docs/manual/img/` へは中身を見てから手で入れる。
+
 ## 外部プロセス・ネットワークに触るテスト
 - 実 `op` CLI を叩くテストは `#[ignore]` を付ける。実行は `just test-ignored`。CI では回さない（1Password の認証が要るため）。
 - MySQL / Redis / SSH / Docker に実接続するテストは、**CI で回るテストとしては書かない**（手元の環境差で落ちるため）。
