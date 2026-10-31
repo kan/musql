@@ -60,7 +60,7 @@ muSQL には 2 種類のウィンドウがあります。
 1. メイン画面の **「新規プロファイル」** を開く
 2. 接続情報を入力する
    - **ホスト / ポート / ユーザー / パスワード / データベース**（MySQL の基本情報）
-   - **SSL モード**：`DISABLED` / `REQUIRED` / `VERIFY_CA` / `VERIFY_IDENTITY` から選択
+   - **SSL モード**：`DISABLED` / `PREFERRED` / `REQUIRED` / `VERIFY_CA` / `VERIFY_IDENTITY` から選択（意味は [接続情報と SSL](connections.md#接続情報と-ssl)）
    - 必要なら **SSH 踏み台** を設定（→ [SSH 踏み台接続](ssh.md)）
 3. **表示名や色、タグ** を付けて整理できる（→ [接続プロファイル](connections.md)）
 4. **「接続テスト」** で疎通を確認し、**保存** する

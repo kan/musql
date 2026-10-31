@@ -1,6 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use mysql::{prelude::Queryable, OptsBuilder, Pool, Row, SslOpts, Value};
+use mysql::{prelude::Queryable, OptsBuilder, Pool, PooledConn, Row, SslOpts, Value};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
@@ -62,12 +62,17 @@ struct MySqlConfig {
 }
 
 /// How the MySQL connection uses TLS. Stored as the MySQL option names
-/// (`DISABLED`, `REQUIRED`, `VERIFY_CA`, `VERIFY_IDENTITY`), which the UI's choices use too.
+/// (`DISABLED`, `PREFERRED`, `REQUIRED`, `VERIFY_CA`, `VERIFY_IDENTITY`), which the UI's
+/// choices use too.
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, Default)]
 #[serde(from = "String", into = "String")]
 enum SslMode {
     #[default]
     Disabled,
+    /// TLS when the server offers it, plain text when it does not; the certificate is not
+    /// checked (as MySQL's `PREFERRED` and libpq's `prefer`). Each client falls back in its
+    /// own way: `connect_mysql_pool`, `redis_client::open`, PostgreSQL's `Prefer`.
+    Preferred,
     Required,
     VerifyCa,
     VerifyIdentity,
@@ -82,6 +87,7 @@ impl From<String> for SslMode {
     fn from(name: String) -> Self {
         match name.as_str() {
             "DISABLED" => Self::Disabled,
+            "PREFERRED" => Self::Preferred,
             "REQUIRED" => Self::Required,
             "VERIFY_CA" => Self::VerifyCa,
             "VERIFY_IDENTITY" => Self::VerifyIdentity,
@@ -94,6 +100,7 @@ impl From<SslMode> for String {
     fn from(mode: SslMode) -> Self {
         match mode {
             SslMode::Disabled => "DISABLED".to_owned(),
+            SslMode::Preferred => "PREFERRED".to_owned(),
             SslMode::Required => "REQUIRED".to_owned(),
             SslMode::VerifyCa => "VERIFY_CA".to_owned(),
             SslMode::VerifyIdentity => "VERIFY_IDENTITY".to_owned(),
@@ -685,11 +692,7 @@ async fn get_or_create_pool_async(
     let mut mysql_no_db = request.mysql.clone();
     mysql_no_db.database = None;
     let pool = tauri::async_runtime::spawn_blocking(move || {
-        let opts = build_opts(&mysql_no_db, &target_host, target_port)?;
-        let pool = Pool::new(opts).map_err(|e| format!("Failed to build pool: {e}"))?;
-        let _conn = pool
-            .get_conn()
-            .map_err(|e| format!("Failed to connect MySQL: {e}"))?;
+        let (pool, _conn) = connect_mysql_pool(&mysql_no_db, &target_host, target_port)?;
         Ok::<Pool, String>(pool)
     })
     .await
@@ -776,7 +779,9 @@ fn build_opts(mysql: &MySqlConfig, host: &str, port: u16) -> Result<OptsBuilder,
 
     match &mysql.ssl_mode {
         SslMode::Disabled => {}
-        SslMode::Required => {
+        // PREFERRED asks for TLS as REQUIRED does; `connect_mysql_pool` drops it when the
+        // server has none.
+        SslMode::Preferred | SslMode::Required => {
             builder = builder.ssl_opts(Some(
                 SslOpts::default()
                     .with_danger_accept_invalid_certs(true)
@@ -798,6 +803,32 @@ fn build_opts(mysql: &MySqlConfig, host: &str, port: u16) -> Result<OptsBuilder,
     }
 
     Ok(builder)
+}
+
+/// A pool on the MySQL server, and one connection from it, which checks that the server
+/// takes the settings. `PREFERRED` tries TLS first and connects without it only when the
+/// server says it has none (not on any other failure, such as a wrong password).
+fn connect_mysql_pool(
+    mysql: &MySqlConfig,
+    host: &str,
+    port: u16,
+) -> Result<(Pool, PooledConn), String> {
+    let open = |opts: OptsBuilder| {
+        let pool = Pool::new(opts)?;
+        let conn = pool.get_conn()?;
+        Ok::<_, mysql::Error>((pool, conn))
+    };
+    let result = match open(build_opts(mysql, host, port)?) {
+        Err(mysql::Error::DriverError(mysql::DriverError::TlsNotSupported))
+            if mysql.ssl_mode == SslMode::Preferred =>
+        {
+            let mut plain = mysql.clone();
+            plain.ssl_mode = SslMode::Disabled;
+            open(build_opts(&plain, host, port)?)
+        }
+        other => other,
+    };
+    result.map_err(|e| format!("Failed to connect MySQL: {e}"))
 }
 
 fn unknown_ssl_mode_error(name: &str) -> String {
@@ -2547,18 +2578,12 @@ async fn run_connection_test(
     tauri::async_runtime::spawn_blocking(move || {
         match protocol {
             Protocol::Mysql => {
-                let opts = build_opts(&mysql, &target_host, target_port)?;
-                let pool = Pool::new(opts).map_err(|e| format!("Failed to build pool: {e}"))?;
-                let mut conn = pool
-                    .get_conn()
-                    .map_err(|e| format!("Failed to connect MySQL: {e}"))?;
+                let (_pool, mut conn) = connect_mysql_pool(&mysql, &target_host, target_port)?;
                 conn.query_drop("SELECT 1")
                     .map_err(|e| format!("MySQL ping failed: {e}"))?;
             }
             Protocol::Redis => {
-                let client =
-                    redis_client::client(&mysql, &target_host, target_port, tls_by_tunnel)?;
-                redis_client::ping(&client)?;
+                redis_client::ping(&mysql, &target_host, target_port, tls_by_tunnel)?;
             }
             Protocol::Sqlite => sqlite_client::ping(mysql.sqlite_file())?,
             Protocol::Postgres => postgres_client::ping(&mysql, &target_host, target_port)?,
@@ -2819,8 +2844,8 @@ async fn redis_connect(
     let mysql = request.mysql.clone();
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let client = redis_client::client(&mysql, &host, port, tls_by_tunnel)?;
-        let mut session = redis_client::RedisSession::open(client, tunnel)?;
+        let (client, conn) = redis_client::open(&mysql, &host, port, tls_by_tunnel)?;
+        let mut session = redis_client::RedisSession::new(client, conn, tunnel);
         let version = redis_client::server_version(&mut session)?;
         let db = session.db();
         let mut guard = redis_client::lock(&state);
@@ -5097,6 +5122,7 @@ Host myserver
     fn ssl_mode_reads_and_writes_the_stored_names() {
         for (name, mode) in [
             ("DISABLED", SslMode::Disabled),
+            ("PREFERRED", SslMode::Preferred),
             ("REQUIRED", SslMode::Required),
             ("VERIFY_CA", SslMode::VerifyCa),
             ("VERIFY_IDENTITY", SslMode::VerifyIdentity),
@@ -5105,6 +5131,56 @@ Host myserver
             assert_eq!(serde_json::from_str::<SslMode>(&json).unwrap(), mode);
             assert_eq!(serde_json::to_string(&mode).unwrap(), json);
         }
+    }
+
+    /// A MySQL server without TLS that greets each connection (a handshake without
+    /// CLIENT_SSL) and hangs up on whatever the client says next.
+    fn mysql_server_without_tls() -> u16 {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for mut stream in listener.incoming().flatten() {
+                // LONG_PASSWORD | PROTOCOL_41 | SECURE_CONNECTION | PLUGIN_AUTH; no SSL.
+                let caps: u32 = 0x0001 | 0x0200 | 0x8000 | 0x0008_0000;
+                let mut payload = vec![10];
+                payload.extend_from_slice(b"8.0.0\0");
+                payload.extend_from_slice(&1u32.to_le_bytes());
+                payload.extend_from_slice(b"abcdefgh\0");
+                payload.extend_from_slice(&(caps as u16).to_le_bytes());
+                payload.push(33);
+                payload.extend_from_slice(&2u16.to_le_bytes());
+                payload.extend_from_slice(&((caps >> 16) as u16).to_le_bytes());
+                payload.push(21);
+                payload.extend_from_slice(&[0; 10]);
+                payload.extend_from_slice(b"ijklmnopqrst\0");
+                payload.extend_from_slice(b"mysql_native_password\0");
+                let len = (payload.len() as u32).to_le_bytes();
+                let mut packet = vec![len[0], len[1], len[2], 0];
+                packet.extend_from_slice(&payload);
+                let _ = stream.write_all(&packet);
+                let _ = stream.read(&mut [0u8; 1024]);
+            }
+        });
+        port
+    }
+
+    #[test]
+    fn preferred_mysql_retries_without_tls_only_when_the_server_has_none() {
+        let port = mysql_server_without_tls();
+        let mut req = make_request("127.0.0.1", port, "root", None);
+        let not_supported = "server does not have this capability";
+        req.mysql.ssl_mode = SslMode::Required;
+        let required = connect_mysql_pool(&req.mysql, "127.0.0.1", port)
+            .err()
+            .unwrap();
+        assert!(required.contains(not_supported), "{required}");
+        // PREFERRED gets past the TLS check and fails later (this server hangs up).
+        req.mysql.ssl_mode = SslMode::Preferred;
+        let preferred = connect_mysql_pool(&req.mysql, "127.0.0.1", port)
+            .err()
+            .unwrap();
+        assert!(!preferred.contains(not_supported), "{preferred}");
     }
 
     #[test]
@@ -5120,7 +5196,7 @@ Host myserver
     // would otherwise carry the loss to the machine that wrote it).
     #[test]
     fn unknown_ssl_mode_loads_round_trips_and_refuses_to_connect() {
-        for name in ["PREFERRED", "verify_ca", ""] {
+        for name in ["VERIFY_FULL", "verify_ca", ""] {
             let json = format!("\"{name}\"");
             let mode: SslMode = serde_json::from_str(&json).unwrap();
             assert_eq!(mode, SslMode::Unknown(name.to_owned()));
@@ -5128,7 +5204,7 @@ Host myserver
         }
         let mut req = make_request("127.0.0.1", 3306, "root", None);
         assert!(build_opts(&req.mysql, "127.0.0.1", 3306).is_ok());
-        req.mysql.ssl_mode = SslMode::Unknown("PREFERRED".to_owned());
+        req.mysql.ssl_mode = SslMode::Unknown("VERIFY_FULL".to_owned());
         assert!(build_opts(&req.mysql, "127.0.0.1", 3306).is_err());
     }
 

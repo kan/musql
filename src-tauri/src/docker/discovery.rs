@@ -23,12 +23,12 @@ pub struct DockerContainer {
     pub label_ssl_mode: Option<SslMode>,
 }
 
-/// Normalises a `musql.ssl-mode` label value. Only DISABLED and REQUIRED are accepted:
-/// a Docker connection has no CA path and targets 127.0.0.1, so the verifying modes
-/// cannot succeed. Anything else is dropped and the UI default applies.
+/// Normalises a `musql.ssl-mode` label value. Only DISABLED, PREFERRED and REQUIRED are
+/// accepted: a Docker connection has no CA path and targets 127.0.0.1, so the verifying
+/// modes cannot succeed. Anything else is dropped and the UI default applies.
 fn parse_ssl_mode_label(value: &str) -> Option<SslMode> {
     match SslMode::from(value.trim().to_ascii_uppercase()) {
-        mode @ (SslMode::Disabled | SslMode::Required) => Some(mode),
+        mode @ (SslMode::Disabled | SslMode::Preferred | SslMode::Required) => Some(mode),
         _ => None,
     }
 }
@@ -253,6 +253,7 @@ mod tests {
     fn parse_ssl_mode_label_normalises_known_modes() {
         assert_eq!(parse_ssl_mode_label("DISABLED"), Some(SslMode::Disabled));
         assert_eq!(parse_ssl_mode_label(" required "), Some(SslMode::Required));
+        assert_eq!(parse_ssl_mode_label("preferred"), Some(SslMode::Preferred));
     }
 
     #[test]
@@ -262,6 +263,5 @@ mod tests {
         assert_eq!(parse_ssl_mode_label("VERIFY_IDENTITY"), None);
         assert_eq!(parse_ssl_mode_label(""), None);
         assert_eq!(parse_ssl_mode_label("true"), None);
-        assert_eq!(parse_ssl_mode_label("PREFERRED"), None);
     }
 }

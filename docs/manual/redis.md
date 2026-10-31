@@ -19,7 +19,7 @@ muSQL は MySQL に加えて **Redis** にも接続できます。キーの一�
 | DB 番号 | 使うデータベースの番号（空なら 0） |
 | ユーザー | ACL のユーザー名。空なら既定のユーザー（`default`）で認証します |
 | パスワード | `requirepass` または ACL のパスワード。認証のないサーバーでは空のままにします |
-| SSL モード | `DISABLED`：TLS を使いません。`REQUIRED`：TLS で暗号化し、証明書は検証しません。`VERIFY_CA`：証明書を検証し、ホスト名は検証しません。`VERIFY_IDENTITY`：証明書とホスト名を検証します |
+| SSL モード | `DISABLED`：TLS を使いません。`PREFERRED`：TLS で接続を試し、サーバーが TLS に対応していなければ TLS を使わずに接続し直します（証明書は検証しません）。`REQUIRED`：TLS で暗号化し、証明書は検証しません。`VERIFY_CA`：証明書を検証し、ホスト名は検証しません。`VERIFY_IDENTITY`：証明書とホスト名を検証します |
 
 CA 証明書を指定すると、Windows の信頼済み証明書の代わりにその証明書で検証します。SSH 踏み台とパスワードの保存方針は MySQL と同じです。SSH 踏み台を経由するときも、`VERIFY_IDENTITY` は証明書をホストの欄の名前と照らし合わせます（MySQL では使えません）。→ [SSH 踏み台接続](ssh.md)、[接続プロファイル](connections.md#パスワードの保存方針)
 

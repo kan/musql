@@ -1007,12 +1007,13 @@ async function showDockerModal() {
 var DOCKER_CRED_KEY = "musql:docker-creds";
 var DOCKER_LAST_KEY = "musql:docker-last-cred";
 var DOCKER_LAST_ID = "__last__";
-// The defaults per engine. MySQL: REQUIRED skips certificate verification, so it works
-// with a container's self-signed cert and also satisfies servers running with
-// require_secure_transport=ON. Redis (#98): the default user (empty) and no TLS, which is
-// how the official image runs. PostgreSQL (#96): the official image's superuser, no TLS.
+// The defaults per engine. MySQL: PREFERRED uses TLS without checking the certificate
+// when the container has TLS (its self-signed cert, require_secure_transport=ON), and
+// connects without it when it has none (MariaDB's official image). Redis (#98): the
+// default user (empty) and no TLS, which is how the official image runs. PostgreSQL
+// (#96): the official image's superuser, no TLS.
 var DOCKER_DEFAULTS = {
-  mysql: { user: "root", ssl_mode: "REQUIRED" },
+  mysql: { user: "root", ssl_mode: "PREFERRED" },
   redis: { user: "", ssl_mode: "DISABLED" },
   postgresql: { user: "postgres", ssl_mode: "DISABLED" },
 };

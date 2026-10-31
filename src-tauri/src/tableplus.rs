@@ -278,34 +278,32 @@ fn key_path(
 }
 
 /// TablePlus's TLS mode is an index into the choices of its form, which differ by
-/// driver (the order follows TablePro's importer, which reads the same files).
-/// "Preferred" (and PostgreSQL's "allow") tries TLS and falls back to plain text, which
-/// muSQL does not have; it becomes `DISABLED`, the mode the connection works with
-/// whether or not the server offers TLS. An index past the choices becomes `REQUIRED`,
-/// so that a mode this list does not know does not silently drop TLS.
+/// driver (the order follows TablePro's importer, which reads the same files). Without
+/// one, the form's first choice (TablePlus's default) applies. PostgreSQL's "allow"
+/// (plain text unless the server insists on TLS), which muSQL does not have, becomes
+/// the nearest, `PREFERRED`. An index past the choices becomes `REQUIRED`, so that a mode
+/// this list does not know does not silently drop TLS.
 fn ssl_mode(driver: &str, index: Option<i64>) -> SslMode {
     use SslMode::*;
     let modes: &[SslMode] = match driver {
-        "MySQL" => &[Disabled, Disabled, Required, VerifyCa, VerifyIdentity],
-        "MariaDB" => &[Disabled, Required, VerifyIdentity],
+        "MySQL" => &[Preferred, Disabled, Required, VerifyCa, VerifyIdentity],
+        "MariaDB" => &[Preferred, Required, VerifyIdentity],
         "PostgreSQL" => &[
-            Disabled,
+            Preferred,
             Disabled,
             Required,
-            Disabled,
+            Preferred,
             VerifyCa,
             VerifyIdentity,
         ],
         "Redis" => &[Disabled, Required, VerifyCa],
         _ => &[Disabled],
     };
-    index.map_or(Disabled, |i| {
-        usize::try_from(i)
-            .ok()
-            .and_then(|i| modes.get(i))
-            .cloned()
-            .unwrap_or(Required)
-    })
+    usize::try_from(index.unwrap_or(0))
+        .ok()
+        .and_then(|i| modes.get(i))
+        .cloned()
+        .unwrap_or(Required)
 }
 
 /// TablePlus's own colour (`#RRGGBB`), if one was picked.
@@ -587,13 +585,17 @@ mod tests {
 
     #[test]
     fn tls_modes_follow_the_form_of_each_driver() {
-        assert_eq!(ssl_mode("MySQL", Some(0)), SslMode::Disabled); // preferred
+        assert_eq!(ssl_mode("MySQL", Some(0)), SslMode::Preferred);
+        assert_eq!(ssl_mode("MySQL", Some(1)), SslMode::Disabled);
         assert_eq!(ssl_mode("MySQL", Some(2)), SslMode::Required);
         assert_eq!(ssl_mode("MySQL", Some(4)), SslMode::VerifyIdentity);
         assert_eq!(ssl_mode("MariaDB", Some(2)), SslMode::VerifyIdentity);
+        assert_eq!(ssl_mode("PostgreSQL", Some(3)), SslMode::Preferred); // allow
         assert_eq!(ssl_mode("PostgreSQL", Some(4)), SslMode::VerifyCa);
         assert_eq!(ssl_mode("Redis", Some(1)), SslMode::Required);
-        assert_eq!(ssl_mode("MySQL", None), SslMode::Disabled);
+        // Unset: the form's default.
+        assert_eq!(ssl_mode("MySQL", None), SslMode::Preferred);
+        assert_eq!(ssl_mode("Redis", None), SslMode::Disabled);
         // Past the known choices: TLS is kept on rather than dropped.
         assert_eq!(ssl_mode("MySQL", Some(9)), SslMode::Required);
     }

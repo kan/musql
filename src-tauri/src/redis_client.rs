@@ -25,8 +25,9 @@ pub fn db_number(database: Option<&str>) -> Result<i64, String> {
 /// Builds the client for `mysql`'s server, reached at `host:port` (the tunnel's end when
 /// SSH is used).
 ///
-/// The SSL modes map onto TLS as for MySQL: `REQUIRED` encrypts without checking the
-/// certificate, `VERIFY_CA` checks the certificate but not the host name, and
+/// The SSL modes map onto TLS as for MySQL: `REQUIRED` (and `PREFERRED`, whose fallback
+/// to plain text is `open`'s) encrypts without checking the certificate, `VERIFY_CA`
+/// checks the certificate but not the host name, and
 /// `VERIFY_IDENTITY` checks both. The CA certificate, when given, replaces the system's
 /// trusted roots. `tls_by_tunnel`: the SSH tunnel makes the TLS (`tunnel_tls`), so the
 /// client talks plain to the tunnel's local end.
@@ -42,7 +43,7 @@ pub fn client(
         // Only VERIFY_IDENTITY goes to the tunnel; any other mode keeps its own handling.
         SslMode::VerifyIdentity if tls_by_tunnel => (false, false, false),
         SslMode::Disabled => (false, false, false),
-        SslMode::Required => (true, false, false),
+        SslMode::Preferred | SslMode::Required => (true, false, false),
         SslMode::VerifyCa => (true, true, false),
         SslMode::VerifyIdentity => (true, true, true),
         SslMode::Unknown(name) => return Err(unknown_ssl_mode_error(name)),
@@ -146,9 +147,58 @@ pub fn tunnel_tls(mysql: &MySqlConfig) -> Result<TunnelTls, String> {
     })
 }
 
-/// Opens a connection and checks that the server answers.
-pub fn ping(client: &redis::Client) -> Result<(), String> {
-    let mut conn = connect(client)?;
+/// The client for `mysql`'s server (as `client`) and a first connection to it.
+///
+/// `PREFERRED` first asks the server, in plain text and without credentials, whether it
+/// speaks plain Redis (`speaks_plain_resp`). Only a server that answers in RESP is used
+/// without TLS; any other outcome (no answer, a TLS alert, a timeout) leaves TLS on.
+/// Deciding before connecting, rather than retrying in plain text after a failed TLS
+/// connection, keeps the password from ever going in plain text to a server that has
+/// TLS: a TLS failure can have many causes besides the server having none.
+pub fn open(
+    mysql: &MySqlConfig,
+    host: &str,
+    port: u16,
+    tls_by_tunnel: bool,
+) -> Result<(redis::Client, redis::Connection), String> {
+    let client = if mysql.ssl_mode == SslMode::Preferred && speaks_plain_resp(host, port) {
+        let mut plain = mysql.clone();
+        plain.ssl_mode = SslMode::Disabled;
+        client(&plain, host, port, tls_by_tunnel)?
+    } else {
+        client(mysql, host, port, tls_by_tunnel)?
+    };
+    let conn = connect(&client)?;
+    Ok((client, conn))
+}
+
+/// Whether the server at `host:port` answers a bare `PING` in plain-text RESP: `+PONG`,
+/// or an error such as `-NOAUTH` from a server that wants a password. A TLS server takes
+/// the bytes for a broken record and answers with an alert or hangs up.
+fn speaks_plain_resp(host: &str, port: u16) -> bool {
+    use std::io::{Read, Write};
+    use std::net::ToSocketAddrs;
+    let Some(addr) = (host, port)
+        .to_socket_addrs()
+        .ok()
+        .and_then(|mut a| a.next())
+    else {
+        return false;
+    };
+    let Ok(mut stream) = std::net::TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT) else {
+        return false;
+    };
+    let _ = stream.set_read_timeout(Some(CONNECT_TIMEOUT));
+    let _ = stream.set_write_timeout(Some(CONNECT_TIMEOUT));
+    let mut first = [0u8; 1];
+    stream.write_all(b"PING\r\n").is_ok()
+        && stream.read_exact(&mut first).is_ok()
+        && matches!(first[0], b'+' | b'-')
+}
+
+/// Opens a connection (as `open`) and checks that the server answers.
+pub fn ping(mysql: &MySqlConfig, host: &str, port: u16, tls_by_tunnel: bool) -> Result<(), String> {
+    let (_, mut conn) = open(mysql, host, port, tls_by_tunnel)?;
     redis::cmd("PING")
         .query::<String>(&mut conn)
         .map(|_| ())
@@ -295,15 +345,20 @@ pub struct RedisSession {
 pub type RedisState = std::sync::Arc<std::sync::Mutex<Option<RedisSession>>>;
 
 impl RedisSession {
-    pub fn open(client: redis::Client, tunnel: Option<crate::SshTunnel>) -> Result<Self, String> {
-        let conn = connect(&client)?;
+    /// The session on `client` (from `open`, which made `conn`). The client is the one
+    /// `open` settled on, so a reconnection keeps whether TLS is used.
+    pub fn new(
+        client: redis::Client,
+        conn: redis::Connection,
+        tunnel: Option<crate::SshTunnel>,
+    ) -> Self {
         let db = client.get_connection_info().redis_settings().db();
-        Ok(Self {
+        Self {
             client,
             conn: Some(conn),
             db,
             _tunnel: tunnel,
-        })
+        }
     }
 
     pub fn db(&self) -> i64 {
@@ -1218,6 +1273,77 @@ mod tests {
         super::client(mysql, host, port, false)
     }
 
+    /// A server without TLS: it answers a TLS handshake with an error, as Redis does, and
+    /// each `CLIENT SETINFO` a plain connection sends with OK.
+    fn server_without_tls() -> u16 {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for mut stream in listener.incoming().flatten() {
+                std::thread::spawn(move || {
+                    let mut buf = [0u8; 4096];
+                    while let Ok(n @ 1..) = stream.read(&mut buf) {
+                        if buf[0] == 0x16 {
+                            let _ = stream.write_all(b"-ERR Protocol error\r\n");
+                            return;
+                        }
+                        let setinfo = buf[..n].windows(7).filter(|w| w == b"SETINFO").count();
+                        let _ = stream.write_all(&b"+OK\r\n".repeat(setinfo.max(1)));
+                    }
+                });
+            }
+        });
+        port
+    }
+
+    /// A server that speaks only TLS (as far as a plain client can tell): it answers any
+    /// bytes with a TLS alert and hangs up. Returns its port and every byte it was sent.
+    fn tls_only_server() -> (u16, std::sync::Arc<std::sync::Mutex<Vec<u8>>>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let received = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let log = received.clone();
+        std::thread::spawn(move || {
+            for mut stream in listener.incoming().flatten() {
+                let mut buf = [0u8; 4096];
+                if let Ok(n @ 1..) = stream.read(&mut buf) {
+                    log.lock().unwrap().extend_from_slice(&buf[..n]);
+                    // A fatal "decode error" alert.
+                    let _ = stream.write_all(&[0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x32]);
+                }
+            }
+        });
+        (port, received)
+    }
+
+    #[test]
+    fn preferred_never_sends_the_password_in_plain_text_to_a_tls_server() {
+        let (port, received) = tls_only_server();
+        let mut mysql = config(SslMode::Preferred, None);
+        mysql.password = "s3cret-password".to_owned();
+        // The TLS handshake with this stand-in fails, and no plain-text retry follows.
+        assert!(open(&mysql, "127.0.0.1", port, false).is_err());
+        let received = received.lock().unwrap();
+        assert!(!received.windows(15).any(|w| w == b"s3cret-password"));
+        assert!(!received.windows(4).any(|w| w == b"AUTH"));
+    }
+
+    #[test]
+    fn preferred_connects_in_plain_text_to_a_server_without_tls() {
+        let port = server_without_tls();
+        let (client, _conn) =
+            open(&config(SslMode::Preferred, None), "127.0.0.1", port, false).unwrap();
+        // The client kept for reconnecting is the plain one.
+        assert!(matches!(
+            client.get_connection_info().addr(),
+            ConnectionAddr::Tcp(..)
+        ));
+        // REQUIRED does not fall back.
+        assert!(open(&config(SslMode::Required, None), "127.0.0.1", port, false).is_err());
+    }
+
     #[test]
     fn ssl_modes_choose_plain_or_tls() {
         let plain = client(&config(SslMode::Disabled, None), "h", 6379).unwrap();
@@ -1226,11 +1352,14 @@ mod tests {
             ConnectionAddr::Tcp(..)
         ));
 
-        let unchecked = client(&config(SslMode::Required, None), "h", 6379).unwrap();
-        assert!(matches!(
-            unchecked.get_connection_info().addr(),
-            ConnectionAddr::TcpTls { insecure: true, .. }
-        ));
+        // PREFERRED starts as REQUIRED does; `open` drops TLS when the handshake fails.
+        for mode in [SslMode::Preferred, SslMode::Required] {
+            let unchecked = client(&config(mode, None), "h", 6379).unwrap();
+            assert!(matches!(
+                unchecked.get_connection_info().addr(),
+                ConnectionAddr::TcpTls { insecure: true, .. }
+            ));
+        }
 
         for mode in [SslMode::VerifyCa, SslMode::VerifyIdentity] {
             let checked = client(&config(mode, None), "h", 6379).unwrap();

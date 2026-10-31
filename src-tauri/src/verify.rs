@@ -173,11 +173,8 @@ fn verify_mysql() {
         Some(t) => ("127.0.0.1".to_owned(), t.local_port),
         None => (mysql.host.clone(), mysql.port),
     };
-    let opts = build_opts(&mysql, &host, port).unwrap_or_else(|e| panic!("{e}"));
-    let pool = Pool::new(opts).unwrap_or_else(|e| panic!("failed to build pool: {e}"));
-    let mut conn = pool
-        .get_conn()
-        .unwrap_or_else(|e| panic!("failed to connect: {e}"));
+    let (_pool, mut conn) =
+        connect_mysql_pool(&mysql, &host, port).unwrap_or_else(|e| panic!("{e}"));
     let version: Option<String> = conn
         .query_first("SELECT VERSION()")
         .unwrap_or_else(|e| panic!("SELECT VERSION() failed: {e}"));
@@ -369,10 +366,9 @@ fn verify_redis() {
     let (target_host, target_port, tunnel) =
         tauri::async_runtime::block_on(connect_target(&request)).unwrap_or_else(|e| panic!("{e}"));
     let tls_by_tunnel = SshTunnel::makes_tls(&tunnel);
-    let client = redis_client::client(&mysql, &target_host, target_port, tls_by_tunnel)
+    let (client, conn) = redis_client::open(&mysql, &target_host, target_port, tls_by_tunnel)
         .unwrap_or_else(|e| panic!("{e}"));
-    let mut session =
-        redis_client::RedisSession::open(client, tunnel).unwrap_or_else(|e| panic!("{e}"));
+    let mut session = redis_client::RedisSession::new(client, conn, tunnel);
     let version = redis_client::server_version(&mut session).unwrap_or_else(|e| panic!("{e}"));
     println!(
         "verify_redis: connected to Redis {version} at {host}:{port}{}",

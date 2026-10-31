@@ -41,7 +41,7 @@
 ## 主な機能
 
 - **SSH 踏み台接続** — 純 Rust `russh` 実装（`ssh.exe` 不要）。公開鍵 / パスワード認証、SSH Agent（1Password 対応）、`~/.ssh/config` 参照
-- **SSL 接続** — DISABLED / REQUIRED / VERIFY_CA / VERIFY_IDENTITY
+- **SSL 接続** — DISABLED / PREFERRED / REQUIRED / VERIFY_CA / VERIFY_IDENTITY
 - **Docker 連携** — 起動中コンテナの MySQL / Redis / PostgreSQL を自動検出してワンクリック接続（ポート未公開でも socat トンネル、WSL2 dockerd 対応）
 - **Redis** — キーの一覧と型ごとの値の表示、redis-cli 形式の CLI（補完とコマンドのヘルプ付き）
 - **SQLite** — ローカルの SQLite ファイルを MySQL と同じクエリ画面で閲覧、編集

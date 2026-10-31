@@ -24,11 +24,11 @@ MySQL と PostgreSQL のコンテナはクエリ画面で、Redis のコンテ�
 
 | 種類 | ユーザー | SSL モード |
 |------|----------|------------|
-| MySQL | `root` | `REQUIRED` |
+| MySQL | `root` | `PREFERRED` |
 | Redis | 空（既定のユーザー `default`） | `DISABLED` |
 | PostgreSQL | `postgres` | `DISABLED` |
 
-MySQL の `REQUIRED` は証明書を検証しないので、コンテナが自動生成した自己署名の証明書でも接続できます。SSL を有効にしていないサーバーには、`DISABLED` を選んで接続してください。Redis の公式イメージは TLS とパスワードを使わずに動くので、パスワード欄を空のまま接続できます。パスワード（`requirepass`）を設定したコンテナには、パスワードを入力してください。PostgreSQL の公式イメージは TLS を使わずに動きます。パスワードには、コンテナの `POSTGRES_PASSWORD` の値を入力してください。
+MySQL の `PREFERRED` は、コンテナが TLS に対応していれば TLS を使い、対応していなければ TLS を使わずに接続します。証明書は検証しないので、コンテナが自動生成した自己署名の証明書でも接続できます。Redis の公式イメージは TLS とパスワードを使わずに動くので、パスワード欄を空のまま接続できます。パスワード（`requirepass`）を設定したコンテナには、パスワードを入力してください。PostgreSQL の公式イメージは TLS を使わずに動きます。パスワードには、コンテナの `POSTGRES_PASSWORD` の値を入力してください。
 
 > **接続方法**：Docker への接続は、名前付きパイプ → TCP（`127.0.0.1:2375` / `2376`）の順にフォールバックします。WSL2 上の dockerd にも対応します。
 
@@ -60,7 +60,7 @@ Redis や PostgreSQL を既定以外のポートで動かしているコンテ�
 | `musql.user` | 既定のユーザー |
 | `musql.password` | 既定のパスワード |
 | `musql.port` | ポート（無ければ種類の既定の 3306、6379、5432）。`musql.engine` が無いときは MySQL のポート |
-| `musql.ssl-mode` | 既定の SSL モード（`DISABLED` または `REQUIRED`。それ以外の値は無視） |
+| `musql.ssl-mode` | 既定の SSL モード（`DISABLED`、`PREFERRED`、`REQUIRED` のどれか。それ以外の値は無視） |
 
 ラベルの値は、記憶済みの設定より優先されます。必要なラベルがそろったコンテナには、入力のモーダルを出さずに接続します。MySQL と PostgreSQL は `musql.user` と `musql.password` の両方、Redis は `musql.password` が要ります。このとき SSL モードは `musql.ssl-mode` の値になり、ラベルが無ければ上の表の初期値です。
 

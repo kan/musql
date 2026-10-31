@@ -209,6 +209,8 @@ fn config(mysql: &MySqlConfig, host: &str, port: u16) -> Result<Config, String> 
 fn ssl_mode(mode: &SslMode) -> Result<postgres::config::SslMode, String> {
     match mode {
         SslMode::Disabled => Ok(postgres::config::SslMode::Disable),
+        // TLS when the server offers it, else plain text: libpq's `prefer`.
+        SslMode::Preferred => Ok(postgres::config::SslMode::Prefer),
         SslMode::Required | SslMode::VerifyCa | SslMode::VerifyIdentity => {
             Ok(postgres::config::SslMode::Require)
         }
@@ -216,14 +218,15 @@ fn ssl_mode(mode: &SslMode) -> Result<postgres::config::SslMode, String> {
     }
 }
 
-/// The TLS of the connection, with the same meaning of the SSL modes as MySQL's: REQUIRED
-/// checks nothing, VERIFY_CA the certificate but not the host name, VERIFY_IDENTITY both.
+/// The TLS of the connection, with the same meaning of the SSL modes as MySQL's: PREFERRED
+/// and REQUIRED check nothing, VERIFY_CA the certificate but not the host name,
+/// VERIFY_IDENTITY both.
 /// The CA certificate is trusted besides the system's, as the mysql crate does.
 fn tls(mysql: &MySqlConfig) -> Result<MakeTlsConnector, String> {
     let mut builder = native_tls::TlsConnector::builder();
     match &mysql.ssl_mode {
         SslMode::Disabled => {}
-        SslMode::Required => {
+        SslMode::Preferred | SslMode::Required => {
             builder
                 .danger_accept_invalid_certs(true)
                 .danger_accept_invalid_hostnames(true);
@@ -465,6 +468,13 @@ mod tests {
         );
         assert_eq!(config.get_ports(), [50123]);
         assert_eq!(config.get_ssl_mode(), postgres::config::SslMode::Require);
+    }
+
+    #[test]
+    fn preferred_lets_the_server_choose() {
+        let config = config(&profile("h", SslMode::Preferred), "h", 5432).unwrap();
+        assert_eq!(config.get_ssl_mode(), postgres::config::SslMode::Prefer);
+        assert!(tls(&profile("h", SslMode::Preferred)).is_ok());
     }
 
     #[test]
