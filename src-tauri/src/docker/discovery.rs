@@ -35,6 +35,7 @@ fn parse_ssl_mode_label(value: &str) -> Option<SslMode> {
 
 const MYSQL_PORT: u16 = 3306;
 const REDIS_PORT: u16 = 6379;
+const POSTGRES_PORT: u16 = 5432;
 
 /// Which server a container runs, and on which of its ports: `(engine, port)`, or `None`
 /// for a container that is neither.
@@ -44,14 +45,16 @@ const REDIS_PORT: u16 = 6379;
 ///   included (as `Unknown`: the label is not overridden by a guess from the ports).
 /// - Without it, the order keeps what was listed before Redis was supported: a container
 ///   that exposes `musql.port` (else 3306), or carries `musql.enable=true`, is MySQL; only
-///   then does an exposed 6379 make it Redis. `musql.port` is the MySQL port here; a Redis
-///   container on another port says `musql.engine=redis`.
+///   then does an exposed 6379 make it Redis, and then 5432 PostgreSQL (#96). `musql.port`
+///   is the MySQL port here; a Redis or PostgreSQL container on another port says
+///   `musql.engine=redis` (`postgresql`).
 fn classify(label: impl Fn(&str) -> Option<String>, exposed: &[u16]) -> Option<(Engine, u16)> {
     let port_label: Option<u16> = label("musql.port").and_then(|v| v.trim().parse().ok());
     if let Some(name) = label("musql.engine") {
         let engine = Engine::from(name.trim().to_ascii_lowercase());
         let default_port = match engine {
             Engine::Redis => REDIS_PORT,
+            Engine::Postgresql => POSTGRES_PORT,
             // A file, not a server (#97): a container has nothing to connect to.
             Engine::Sqlite => return None,
             _ => MYSQL_PORT,
@@ -63,12 +66,15 @@ fn classify(label: impl Fn(&str) -> Option<String>, exposed: &[u16]) -> Option<(
     if exposed.contains(&mysql_port) || enabled {
         return Some((Engine::Mysql, mysql_port));
     }
+    if exposed.contains(&REDIS_PORT) {
+        return Some((Engine::Redis, REDIS_PORT));
+    }
     exposed
-        .contains(&REDIS_PORT)
-        .then_some((Engine::Redis, REDIS_PORT))
+        .contains(&POSTGRES_PORT)
+        .then_some((Engine::Postgresql, POSTGRES_PORT))
 }
 
-/// The running containers that run MySQL (MariaDB) or Redis.
+/// The running containers that run MySQL (MariaDB), Redis or PostgreSQL.
 pub async fn discover_containers(docker: &Docker) -> Result<Vec<DockerContainer>, String> {
     let mut filters = HashMap::new();
     filters.insert("status".to_owned(), vec!["running".to_owned()]);
@@ -201,7 +207,12 @@ mod tests {
     fn containers_are_told_apart_by_label_then_port() {
         assert_eq!(classify_with(&[], &[3306]), found("mysql", 3306));
         assert_eq!(classify_with(&[], &[6379]), found("redis", 6379));
-        assert_eq!(classify_with(&[], &[5432]), None);
+        assert_eq!(classify_with(&[], &[5432]), found("postgresql", 5432));
+        assert_eq!(classify_with(&[], &[8080]), None);
+        assert_eq!(
+            classify_with(&[("musql.engine", "postgresql")], &[]),
+            found("postgresql", 5432)
+        );
         // musql.port moves the MySQL port.
         assert_eq!(
             classify_with(&[("musql.port", "13306")], &[13306]),
@@ -235,8 +246,8 @@ mod tests {
         );
         // An engine this version does not know is kept, not guessed from the ports.
         assert_eq!(
-            classify_with(&[("musql.engine", "postgres")], &[3306]),
-            found("postgres", 3306)
+            classify_with(&[("musql.engine", "oracle")], &[3306]),
+            found("oracle", 3306)
         );
         // SQLite is a file, not a server: such a label lists nothing.
         assert_eq!(classify_with(&[("musql.engine", "sqlite")], &[3306]), None);

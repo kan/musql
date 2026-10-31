@@ -45,6 +45,11 @@ rustls-native-certs = "0.8"
 # SQLite のファイルを開く（#97、`src/sqlite_client.rs`）。bundled で SQLite 本体を一緒にビルドする
 # （利用者の環境に sqlite3.dll を求めないため）
 rusqlite = { version = "0.40", features = ["bundled"] }
+# PostgreSQL への接続（#96、`src/postgres_client.rs`）。同期の API を spawn_blocking で呼ぶ（mysql と
+# 同じ形）。TLS は mysql と同じ native-tls（SSL モードの意味をそろえるため）
+postgres = "0.19"
+postgres-native-tls = "0.5"
+native-tls = "0.2"
 # メニューの項目（`MenuAction`）と id の文字列の行き来（#131）
 strum = { version = "0.28", features = ["derive"] }
 bollard = { version = "0.21", optional = true }

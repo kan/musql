@@ -15,7 +15,7 @@ Data タブや結果テーブルのフッターにある **エクスポート** 
 |------|------|
 | CSV | カンマ区切り |
 | TSV | タブ区切り |
-| SQL | `CREATE` 文と `INSERT` 文（テーブルデータ。MySQL では mysqldump 互換、SQLite では SQLite の構文） |
+| SQL | `CREATE` 文と `INSERT` 文（テーブルデータ。MySQL では mysqldump 互換、SQLite と PostgreSQL ではそれぞれの構文。PostgreSQL の `CREATE` 文はカタログから組み立てたもの） |
 | Markdown | tbls 互換のスキーマ Markdown（Schema ビュー） |
 
 > **全行が対象**：画面上は 100 件ずつページングされますが、エクスポートは結果の**全行**を出力します。

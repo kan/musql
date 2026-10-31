@@ -53,6 +53,12 @@ impl SqliteSession {
             lock(&self.tabs).entry(tab.to_owned()).or_insert(opened),
         ))
     }
+
+    /// Lets go of the tab's connection (the tab was closed): it closes once a statement
+    /// still running on it ends, which rolls back a transaction left open.
+    pub fn close(&self, tab: &str) {
+        lock(&self.tabs).remove(tab);
+    }
 }
 
 impl TabConnection {

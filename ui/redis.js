@@ -269,34 +269,10 @@ function clearKeyList() {
 function keyGroup(kind) {
   let group = keyGroups.get(kind);
   if (group) return group;
-  const el = document.createElement("div");
-  el.className = "redis-group";
-  el.classList.toggle("collapsed", foldedKinds.has(kind));
-  const header = document.createElement("div");
-  header.className = "redis-group-header";
-  const toggle = document.createElement("span");
-  toggle.className = "toggle";
-  header.appendChild(toggle);
-  const name = document.createElement("span");
-  name.textContent = kind;
-  header.appendChild(name);
-  const count = document.createElement("span");
-  count.className = "group-count";
-  header.appendChild(count);
-  header.addEventListener("click", () => {
-    const folded = !foldedKinds.has(kind);
-    if (folded) foldedKinds.add(kind);
-    else foldedKinds.delete(kind);
-    el.classList.toggle("collapsed", folded);
-  });
-  el.appendChild(header);
-  const body = document.createElement("div");
-  body.className = "redis-group-keys";
-  el.appendChild(body);
-  group = { el, count, body, entries: [] };
+  group = { ...createListGroup(kind, foldedKinds), entries: [] };
   // In order among the groups already shown: before the first that sorts after it.
   const next = [...keyGroups.keys()].sort(compareKinds).find((k) => compareKinds(kind, k) < 0);
-  keyListEl.insertBefore(el, next ? keyGroups.get(next).el : null);
+  keyListEl.insertBefore(group.el, next ? keyGroups.get(next).el : null);
   keyGroups.set(kind, group);
   return group;
 }

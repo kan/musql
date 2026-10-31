@@ -14,6 +14,7 @@
 //! just verify-mysql    # MUSQL_VERIFY_MYSQL_HOST, … (through the SSH host if set)
 //! just verify-docker   # MUSQL_VERIFY_DOCKER=1
 //! just verify-redis    # MUSQL_VERIFY_REDIS_HOST, … (writes, then deletes, musql:verify:* keys)
+//! just verify-postgres # MUSQL_VERIFY_PG_HOST, … (temp tables only; writes nothing that stays)
 //! ```
 //!
 //! Tests rather than `src/bin/verify_*.rs` because muSQL is a binary-only crate: a
@@ -516,4 +517,175 @@ fn verify_redis() {
     let all: Vec<&str> = keys.iter().map(|(key, _)| key.as_str()).collect();
     run(&mut session, &format!("DEL {}", all.join(" ")));
     println!("verify_redis: ok, the seeded keys are deleted again");
+}
+
+/// Connects to PostgreSQL (#96), through the SSH host when one is configured, and runs
+/// what the query window relies on: the connection test, a tab's statements sharing its
+/// connection (a transaction and a temp table), cancelling, the error's `LINE`, the AI
+/// schema, and the SSL mode in effect. Only temp tables are made, and they go with the
+/// connection.
+///
+/// | Variable | Default |
+/// |---|---|
+/// | `MUSQL_VERIFY_PG_HOST` | (required) |
+/// | `MUSQL_VERIFY_PG_PORT` | 5432 |
+/// | `MUSQL_VERIFY_PG_USER` | `postgres` |
+/// | `MUSQL_VERIFY_PG_PASSWORD` | empty |
+/// | `MUSQL_VERIFY_PG_DATABASE` | none (the server takes the user's name) |
+/// | `MUSQL_VERIFY_PG_SSL_MODE` | `DISABLED` |
+/// | `MUSQL_VERIFY_PG_CA_CERT` | none |
+#[test]
+#[ignore]
+fn verify_postgres() {
+    let Some(host) = env("MUSQL_VERIFY_PG_HOST") else {
+        println!("verify_postgres: skipped (set MUSQL_VERIFY_PG_HOST)");
+        return;
+    };
+    let mysql = MySqlConfig {
+        host: host.clone(),
+        port: env_port("MUSQL_VERIFY_PG_PORT", 5432),
+        database: env("MUSQL_VERIFY_PG_DATABASE"),
+        username: env_or("MUSQL_VERIFY_PG_USER", "postgres"),
+        password: env_or("MUSQL_VERIFY_PG_PASSWORD", ""),
+        ssl_mode: env_or("MUSQL_VERIFY_PG_SSL_MODE", "DISABLED").into(),
+        tls_ca_cert_path: env("MUSQL_VERIFY_PG_CA_CERT"),
+        save_password: false,
+        op_ref: None,
+        file_path: None,
+        tls_enabled: false,
+        tls_skip_verify: false,
+    };
+    let request = ConnectionRequest {
+        engine: Engine::Postgresql,
+        mysql: mysql.clone(),
+        ssh: ssh_from_env(),
+    };
+    println!(
+        "verify_postgres: {}@{}:{} (ssl: {:?}){}",
+        mysql.username,
+        host,
+        mysql.port,
+        mysql.ssl_mode,
+        if request.ssh.is_some() {
+            " via ssh"
+        } else {
+            ""
+        }
+    );
+    let message = tauri::async_runtime::block_on(run_connection_test(request.clone(), None))
+        .unwrap_or_else(|e| panic!("connection test failed: {e}"));
+    println!("verify_postgres: connection test: {message}");
+
+    // The window's way in: the session the query window caches.
+    let cache = Arc::new(Mutex::new(None));
+    let session = tauri::async_runtime::block_on(use_postgres_server(&cache, &request))
+        .unwrap_or_else(|e| panic!("{e}"));
+    let run = |tab: &str, sql: &str| {
+        run_postgres_query(&session, sql, 0, tab.to_owned())
+            .unwrap_or_else(|e| panic!("{sql}: {e}"))
+    };
+    let version = run("verify", "SELECT version()").rows[0][0].clone();
+    println!("verify_postgres: connected: {version}");
+
+    // A tab's statements share its connection; another tab has its own.
+    run("verify", "BEGIN");
+    run(
+        "verify",
+        "CREATE TEMP TABLE musql_verify (id int PRIMARY KEY, body bytea)",
+    );
+    let insert = run(
+        "verify",
+        "INSERT INTO musql_verify VALUES (1, '\\x89504e47'), (2, NULL)",
+    );
+    assert_eq!(insert.affected_rows, 2);
+    let rows = run("verify", "SELECT id, body FROM musql_verify ORDER BY id");
+    assert_eq!(rows.columns, ["id", "body"]);
+    assert_eq!(
+        rows.rows,
+        [
+            vec![json!("1"), json!("\\x89504e47")],
+            vec![json!("2"), serde_json::Value::Null]
+        ]
+    );
+    assert!(
+        run_postgres_query(
+            &session,
+            "SELECT * FROM musql_verify",
+            0,
+            "other".to_owned()
+        )
+        .is_err(),
+        "another tab sees this tab's temp table"
+    );
+    run("verify", "ROLLBACK");
+    println!("verify_postgres:   a tab keeps its connection (transaction, temp table)");
+
+    // An error points at its line, as psql's does.
+    let error = run_postgres_query(&session, "SELECT 1\nFROMM x", 0, "verify".to_owned())
+        .expect_err("a syntax error");
+    assert!(error.contains("\nLINE 2: FROMM x"), "{error}");
+    println!("verify_postgres:   error: {}", error.replace('\n', " | "));
+
+    // Cancelling stops the tab's statement, from another thread.
+    let started = std::time::Instant::now();
+    let cancelled = std::thread::scope(|scope| {
+        let sleeping =
+            scope.spawn(|| run_postgres_query(&session, "SELECT pg_sleep(30)", 0, "sleep".into()));
+        std::thread::sleep(Duration::from_secs(1));
+        tauri::async_runtime::block_on(cancel_query(Some("sleep".to_owned())))
+            .unwrap_or_else(|e| panic!("cancel failed: {e}"));
+        sleeping.join().unwrap()
+    });
+    let cancelled = cancelled.expect_err("the cancelled statement fails");
+    assert!(started.elapsed() < Duration::from_secs(10), "{cancelled}");
+    println!(
+        "verify_postgres:   cancelled: {}",
+        cancelled.replace('\n', " | ")
+    );
+
+    // The AI prompts' schema.
+    let tab = session
+        .tab(&running_query_key(None), postgres_client::Reopen::Quietly)
+        .unwrap();
+    let schema = tab
+        .lock()
+        .schema("verify")
+        .unwrap_or_else(|e| panic!("{e}"));
+    println!(
+        "verify_postgres:   AI schema: {} table(s)",
+        schema.tables.len()
+    );
+
+    // The mode asked for must be the one in effect, in both directions.
+    let ssl = run(
+        "verify",
+        "SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()",
+    );
+    let encrypted = rows_first(&ssl) == "t";
+    assert_eq!(
+        encrypted,
+        mysql.ssl_mode != SslMode::Disabled,
+        "ssl_mode is {:?} but the session is {}",
+        mysql.ssl_mode,
+        if encrypted {
+            "encrypted"
+        } else {
+            "unencrypted"
+        }
+    );
+    println!(
+        "verify_postgres: ok ({})",
+        if encrypted { "TLS" } else { "unencrypted" }
+    );
+}
+
+/// The first value of a result, as text.
+fn rows_first(result: &QueryResult) -> String {
+    result
+        .rows
+        .first()
+        .and_then(|row| row.first())
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_owned()
 }

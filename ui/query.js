@@ -203,7 +203,7 @@ function showHistoryMenu(anchorEvent, entries, onSelect) {
 
 function buildTableHints() {
   const hints = {};
-  currentTables.forEach((t) => { hints[t] = []; });
+  currentTables.forEach((key) => { hints[tableLabel(key)] = []; });
   return hints;
 }
 
@@ -340,20 +340,32 @@ function updateWindowTitle() {
 // ── Export utilities (CSV and the options dialog are in export.js) ──
 
 // ── SQL dialect ──
-// The window speaks MySQL's SQL, and SQLite's for a SQLite profile (#97). Every piece of
-// SQL that differs between the two is built by the functions in this section.
+// The window speaks MySQL's SQL, SQLite's for a SQLite profile (#97) and PostgreSQL's for
+// a PostgreSQL one (#96). Every piece of SQL that differs between them is built by the
+// functions in this section.
 
 function isSqlite() {
   return !!requestCache && requestCache.engine === "sqlite";
 }
 
-// The dialect's name for CodeMirror's mode (`text/x-…`) and sql-formatter's language.
+function isPostgres() {
+  return !!requestCache && requestCache.engine === "postgresql";
+}
+
+// The dialect's name for sql-formatter's language.
 function sqlDialect() {
-  return isSqlite() ? "sqlite" : "mysql";
+  if (isSqlite()) return "sqlite";
+  if (isPostgres()) return "postgresql";
+  return "mysql";
+}
+
+// The dialect's CodeMirror mode.
+function codeMirrorMode() {
+  return isPostgres() ? "text/x-pgsql" : "text/x-" + sqlDialect();
 }
 
 function quoteId(name) {
-  if (isSqlite()) return '"' + name.replace(/"/g, '""') + '"';
+  if (isSqlite() || isPostgres()) return '"' + name.replace(/"/g, '""') + '"';
   return '`' + name.replace(/`/g, '``') + '`';
 }
 
@@ -365,20 +377,100 @@ function quoteId(name) {
 // (#123). Under NO_BACKSLASH_ESCAPES a doubled backslash is two characters, so a value
 // containing one fails to match; that is a miss, never an injection. `\'` is not used:
 // under that mode it would close the literal. SQLite has no backslash escapes at all.
+// PostgreSQL reads a backslash in '...' as itself, unless standard_conforming_strings is
+// off; E'...' reads it as an escape either way, so a value with one goes in E'...' with
+// it doubled.
 function sqlStringLiteral(val) {
   let s = String(val);
-  if (!isSqlite()) s = s.replace(/\\/g, "\\\\");
-  return "'" + s.replace(/'/g, "''") + "'";
+  let prefix = "";
+  if (isPostgres()) {
+    if (s.includes("\\")) {
+      prefix = "E";
+      s = s.replace(/\\/g, "\\\\");
+    }
+  } else if (!isSqlite()) {
+    s = s.replace(/\\/g, "\\\\");
+  }
+  return prefix + "'" + s.replace(/'/g, "''") + "'";
+}
+
+// ── Tables ──
+// The window names a table by a key: on MySQL and SQLite its name. A PostgreSQL table
+// lives in a schema (#96), so its key is the JSON of [schema, name]. Tab ids, the drafts
+// and the table list carry keys; SQL takes `quoteTable(key)` and people see
+// `tableLabel(key)`.
+
+function tableKey(schema, name) {
+  return isPostgres() ? JSON.stringify([schema, name]) : name;
+}
+
+// PostgreSQL keys parsed once: QuickOpen reads every table's label on each key stroke.
+const pgTableRefs = new Map();
+
+// { schema (null on MySQL and SQLite), name }.
+function tableRef(key) {
+  if (!isPostgres()) return { schema: null, name: key };
+  let ref = pgTableRefs.get(key);
+  if (!ref) {
+    ref = { schema: "public", name: key };
+    try {
+      const parsed = JSON.parse(key);
+      if (Array.isArray(parsed) && parsed.length === 2) ref = { schema: String(parsed[0]), name: String(parsed[1]) };
+    } catch (_) { /* not a key: a name alone */ }
+    pgTableRefs.set(key, ref);
+  }
+  return ref;
+}
+
+// The name people see: a PostgreSQL table outside `public` with its schema.
+function tableLabel(key) {
+  const ref = tableRef(key);
+  return ref.schema && ref.schema !== "public" ? ref.schema + "." + ref.name : ref.name;
+}
+
+function quoteTable(key) {
+  const ref = tableRef(key);
+  return ref.schema ? quoteId(ref.schema) + "." + quoteId(ref.name) : quoteId(ref.name);
+}
+
+// A PostgreSQL table as the catalogs' `oid` of it (`pg_attribute.attrelid = …`).
+function pgRegclass(key) {
+  return sqlStringLiteral(quoteTable(key)) + "::regclass";
 }
 
 // SQLite's own tables (sqlite_sequence, sqlite_stat1, ...) are left out of the lists.
 const SQLITE_USER_OBJECTS = "name NOT LIKE 'sqlite\\_%' ESCAPE '\\'";
 
-function tableListSql() {
+// PostgreSQL's own schemas (pg_catalog, pg_toast, the pg_temp_N ones, information_schema)
+// are left out of the lists. `left`, not LIKE: a LIKE pattern's backslash would depend on
+// standard_conforming_strings. The same as `USER_SCHEMAS` in postgres_client.rs, which a
+// test there checks.
+const PG_USER_SCHEMAS = "left(n.nspname, 3) <> 'pg_' AND n.nspname <> 'information_schema'";
+
+// The tables (and views) of the database, as keys.
+async function fetchTableKeys() {
   if (isSqlite()) {
-    return "SELECT name FROM sqlite_master WHERE type IN ('table', 'view') AND " + SQLITE_USER_OBJECTS + " ORDER BY name";
+    const res = await runQuery("SELECT name FROM sqlite_master WHERE type IN ('table', 'view') AND " + SQLITE_USER_OBJECTS + " ORDER BY name");
+    return res.rows.map((r) => r[0]);
   }
-  return "SHOW TABLES";
+  if (isPostgres()) {
+    // Tables, views, materialized views, partitioned and foreign tables; a partition is
+    // left to its parent.
+    const res = await runQuery(
+      "SELECT n.nspname, c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace " +
+      "WHERE c.relkind IN ('r', 'v', 'm', 'p', 'f') AND NOT c.relispartition AND " + PG_USER_SCHEMAS + " " +
+      "ORDER BY n.nspname, c.relname"
+    );
+    return res.rows.map((r) => tableKey(r[0], r[1]));
+  }
+  const res = await runQuery("SHOW TABLES");
+  return res.rows.map((r) => r[0]);
+}
+
+// The databases the database modal lists. Not on SQLite, whose file is the one database.
+function databaseListSql() {
+  if (isPostgres()) return "SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY datname";
+  return "SHOW DATABASES";
 }
 
 // The CREATE statement of a table (or view), or "" when it cannot be read.
@@ -388,6 +480,7 @@ async function fetchCreateSql(tableName) {
       const res = await runQuery("SELECT sql FROM sqlite_master WHERE type IN ('table', 'view') AND name = " + sqlStringLiteral(tableName));
       return res.rows.length > 0 ? (res.rows[0][0] || "") : "";
     }
+    if (isPostgres()) return await fetchPostgresCreateSql(tableName);
     const res = await runQuery("SHOW CREATE TABLE " + quoteId(tableName));
     return res.rows.length > 0 ? (res.rows[0][1] || "") : "";
   } catch (_) {
@@ -395,9 +488,116 @@ async function fetchCreateSql(tableName) {
   }
 }
 
+// A PostgreSQL column's identity or generated expression, from its pg_attribute row read
+// through to_jsonb (attidentity is PostgreSQL 10's, attgenerated 12's, and a column that
+// does not exist reads as NULL there rather than failing).
+const PG_COLUMN_EXTRA =
+  "CASE to_jsonb(a) ->> 'attidentity' WHEN 'a' THEN 'GENERATED ALWAYS AS IDENTITY' WHEN 'd' THEN 'GENERATED BY DEFAULT AS IDENTITY' " +
+  "ELSE CASE WHEN to_jsonb(a) ->> 'attgenerated' = 's' THEN 'GENERATED ALWAYS AS (' || pg_get_expr(d.adbin, d.adrelid) || ') STORED' END END";
+
+// 'PRI' for a column of a PostgreSQL table's primary key, else ''. The column is `a`
+// (pg_attribute).
+const PG_PRIMARY_KEY =
+  "CASE WHEN EXISTS (SELECT 1 FROM pg_index i WHERE i.indrelid = a.attrelid AND i.indisprimary AND a.attnum = ANY (i.indkey)) THEN 'PRI' ELSE '' END";
+
+// A PostgreSQL table's indexes (`ix`), their relations (`i`) and access methods (`am`).
+const PG_INDEXES_FROM =
+  "FROM pg_index ix JOIN pg_class i ON i.oid = ix.indexrelid JOIN pg_am am ON am.oid = i.relam ";
+
+// A PostgreSQL table's columns with their definitions, in order, under DESCRIBE's names
+// (the Schema view shows them as they come): Field, Type, Null ("YES" / "NO"), Key,
+// Default (NULL for a generated column, whose expression is in Extra), Extra, Comment.
+function pgColumnsSql(tableName) {
+  return "SELECT a.attname AS \"Field\", format_type(a.atttypid, a.atttypmod) AS \"Type\", " +
+    "CASE WHEN a.attnotnull THEN 'NO' ELSE 'YES' END AS \"Null\", " + PG_PRIMARY_KEY + " AS \"Key\", " +
+    "CASE WHEN to_jsonb(a) ->> 'attgenerated' = 's' THEN NULL ELSE pg_get_expr(d.adbin, d.adrelid) END AS \"Default\", " +
+    PG_COLUMN_EXTRA + " AS \"Extra\", col_description(a.attrelid, a.attnum) AS \"Comment\" " +
+    "FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum " +
+    "WHERE a.attrelid = " + pgRegclass(tableName) + " AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum";
+}
+
+// The serial types, by the integer type of their column.
+const PG_SERIAL_TYPES = { smallint: "smallserial", integer: "serial", bigint: "bigserial" };
+
+// Whether a PostgreSQL column default (`pgColumnsSql`'s Default) takes the next value of
+// a sequence, as a serial column's does.
+function pgSequenceDefault(fallback) {
+  return fallback != null && /^nextval\('[^']*'::regclass\)$/.test(fallback);
+}
+
+// PostgreSQL has no SHOW CREATE TABLE: the statement is put together from the catalogs.
+// A view gives its definition; a table its columns and constraints, then its other
+// indexes (the last statement without its ";", which the caller adds). `colRes` is the
+// result of `pgColumnsSql` when the caller has it already.
+async function fetchPostgresCreateSql(tableName, colRes) {
+  const rel = pgRegclass(tableName);
+  const [kindRes, columns, conRes, idxRes, partRes] = await Promise.all([
+    runQuery(
+      "SELECT relkind, CASE WHEN relkind IN ('v', 'm') THEN pg_get_viewdef(oid) END, " +
+      "CASE WHEN relkind = 'p' THEN pg_get_partkeydef(oid) END FROM pg_class WHERE oid = " + rel
+    ),
+    colRes || runQuery(pgColumnsSql(tableName)),
+    runQuery(
+      "SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = " + rel + " " +
+      "ORDER BY CASE contype WHEN 'p' THEN 0 WHEN 'u' THEN 1 WHEN 'f' THEN 2 ELSE 3 END, conname"
+    ),
+    // The indexes no constraint stands for (a primary key's or a unique constraint's
+    // comes with the constraint).
+    runQuery(
+      "SELECT pg_get_indexdef(i.indexrelid) FROM pg_index i WHERE i.indrelid = " + rel + " " +
+      "AND NOT EXISTS (SELECT 1 FROM pg_constraint c WHERE c.conrelid = i.indrelid AND c.conindid = i.indexrelid) " +
+      "ORDER BY 1"
+    ),
+    // A partitioned table's partitions (the table list shows only the parent), as
+    // statements of their own: without them its rows have nowhere to go.
+    runQuery(
+      "SELECT 'CREATE TABLE ' || c.oid::regclass || ' PARTITION OF ' || p.oid::regclass || ' ' || pg_get_expr(c.relpartbound, c.oid) " +
+      "FROM pg_inherits h JOIN pg_class c ON c.oid = h.inhrelid JOIN pg_class p ON p.oid = h.inhparent " +
+      "WHERE h.inhparent = " + rel + " AND c.relispartition ORDER BY 1"
+    ),
+  ]);
+  if (kindRes.rows.length === 0) return "";
+  const [kind, viewDef, partitionKey] = kindRes.rows[0];
+  const name = quoteTable(tableName);
+  if (kind === "v" || kind === "m") {
+    const create = kind === "m" ? "CREATE MATERIALIZED VIEW " : "CREATE VIEW ";
+    return create + name + " AS\n" + String(viewDef || "").trim().replace(/;$/, "");
+  }
+  const items = columns.rows.map((r) => {
+    let type = r[1];
+    let fallback = r[4];
+    // A column filled from a sequence is written as serial, which makes the sequence
+    // too: the statement would otherwise name a sequence it does not create.
+    if (pgSequenceDefault(fallback) && PG_SERIAL_TYPES[type]) {
+      type = PG_SERIAL_TYPES[type];
+      fallback = null;
+    }
+    let def = "  " + quoteId(r[0]) + " " + type;
+    if (r[5]) def += " " + r[5];
+    if (fallback != null) def += " DEFAULT " + fallback;
+    if (r[2] === "NO") def += " NOT NULL";
+    return def;
+  });
+  conRes.rows.forEach((r) => items.push("  CONSTRAINT " + quoteId(r[0]) + " " + r[1]));
+  const create = kind === "f" ? "CREATE FOREIGN TABLE " : "CREATE TABLE ";
+  const statements = [create + name + " (\n" + items.join(",\n") + "\n)" + (partitionKey ? " PARTITION BY " + partitionKey : "")];
+  partRes.rows.forEach((r) => statements.push(r[0]));
+  idxRes.rows.forEach((r) => statements.push(r[0]));
+  return statements.join(";\n");
+}
+
 // The columns of a table, in order: [{ name, dataType (lower case), columnKey ("PRI" for
 // the primary key) }].
 async function fetchColumnMeta(tableName) {
+  if (isPostgres()) {
+    // The type's own name (text, bytea, int4, ...): what columnKind reads.
+    const res = await runQuery(
+      "SELECT a.attname, t.typname, " + PG_PRIMARY_KEY + " " +
+      "FROM pg_attribute a JOIN pg_type t ON t.oid = a.atttypid " +
+      "WHERE a.attrelid = " + pgRegclass(tableName) + " AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum"
+    );
+    return res.rows.map((r) => ({ name: r[0], dataType: (r[1] || "").toLowerCase(), columnKey: r[2] || "" }));
+  }
   if (isSqlite()) {
     const res = await runQuery("SELECT name, type, pk FROM pragma_table_info(" + sqlStringLiteral(tableName) + ") ORDER BY cid");
     return res.rows.map((r) => ({ name: r[0], dataType: (r[1] || "").toLowerCase(), columnKey: Number(r[2]) > 0 ? "PRI" : "" }));
@@ -424,6 +624,11 @@ function columnKind(dataType) {
     if (dataType.includes("text") || dataType.includes("clob")) return "text";
     return null;
   }
+  if (isPostgres()) {
+    if (dataType === "bytea") return "blob";
+    if (dataType === "text") return "text";
+    return null;
+  }
   if (MYSQL_BLOB_TYPES.includes(dataType)) return "blob";
   if (MYSQL_TEXT_TYPES.includes(dataType)) return "text";
   return null;
@@ -433,6 +638,9 @@ function columnKind(dataType) {
 function truncatedTextExpr(q) {
   if (isSqlite()) {
     return "CASE WHEN length(" + q + ") > 200 THEN substr(" + q + ", 1, 200) || '…' ELSE " + q + " END AS " + q;
+  }
+  if (isPostgres()) {
+    return "CASE WHEN char_length(" + q + ") > 200 THEN left(" + q + ", 200) || '…' ELSE " + q + " END AS " + q;
   }
   return "CASE WHEN CHAR_LENGTH(" + q + ") > 200 THEN CONCAT(LEFT(" + q + ", 200), '…') ELSE " + q + " END AS " + q;
 }
@@ -449,35 +657,115 @@ function sqliteIndexSql(tableName) {
 // it; a larger one comes as "(image: N bytes)" (`imagePreview` reads it). Anything else
 // stays "(BLOB)", as in the Data view: a few megabytes of hex would only slow the detail
 // down. HEX, SUBSTR, LENGTH (bytes, for a BLOB) and CONCAT read the same in MySQL and
-// SQLite. NULL is tested first: SQLite's HEX(NULL) is "", not NULL.
+// SQLite. NULL is tested first: SQLite's HEX(NULL) is "", not NULL. PostgreSQL's CASE
+// takes one type, so there every branch is text: the image as `0x` + hex, the form in
+// which bytes that are not UTF-8 reach the window from MySQL.
 function detailBlobExpr(q) {
-  const bytesAt = (from, n) => "HEX(SUBSTR(" + q + ", " + from + ", " + n + "))";
+  const pg = isPostgres();
+  const bytesAt = (from, n) => pg
+    ? "upper(encode(substr(" + q + ", " + from + ", " + n + "), 'hex'))"
+    : "HEX(SUBSTR(" + q + ", " + from + ", " + n + "))";
   const isImage = "(" + bytesAt(1, 3) + " = 'FFD8FF' OR " + bytesAt(1, 4) + " IN ('89504E47', '47494638')" +
     " OR (" + bytesAt(1, 4) + " = '52494646' AND " + bytesAt(9, 4) + " = '57454250'))";
+  const tooLarge = pg
+    ? "'(image: ' || length(" + q + ") || ' bytes)'"
+    : "CONCAT('(image: ', LENGTH(" + q + "), ' bytes)')";
+  const whole = pg ? "'0x' || encode(" + q + ", 'hex')" : q;
   return "CASE WHEN " + q + " IS NULL THEN NULL " +
     "WHEN NOT " + isImage + " THEN '(BLOB)' " +
-    "WHEN LENGTH(" + q + ") > " + IMAGE_PREVIEW_MAX_BYTES + " THEN CONCAT('(image: ', LENGTH(" + q + "), ' bytes)') " +
-    "ELSE " + q + " END AS " + q;
+    "WHEN LENGTH(" + q + ") > " + IMAGE_PREVIEW_MAX_BYTES + " THEN " + tooLarge + " " +
+    "ELSE " + whole + " END AS " + q;
 }
 
-// The Schema view's two queries: the columns, and the indexes (one row per column).
+// The Schema view's two queries: the columns, and the indexes (MySQL and SQLite: one row
+// per column; PostgreSQL: one per index, with its definition).
 function structureSql(tableName) {
   if (isSqlite()) return ["PRAGMA table_info(" + sqlStringLiteral(tableName) + ")", sqliteIndexSql(tableName)];
+  if (isPostgres()) {
+    const rel = pgRegclass(tableName);
+    return [
+      pgColumnsSql(tableName),
+      "SELECT i.relname AS \"Key_name\", ix.indisprimary AS \"Primary\", ix.indisunique AS \"Unique\", " +
+      "am.amname AS \"Index_type\", pg_get_indexdef(ix.indexrelid) AS \"Definition\" " + PG_INDEXES_FROM +
+      "WHERE ix.indrelid = " + rel + " ORDER BY ix.indisprimary DESC, i.relname",
+    ];
+  }
   return ["DESCRIBE " + quoteId(tableName), "SHOW INDEX FROM " + quoteId(tableName)];
 }
 
 // Where a syntax error points: { near, line (0-based) }, or null. MySQL says
-// "... near 'xxx' at line N". SQLite's message names no line, and searching the whole
-// editor for the word could mark it in another statement, so it is not marked.
+// "... near 'xxx' at line N", and PostgreSQL `at or near "xxx"` followed by the line psql
+// prints (`LINE N: …`, which postgres_client.rs adds). SQLite's message names no line,
+// and searching the whole editor for the word could mark it in another statement, so it
+// is not marked.
 function sqlErrorPosition(errorMsg) {
   if (isSqlite()) return null;
-  const m = /near\s+'([\s\S]*?)'\s+at\s+line\s+(\d+)/i.exec(errorMsg);
+  const m = isPostgres()
+    ? /at or near "([\s\S]*?)"\nLINE (\d+):/.exec(errorMsg)
+    : /near\s+'([\s\S]*?)'\s+at\s+line\s+(\d+)/i.exec(errorMsg);
   return m ? { near: m[1], line: parseInt(m[2], 10) - 1 } : null;
 }
 
 // The first line of the SQL export.
 function sqlDumpHeader() {
-  return isSqlite() ? "-- muSQL export (SQLite)" : "-- mysqldump-compatible export";
+  if (isSqlite()) return "-- muSQL export (SQLite)";
+  if (isPostgres()) return "-- muSQL export (PostgreSQL)";
+  return "-- mysqldump-compatible export";
+}
+
+// Where the editor's statements are: [{ start, end }] offsets into `text`, split at each
+// `;` outside a string, a quoted name, a comment and (PostgreSQL) a dollar-quoted body
+// (`$$ … $$`, as a function's), so a `;` inside one does not cut the statement. There is
+// always at least one range; the `;` itself is in none. With `until` (an offset), the
+// scan stops at the first range that ends at or after it: the range holding the cursor.
+function statementRanges(text, until) {
+  const pg = isPostgres();
+  const mysql = !pg && !isSqlite();
+  const ranges = [];
+  let start = 0;
+  let i = 0;
+  const endOf = (from, close) => {
+    const at = text.indexOf(close, from);
+    return at === -1 ? text.length : at + close.length;
+  };
+  while (i < text.length) {
+    const c = text[i];
+    const next = text[i + 1];
+    // MySQL's `--` comment needs a space (or the end) after it: `1--1` is arithmetic.
+    if (c === "-" && next === "-" && (!mysql || i + 2 >= text.length || /\s/.test(text[i + 2]))) {
+      i = endOf(i, "\n");
+    } else if (c === "#" && mysql) {
+      i = endOf(i, "\n");
+    } else if (c === "/" && next === "*") {
+      i = endOf(i + 2, "*/");
+    } else if (c === "'" || c === '"' || (c === "`" && mysql)) {
+      // MySQL's strings take backslash escapes, and PostgreSQL's E'…' ones.
+      const backslash = mysql || (pg && c === "'" && /[eE]/.test(text[i - 1] || "") && !/[\w$]/.test(text[i - 2] || ""));
+      i++;
+      while (i < text.length) {
+        if (backslash && text[i] === "\\") { i += 2; continue; }
+        if (text[i] === c) {
+          if (text[i + 1] === c) { i += 2; continue; }
+          i++;
+          break;
+        }
+        i++;
+      }
+    } else if (c === "$" && pg && !/[\w$]/.test(text[i - 1] || "")) {
+      // `$tag$` or `$$`; `$1` is a parameter.
+      const m = /^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/.exec(text.slice(i, i + 64));
+      i = m ? endOf(i + m[0].length, m[0]) : i + 1;
+    } else {
+      if (c === ";") {
+        ranges.push({ start, end: i });
+        if (until !== undefined && i >= until) return ranges;
+        start = i + 1;
+      }
+      i++;
+    }
+  }
+  ranges.push({ start, end: text.length });
+  return ranges;
 }
 
 function sqlEscapeValue(val) {
@@ -486,19 +774,47 @@ function sqlEscapeValue(val) {
   return sqlStringLiteral(val);
 }
 
-async function generateInsertSql(tableName, newline) {
-  const createSql = await fetchCreateSql(tableName);
+// How the SQL export writes a PostgreSQL table, so that the file loads back:
+// - createSql: the CREATE statement ("" when it cannot be read)
+// - select: the columns to copy. A generated column takes no value, so it is left out.
+// - overriding: " OVERRIDING SYSTEM VALUE" when an identity column is GENERATED ALWAYS,
+//   which takes a value only with it; else ""
+// - sequenced: the columns filled from a sequence (identity and serial), which the
+//   copied ids would leave behind, so the export moves it past them (`pgSetvalSql`)
+async function pgExportPlan(tableName) {
+  const colRes = await runQuery(pgColumnsSql(tableName));
+  const createSql = await fetchPostgresCreateSql(tableName, colRes).catch(() => "");
+  const extra = (r) => r[5] || "";
+  const copied = colRes.rows.filter((r) => !/^GENERATED ALWAYS AS \(/.test(extra(r)));
+  return {
+    createSql,
+    select: copied.length > 0 ? copied.map((r) => quoteId(r[0])).join(", ") : "*",
+    overriding: colRes.rows.some((r) => extra(r) === "GENERATED ALWAYS AS IDENTITY") ? " OVERRIDING SYSTEM VALUE" : "",
+    sequenced: colRes.rows.filter((r) => / AS IDENTITY$/.test(extra(r)) || pgSequenceDefault(r[4])).map((r) => r[0]),
+  };
+}
 
-  const dataRes = await runQuery("SELECT * FROM " + quoteId(tableName), 0);
+// Moves the sequence of a column (identity or serial) past the largest value in it.
+// pg_get_serial_sequence reads the table as SQL does and the column name as it is.
+function pgSetvalSql(tableName, column) {
+  return "SELECT setval(pg_get_serial_sequence(" + sqlStringLiteral(quoteTable(tableName)) + ", " + sqlStringLiteral(column) + "), " +
+    "COALESCE(MAX(" + quoteId(column) + "), 0) + 1, false) FROM " + quoteTable(tableName) + ";";
+}
+
+async function generateInsertSql(tableName, newline) {
+  const plan = isPostgres() ? await pgExportPlan(tableName) : null;
+  const createSql = plan ? plan.createSql : await fetchCreateSql(tableName);
+
+  const dataRes = await runQuery("SELECT " + (plan ? plan.select : "*") + " FROM " + quoteTable(tableName), 0);
   const columns = dataRes.columns;
   const rows = dataRes.rows;
 
   const lines = [];
   lines.push(sqlDumpHeader());
-  lines.push("-- Table: " + tableName);
+  lines.push("-- Table: " + tableLabel(tableName));
   lines.push("-- Exported: " + new Date().toISOString());
   lines.push("");
-  lines.push("DROP TABLE IF EXISTS " + quoteId(tableName) + ";");
+  lines.push("DROP TABLE IF EXISTS " + quoteTable(tableName) + ";");
   lines.push("");
   if (createSql) {
     // Split the multi-line CREATE TABLE (structural text) so the chosen line
@@ -510,11 +826,15 @@ async function generateInsertSql(tableName, newline) {
     const colList = columns.map((c) => quoteId(c)).join(", ");
     for (let i = 0; i < rows.length; i += 1000) {
       const batch = rows.slice(i, i + 1000);
-      lines.push("INSERT INTO " + quoteId(tableName) + " (" + colList + ") VALUES");
+      lines.push("INSERT INTO " + quoteTable(tableName) + " (" + colList + ")" + (plan ? plan.overriding : "") + " VALUES");
       batch.forEach((row, j) => {
         const vals = columns.map((_, ci) => sqlEscapeValue(row[ci])).join(", ");
         lines.push("(" + vals + ")" + (j === batch.length - 1 ? ";" : ","));
       });
+      lines.push("");
+    }
+    if (plan && plan.sequenced.length > 0) {
+      plan.sequenced.forEach((col) => lines.push(pgSetvalSql(tableName, col)));
       lines.push("");
     }
   }
@@ -523,8 +843,8 @@ async function generateInsertSql(tableName, newline) {
 }
 
 // The pieces of a table's schema that the Markdown export writes, gathered per dialect
-// (`fetchMysqlSchemaParts`, `fetchSqliteSchemaParts`) and written by
-// `renderMarkdownSchema`:
+// (`fetchMysqlSchemaParts`, `fetchSqliteSchemaParts`, `fetchPostgresSchemaParts`) and
+// written by `renderMarkdownSchema`:
 // - createSql, tableComment: strings, "" when there is none
 // - columns: [{ name, type, defaultStr, nullable ("true" / "false"), extra, comment }]
 // - fkParents, fkChildren: column -> [{ table, column, constraint }]
@@ -533,8 +853,91 @@ async function generateInsertSql(tableName, newline) {
 // - primaryKey: the primary key's columns when no index holds it (a SQLite table whose
 //   key is its rowid), else null
 async function generateMarkdownSchema(tableName, newline) {
-  const parts = isSqlite() ? await fetchSqliteSchemaParts(tableName) : await fetchMysqlSchemaParts(tableName);
-  return renderMarkdownSchema(tableName, parts, newline);
+  let parts;
+  if (isSqlite()) parts = await fetchSqliteSchemaParts(tableName);
+  else if (isPostgres()) parts = await fetchPostgresSchemaParts(tableName);
+  else parts = await fetchMysqlSchemaParts(tableName);
+  return renderMarkdownSchema(tableLabel(tableName), parts, newline);
+}
+
+async function fetchPostgresSchemaParts(tableName) {
+  const rel = pgRegclass(tableName);
+  // A foreign key's columns, one row per pair: constraint, the referencing table's
+  // schema, name and column, then the referenced one's.
+  const fkSql = (side) =>
+    "SELECT c.conname, sn.nspname, s.relname, sa.attname, tn.nspname, t.relname, ta.attname " +
+    "FROM pg_constraint c " +
+    "CROSS JOIN LATERAL unnest(c.conkey, c.confkey) WITH ORDINALITY AS k(col, ref, n) " +
+    "JOIN pg_class s ON s.oid = c.conrelid JOIN pg_namespace sn ON sn.oid = s.relnamespace " +
+    "JOIN pg_attribute sa ON sa.attrelid = c.conrelid AND sa.attnum = k.col " +
+    "JOIN pg_class t ON t.oid = c.confrelid JOIN pg_namespace tn ON tn.oid = t.relnamespace " +
+    "JOIN pg_attribute ta ON ta.attrelid = c.confrelid AND ta.attnum = k.ref " +
+    "WHERE c.contype = 'f' AND c." + side + " = " + rel + " ORDER BY c.conname, k.n";
+  // The columns feed both the table and its CREATE statement.
+  const colRes = await runQuery(pgColumnsSql(tableName));
+  const [createSql, commentRes, indexRes, fkRes, childRes] = await Promise.all([
+    fetchPostgresCreateSql(tableName, colRes).catch(() => ""),
+    runQuery("SELECT obj_description(" + rel + ", 'pg_class')"),
+    // One row per column of each index; attnum 0 is an expression.
+    runQuery(
+      "SELECT i.relname, ix.indisprimary, ix.indisunique, am.amname, a.attname " + PG_INDEXES_FROM +
+      "CROSS JOIN LATERAL unnest(ix.indkey::int2[]) WITH ORDINALITY AS k(attnum, n) " +
+      "LEFT JOIN pg_attribute a ON a.attrelid = ix.indrelid AND a.attnum = k.attnum " +
+      "WHERE ix.indrelid = " + rel + " ORDER BY ix.indisprimary DESC, i.relname, k.n"
+    ),
+    runQuery(fkSql("conrelid")),
+    runQuery(fkSql("confrelid")),
+  ]);
+
+  const columns = colRes.rows.map((r) => ({
+    name: r[0],
+    type: r[1] || "",
+    defaultStr: r[4] == null ? "" : String(r[4]),
+    nullable: r[2] === "NO" ? "false" : "true",
+    extra: r[5] || "",
+    comment: r[6] || "",
+  }));
+
+  const fkParents = {};
+  const fkConstraints = {};
+  for (const row of fkRes.rows) {
+    const [name, , , from, refSchema, refName, to] = row;
+    const refTable = tableLabel(tableKey(refSchema, refName));
+    if (!fkParents[from]) fkParents[from] = [];
+    fkParents[from].push({ table: refTable, column: to, constraint: name });
+    if (!fkConstraints[name]) fkConstraints[name] = { columns: [], refTable, refColumns: [] };
+    fkConstraints[name].columns.push(from);
+    fkConstraints[name].refColumns.push(to);
+  }
+  // Keyed by this table's column the child points at.
+  const fkChildren = {};
+  for (const row of childRes.rows) {
+    const [name, childSchema, childName, childColumn, , , to] = row;
+    if (!fkChildren[to]) fkChildren[to] = [];
+    fkChildren[to].push({ table: tableLabel(tableKey(childSchema, childName)), column: childColumn, constraint: name });
+  }
+
+  const indexes = [];
+  const byName = {};
+  for (const row of indexRes.rows) {
+    const name = row[0];
+    if (!byName[name]) {
+      byName[name] = { name, primary: row[1] === "t", unique: row[2] === "t", columns: [], using: (row[3] || "").toUpperCase() || null };
+      indexes.push(byName[name]);
+    }
+    byName[name].columns.push(row[4] == null ? "(expression)" : row[4]);
+  }
+
+  return {
+    createSql,
+    tableComment: commentRes.rows.length > 0 ? (commentRes.rows[0][0] || "") : "",
+    columns,
+    fkParents,
+    fkChildren,
+    fkConstraints,
+    indexes,
+    primaryKey: null,
+  };
 }
 
 async function fetchSqliteSchemaParts(tableName) {
@@ -825,7 +1228,7 @@ function renderMarkdownSchema(tableName, parts, newline) {
 }
 
 function showExportMenu(e, columns, rows, tableName) {
-  const items = currentRowsExportItems(columns, rows, tableName);
+  const items = currentRowsExportItems(columns, rows, tableName && tableLabel(tableName));
   if (tableName) {
     items.push({ separator: true });
     items.push({ label: t('csv_all'), icon: "download", action: () => doExportAll(tableName, ",", "csv") });
@@ -839,11 +1242,11 @@ function showExportMenu(e, columns, rows, tableName) {
 
 function doExportAll(tableName, sep, ext) {
   openExportDialog({
-    defaultName: tableName + "_all." + ext,
+    defaultName: tableLabel(tableName) + "_all." + ext,
     ext,
     filterName: ext.toUpperCase(),
     generate: async (nl) => {
-      const res = await runQuery("SELECT * FROM " + quoteId(tableName), 0);
+      const res = await runQuery("SELECT * FROM " + quoteTable(tableName), 0);
       return generateCsv(res.columns, res.rows, sep, nl);
     },
   });
@@ -851,7 +1254,7 @@ function doExportAll(tableName, sep, ext) {
 
 function doExportSql(tableName) {
   openExportDialog({
-    defaultName: tableName + ".sql",
+    defaultName: tableLabel(tableName) + ".sql",
     ext: "sql",
     filterName: "SQL",
     generate: async (nl) => generateInsertSql(tableName, nl),
@@ -860,7 +1263,7 @@ function doExportSql(tableName) {
 
 function doExportMarkdownSchema(tableName) {
   openExportDialog({
-    defaultName: tableName + ".md",
+    defaultName: tableLabel(tableName) + ".md",
     ext: "md",
     filterName: "Markdown",
     generate: async (nl) => generateMarkdownSchema(tableName, nl),
@@ -1059,6 +1462,15 @@ const tabManager = {
 
     const tab = this.tabs[idx];
 
+    // A SQLite or PostgreSQL tab keeps a connection of its own (a PostgreSQL one is a
+    // server process): stop what it runs and let it go. MySQL's tabs share a pool, and a
+    // statement left running there keeps running, as it always has. Both are sent at once,
+    // so that a new tab given the same id later does not meet them.
+    if (tab.type === "sql" && (isSqlite() || isPostgres())) {
+      safeInvoke("close_query_tab", { tabId: id }).catch((e) => console.warn("close_query_tab failed:", e));
+      safeInvoke("cancel_query", { tabId: id }).catch(() => {});
+    }
+
     // Save closed SQL tab content for in-session restore
     if (tab.type === "sql") {
       const match = tab.id.match(/^sql-(\d+)$/);
@@ -1132,7 +1544,7 @@ async function showDbModal() {
   dbModalStatus.textContent = t('loading');
 
   try {
-    const res = await runQuery("SHOW DATABASES");
+    const res = await runQuery(databaseListSql());
     dbModalStatus.textContent = "";
     const dbNames = res.rows.map((r) => r[0]);
 
@@ -1199,36 +1611,60 @@ async function loadTableList() {
   loadingEl.textContent = t('loading');
   tableListEl.appendChild(loadingEl);
   try {
-    const res = await runQuery(tableListSql());
+    const tables = await fetchTableKeys();
     tableListEl.innerHTML = "";
-    const tables = res.rows.map((r) => r[0]);
     currentTables = tables;
-
-    tables.forEach((name) => {
-      const el = document.createElement("div");
-      el.className = "table-list-item";
-      el.innerHTML = icon('table', 14);
-      el.appendChild(document.createTextNode(' ' + name));
-
-      el.addEventListener("click", () => openTableTab(name, "data"));
-
-      el.addEventListener("contextmenu", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        showContextMenu(e, [
-          { label: t('data'), icon: "table", action: () => openTableTab(name, "data") },
-          { label: t('schema'), icon: "columns-3", action: () => openTableTab(name, "structure") },
-        ]);
-      });
-
-      tableListEl.appendChild(el);
-    });
+    if (isPostgres()) {
+      renderSchemaTree(tables);
+    } else {
+      tables.forEach((key) => tableListEl.appendChild(tableListItem(key, tableRef(key).name)));
+    }
   } catch (error) {
     const errEl = document.createElement("div");
     errEl.className = "result-info";
     errEl.textContent = String(error);
     tableListEl.appendChild(errEl);
   }
+}
+
+// One table of the sidebar, shown as `name`.
+function tableListItem(key, name) {
+  const el = document.createElement("div");
+  el.className = "table-list-item";
+  el.innerHTML = icon('table', 14);
+  el.appendChild(document.createTextNode(' ' + name));
+
+  el.addEventListener("click", () => openTableTab(key, "data"));
+
+  el.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    showContextMenu(e, [
+      { label: t('data'), icon: "table", action: () => openTableTab(key, "data") },
+      { label: t('schema'), icon: "columns-3", action: () => openTableTab(key, "structure") },
+    ]);
+  });
+  return el;
+}
+
+// The schemas folded in the PostgreSQL table list, kept while the window is open.
+const foldedSchemas = new Set();
+
+// The PostgreSQL tables under their schemas (#96), each schema a group that folds as the
+// Redis key list's types do. `keys` come sorted by schema.
+function renderSchemaTree(keys) {
+  const groups = new Map();
+  keys.forEach((key) => {
+    const ref = tableRef(key);
+    if (!groups.has(ref.schema)) groups.set(ref.schema, []);
+    groups.get(ref.schema).push({ key, name: ref.name });
+  });
+  groups.forEach((tables, schema) => {
+    const group = createListGroup(schema, foldedSchemas);
+    group.count.textContent = "(" + tables.length + ")";
+    tables.forEach((table) => group.body.appendChild(tableListItem(table.key, table.name)));
+    tableListEl.appendChild(group.el);
+  });
 }
 
 // ── Table tab (Data + Structure unified) ──
@@ -1242,7 +1678,7 @@ function openTableTab(tableName, initialView) {
     return;
   }
 
-  tabManager.addTab(tabId, "data", tableName, (pane) => {
+  tabManager.addTab(tabId, "data", tableLabel(tableName), (pane) => {
     const body = document.createElement("div");
     body.className = "data-tab-body";
 
@@ -1251,7 +1687,7 @@ function openTableTab(tableName, initialView) {
     toggleBar.className = "view-toggle-bar";
     const toggleLabel = document.createElement("span");
     toggleLabel.style.cssText = "font-size:13px;font-weight:600;";
-    toggleLabel.textContent = tableName;
+    toggleLabel.textContent = tableLabel(tableName);
     toggleBar.appendChild(toggleLabel);
     const reloadBtn = document.createElement("button");
     reloadBtn.className = "ghost reload-btn";
@@ -1344,7 +1780,7 @@ function openTableTab(tableName, initialView) {
             if (blobCols.includes(c.name)) return detailBlobExpr(quoteId(c.name));
             return quoteId(c.name);
           }).join(", ");
-          runQuery("SELECT " + detailCols + " FROM " + quoteId(tableName) + " WHERE " + whereParts.join(" AND ") + " LIMIT 1")
+          runQuery("SELECT " + detailCols + " FROM " + quoteTable(tableName) + " WHERE " + whereParts.join(" AND ") + " LIMIT 1")
             .then((res) => {
               showRowDetailModal(res.rows.length > 0 ? res.columns : columns, res.rows.length > 0 ? res.rows[0] : row);
             })
@@ -1377,15 +1813,15 @@ function openTableTab(tableName, initialView) {
       try {
         await detectColumns();
         if (totalRows === 0) {
-          const countRes = await runQuery("SELECT COUNT(*) FROM " + quoteId(tableName));
+          const countRes = await runQuery("SELECT COUNT(*) FROM " + quoteTable(tableName));
           totalRows = countRes.rows[0][0];
         }
         const offset = currentPage * pageSize;
         const selectExpr = buildSelectExpr();
         const orderBy = buildOrderByClause();
         const res = await runQuery(
-          // LIMIT … OFFSET reads the same in MySQL and SQLite.
-          "SELECT " + selectExpr + " FROM " + quoteId(tableName) + orderBy + " LIMIT " + pageSize + " OFFSET " + offset
+          // LIMIT … OFFSET reads the same in MySQL, SQLite and PostgreSQL.
+          "SELECT " + selectExpr + " FROM " + quoteTable(tableName) + orderBy + " LIMIT " + pageSize + " OFFSET " + offset
         );
         lastColumns = res.columns;
         lastRows = res.rows;
@@ -1595,7 +2031,7 @@ function addSqlTab(initialContent, tabNum) {
     let editorTouched = false;
 
     const editor = CodeMirror(editorDiv, {
-      mode: "text/x-" + sqlDialect(),
+      mode: codeMirrorMode(),
       lineNumbers: true,
       indentWithTabs: true,
       smartIndent: true,
@@ -1632,21 +2068,11 @@ function addSqlTab(initialContent, tabNum) {
 
       const text = editor.getValue();
       if (!text.trim()) return;
-      const cursor = editor.indexFromPos(editor.getCursor());
-      let start = 0;
-      const parts = text.split(";");
-      for (let i = 0; i < parts.length; i++) {
-        const end = start + parts[i].length;
-        if (cursor <= end) {
-          // Found the statement containing the cursor
-          const fromLine = editor.posFromIndex(start).line;
-          const toLine = editor.posFromIndex(end).line;
-          for (let ln = fromLine; ln <= toLine; ln++) {
-            stmtHighlightLines.push(editor.addLineClass(ln, "background", "cm-statement-highlight"));
-          }
-          break;
-        }
-        start = end + 1; // skip the ;
+      const range = statementAtCursor(text);
+      const fromLine = editor.posFromIndex(range.start).line;
+      const toLine = editor.posFromIndex(range.end).line;
+      for (let ln = fromLine; ln <= toLine; ln++) {
+        stmtHighlightLines.push(editor.addLineClass(ln, "background", "cm-statement-highlight"));
       }
     }
     editor.on("cursorActivity", highlightCurrentStatement);
@@ -1828,21 +2254,22 @@ function addSqlTab(initialContent, tabNum) {
       }
     }
 
+    // The range of `text` (the editor's) holding the cursor: the last one the scan, which
+    // stops there, gives.
+    function statementAtCursor(text) {
+      const ranges = statementRanges(text, editor.indexFromPos(editor.getCursor()));
+      return ranges[ranges.length - 1];
+    }
+
     function getStatementAtCursor() {
       const text = editor.getValue();
-      const cursor = editor.indexFromPos(editor.getCursor());
-      let start = 0;
-      const parts = text.split(";");
-      for (let i = 0; i < parts.length; i++) {
-        const end = start + parts[i].length;
-        if (cursor <= end) return parts[i].trim();
-        start = end + 1;
-      }
-      return parts[parts.length - 1].trim();
+      const range = statementAtCursor(text);
+      return text.slice(range.start, range.end).trim();
     }
 
     function getAllStatements() {
-      return editor.getValue().split(";").map((s) => s.trim()).filter((s) => s.length > 0);
+      const text = editor.getValue();
+      return statementRanges(text).map((r) => text.slice(r.start, r.end).trim()).filter((s) => s.length > 0);
     }
 
     function setExecuting(state) {
@@ -2117,8 +2544,8 @@ function openQuickOpen() {
         action: () => insertSqlFromHistory(x.v.sql),
       }));
     } else {
-      items = byScore(query, currentTables, (n) => n).slice(0, 100).map((x) => ({
-        label: x.v,
+      items = byScore(query, currentTables, tableLabel).slice(0, 100).map((x) => ({
+        label: tableLabel(x.v),
         sub: "",
         icon: "table",
         action: () => openTableTab(x.v, "data"),

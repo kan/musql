@@ -396,6 +396,8 @@ const ENGINE_FIELDS = {
   mariadb: MYSQL_FIELDS,
   redis: { port: 6379, user: "", dbLabel: "redis_db_number", dbPlaceholder: "redis_db_placeholder" },
   sqlite: { ...MYSQL_FIELDS, file: true },
+  // Without a database the server picks the one named as the user, as psql does (#96).
+  postgresql: { port: 5432, user: "postgres", dbLabel: "database", dbPlaceholder: "optional" },
 };
 function engineFields(engine) {
   return Object.hasOwn(ENGINE_FIELDS, engine) ? ENGINE_FIELDS[engine] : MYSQL_FIELDS;

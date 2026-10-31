@@ -66,7 +66,7 @@ test-ignored:
 
 # --- 実接続の検証（#117。接続先は環境変数で渡す。一覧は src-tauri/src/verify.rs） ---
 #
-# russh / mysql / bollard を更新したあと、GUI を起動せずに接続を確かめるためのもの。
+# russh / mysql / postgres / bollard / redis を更新したあと、GUI を起動せずに接続を確かめるためのもの。
 # 環境変数が無ければ「skipped」と出して成功する。CI では回さない。
 
 # SSH の踏み台へ接続して認証する（MUSQL_VERIFY_SSH_HOST / _USER ほか）
@@ -89,6 +89,12 @@ verify-docker:
 [working-directory('src-tauri')]
 verify-redis:
     cargo test verify::verify_redis -- --ignored --nocapture
+
+# PostgreSQL の画面の処理（タブごとの接続、キャンセル、エラーの行）を確かめる（MUSQL_VERIFY_PG_HOST ほか。#96）。
+# 一時テーブルしか作らない
+[working-directory('src-tauri')]
+verify-postgres:
+    cargo test verify::verify_postgres -- --ignored --nocapture
 
 # 通知を 1 件出し、クリックが返るかを確かめる（MUSQL_VERIFY_TOAST=1。数値なら待ち秒数。#113）
 [working-directory('src-tauri')]

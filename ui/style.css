@@ -695,6 +695,40 @@ pre {
   background: var(--accent);
   color: #fff;
 }
+/* Folding groups of a list: the Redis key list's types, the PostgreSQL schemas (#96). */
+.list-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  cursor: default;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--sub);
+}
+.list-group-header:hover {
+  background: var(--hover-bg);
+}
+.list-group-header .toggle {
+  width: 12px;
+  font-size: 10px;
+  text-align: center;
+}
+.list-group-header .toggle::before {
+  content: "\25BC";
+}
+.list-group.collapsed .list-group-header .toggle::before {
+  content: "\25B6";
+}
+.list-group-header .group-count {
+  font-weight: 400;
+}
+.list-group.collapsed .list-group-items {
+  display: none;
+}
+.list-group-items .table-list-item {
+  padding-left: 28px;
+}
 
 /* ── Tab bar ── */
 .main-pane {
@@ -2124,40 +2158,6 @@ html.dark .CodeMirror-hint-active {
 }
 .redis-more button {
   width: 100%;
-}
-/* The key list's groups, one per type. */
-.redis-group-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  cursor: default;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--sub);
-}
-.redis-group-header:hover {
-  background: var(--hover-bg);
-}
-.redis-group-header .toggle {
-  width: 12px;
-  font-size: 10px;
-  text-align: center;
-}
-.redis-group-header .toggle::before {
-  content: "\25BC";
-}
-.redis-group.collapsed .redis-group-header .toggle::before {
-  content: "\25B6";
-}
-.redis-group-header .group-count {
-  font-weight: 400;
-}
-.redis-group.collapsed .redis-group-keys {
-  display: none;
-}
-.redis-group-keys .table-list-item {
-  padding-left: 28px;
 }
 .redis-empty {
   padding: 8px 12px;

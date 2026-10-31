@@ -23,6 +23,7 @@ mod docker;
 #[cfg(test)]
 mod docs_consistency;
 mod onepassword;
+mod postgres_client;
 mod redis_client;
 mod sqlite_client;
 mod toast;
@@ -159,6 +160,8 @@ enum Engine {
     Redis,
     /// A database file (#97): its own connection (`sqlite_client`), the query window.
     Sqlite,
+    /// Its own connection (`postgres_client`, #96), the query window.
+    Postgresql,
     /// An engine this version does not know, such as one a later version added. Its
     /// spelling is kept so that saving does not turn it into MySQL, and nothing connects
     /// to it as MySQL.
@@ -172,6 +175,7 @@ impl From<String> for Engine {
             "mariadb" => Self::Mariadb,
             "redis" => Self::Redis,
             "sqlite" => Self::Sqlite,
+            "postgresql" => Self::Postgresql,
             _ => Self::Unknown(name),
         }
     }
@@ -184,6 +188,7 @@ impl From<Engine> for String {
             Engine::Mariadb => "mariadb".to_owned(),
             Engine::Redis => "redis".to_owned(),
             Engine::Sqlite => "sqlite".to_owned(),
+            Engine::Postgresql => "postgresql".to_owned(),
             Engine::Unknown(name) => name,
         }
     }
@@ -197,6 +202,7 @@ impl Engine {
             Engine::Mariadb => "MariaDB",
             Engine::Redis => "Redis",
             Engine::Sqlite => "SQLite",
+            Engine::Postgresql => "PostgreSQL",
             Engine::Unknown(name) => name,
         }
     }
@@ -208,6 +214,7 @@ impl Engine {
             Engine::Mysql | Engine::Mariadb => Ok(Protocol::Mysql),
             Engine::Redis => Ok(Protocol::Redis),
             Engine::Sqlite => Ok(Protocol::Sqlite),
+            Engine::Postgresql => Ok(Protocol::Postgres),
             Engine::Unknown(name) => Err(unknown_engine_error(name)),
         }
     }
@@ -215,7 +222,7 @@ impl Engine {
     /// The window that opens a profile of this engine.
     fn window(&self) -> Result<&'static str, String> {
         match self.protocol()? {
-            Protocol::Mysql | Protocol::Sqlite => Ok(WIN_QUERY),
+            Protocol::Mysql | Protocol::Sqlite | Protocol::Postgres => Ok(WIN_QUERY),
             Protocol::Redis => Ok(WIN_REDIS),
         }
     }
@@ -224,8 +231,10 @@ impl Engine {
     fn ensure_mysql_protocol(&self) -> Result<(), String> {
         match self.protocol()? {
             Protocol::Mysql => Ok(()),
-            Protocol::Redis => Err("This is a Redis connection, not a MySQL one.".to_owned()),
-            Protocol::Sqlite => Err("This is a SQLite connection, not a MySQL one.".to_owned()),
+            other => Err(format!(
+                "This is a {} connection, not a MySQL one.",
+                other.name()
+            )),
         }
     }
 }
@@ -237,6 +246,21 @@ enum Protocol {
     Redis,
     /// A local file opened in-process (#97): no server, SSH tunnel or credentials.
     Sqlite,
+    /// A server reached as MySQL ones are (credentials, SSH tunnel), through its own
+    /// client (#96).
+    Postgres,
+}
+
+impl Protocol {
+    /// The name in messages that say a connection is of another kind.
+    fn name(self) -> &'static str {
+        match self {
+            Protocol::Mysql => "MySQL",
+            Protocol::Redis => "Redis",
+            Protocol::Sqlite => "SQLite",
+            Protocol::Postgres => "PostgreSQL",
+        }
+    }
 }
 
 fn unknown_engine_error(name: &str) -> String {
@@ -474,6 +498,8 @@ enum Backend {
     Mysql(Pool),
     /// The database file (#97), with a connection per tab (see `sqlite_client`).
     Sqlite(Arc<sqlite_client::SqliteSession>),
+    /// The server and database (#96), with a connection per tab (see `postgres_client`).
+    Postgres(Arc<postgres_client::PostgresSession>),
 }
 
 /// A statement running for a tab, which `cancel_query` stops.
@@ -482,6 +508,8 @@ enum RunningQueryEntry {
     Mysql { connection_id: u32, pool: Pool },
     /// Interrupted on the tab's own connection.
     Sqlite(Arc<sqlite_client::TabConnection>),
+    /// Cancelled through the tab's connection's cancel token.
+    Postgres(Arc<postgres_client::TabConnection>),
 }
 
 static RUNNING_QUERIES: std::sync::LazyLock<Mutex<HashMap<String, RunningQueryEntry>>> =
@@ -550,8 +578,13 @@ fn connection_fingerprint(request: &ConnectionRequest) -> String {
         },
         _ => String::new(),
     };
+    // A PostgreSQL connection is to one database (#96); MySQL switches with `USE`.
+    let database = match request.engine.protocol() {
+        Ok(Protocol::Postgres) => request.mysql.database.as_deref().unwrap_or("").trim(),
+        _ => "",
+    };
     format!(
-        "{}:{}:{}:{}:ssl={:?}:ca={}:file={}|{}",
+        "{}:{}:{}:{}:ssl={:?}:ca={}:file={}:db={}|{}",
         String::from(request.engine.clone()),
         request.mysql.host,
         request.mysql.port,
@@ -559,6 +592,7 @@ fn connection_fingerprint(request: &ConnectionRequest) -> String {
         request.mysql.ssl_mode,
         request.mysql.tls_ca_cert_path.as_deref().unwrap_or(""),
         request.mysql.sqlite_file(),
+        database,
         ssh_part
     )
 }
@@ -650,6 +684,56 @@ async fn get_or_create_pool_async(
     }
 
     Ok(pool)
+}
+
+/// The query window's session on `request`'s PostgreSQL server and database (#96), which
+/// replaces any other connection. The credentials are resolved by the caller.
+async fn use_postgres_server(
+    cache: &Arc<Mutex<Option<ConnectionCache>>>,
+    request: &ConnectionRequest,
+) -> Result<Arc<postgres_client::PostgresSession>, String> {
+    let fingerprint = connection_fingerprint(request);
+    {
+        let mut guard = cache.lock().map_err(|e| format!("Lock error: {e}"))?;
+        if let Some(ConnectionCache {
+            fingerprint: cached,
+            backend: Backend::Postgres(session),
+            ..
+        }) = guard.as_ref()
+        {
+            if *cached == fingerprint {
+                return Ok(Arc::clone(session));
+            }
+        }
+        // Dropped first: the old SSH tunnel frees its port.
+        *guard = None;
+    }
+
+    let (target_host, target_port, tunnel) = connect_target(request).await?;
+    let session = Arc::new(postgres_client::PostgresSession::new(
+        &request.mysql,
+        &target_host,
+        target_port,
+    )?);
+    // Connects the connection the window's own queries use now, so that a wrong password
+    // or an unreachable server fails here, as building the MySQL pool does.
+    let opening = Arc::clone(&session);
+    tauri::async_runtime::spawn_blocking(move || {
+        opening
+            .tab(&running_query_key(None), postgres_client::Reopen::Quietly)
+            .map(|_| ())
+    })
+    .await
+    .map_err(|e| format!("Task error: {e}"))??;
+
+    let mut guard = cache.lock().map_err(|e| format!("Lock error: {e}"))?;
+    *guard = Some(ConnectionCache {
+        fingerprint,
+        backend: Backend::Postgres(Arc::clone(&session)),
+        engine: request.engine.clone(),
+        _tunnel: tunnel,
+    });
+    Ok(session)
 }
 
 fn build_opts(mysql: &MySqlConfig, host: &str, port: u16) -> Result<OptsBuilder, String> {
@@ -1607,6 +1691,10 @@ async fn connection_schema(
     let schema = tauri::async_runtime::spawn_blocking(move || match backend {
         Backend::Mysql(pool) => fetch_schema(&pool, &db),
         Backend::Sqlite(session) => sqlite_client::schema(session.path(), &db),
+        Backend::Postgres(session) => session
+            .tab(&running_query_key(None), postgres_client::Reopen::Quietly)?
+            .lock()
+            .schema(&db),
     })
     .await
     .map_err(|e| format!("Task error: {e}"))??;
@@ -2175,6 +2263,9 @@ fn tunnel_tls(request: &ConnectionRequest) -> Result<Option<redis_client::Tunnel
         Protocol::Redis => redis_client::tunnel_tls(&request.mysql).map(Some),
         // A local file: never reaches the tunnel.
         Protocol::Sqlite => Ok(None),
+        // The client connects to the tunnel but checks the profile's host (`hostaddr`,
+        // see `postgres_client::config`), so its own TLS is right.
+        Protocol::Postgres => Ok(None),
     }
 }
 
@@ -2455,6 +2546,7 @@ async fn run_connection_test(
                 redis_client::ping(&client)?;
             }
             Protocol::Sqlite => sqlite_client::ping(mysql.sqlite_file())?,
+            Protocol::Postgres => postgres_client::ping(&mysql, &target_host, target_port)?,
         }
         Ok("Connection succeeded.".to_owned())
     })
@@ -2476,15 +2568,32 @@ async fn run_query(
     }
     let limit = max_rows.unwrap_or(500);
     let cache = Arc::clone(&state);
+    let tab_key = running_query_key(tab_id);
 
-    if request.engine.protocol()? == Protocol::Sqlite {
-        let session = use_sqlite_file(&cache, &request)?;
-        let tab_key = running_query_key(tab_id);
-        return tauri::async_runtime::spawn_blocking(move || {
-            run_sqlite_query(&session, &query, limit, tab_key)
-        })
-        .await
-        .map_err(|e| format!("Task error: {e}"))?;
+    match request.engine.protocol()? {
+        Protocol::Sqlite => {
+            let session = use_sqlite_file(&cache, &request)?;
+            return tauri::async_runtime::spawn_blocking(move || {
+                run_sqlite_query(&session, &query, limit, tab_key)
+            })
+            .await
+            .map_err(|e| format!("Task error: {e}"))?;
+        }
+        Protocol::Postgres => {
+            resolve_credentials(&mut request, profile_id.as_deref()).await?;
+            // Safe to log: this fails before any statement runs, so `e` cannot contain SQL.
+            let session = use_postgres_server(&cache, &request)
+                .await
+                .inspect_err(|e| {
+                    app_log::warn_throttled(app_log::BRIEF, &format!("connection failed: {e}"))
+                })?;
+            return tauri::async_runtime::spawn_blocking(move || {
+                run_postgres_query(&session, &query, limit, tab_key)
+            })
+            .await
+            .map_err(|e| format!("Task error: {e}"))?;
+        }
+        Protocol::Mysql | Protocol::Redis => {}
     }
 
     // Before the credentials: resolving them can run the 1Password CLI (#132).
@@ -2502,7 +2611,6 @@ async fn run_query(
         })?;
 
     let db = request.mysql.database.clone();
-    let tab_key = running_query_key(tab_id);
     tauri::async_runtime::spawn_blocking(move || {
         let mut conn = pool
             .get_conn()
@@ -2573,10 +2681,39 @@ fn run_sqlite_query(
     sqlite_client::run(&conn, query, limit)
 }
 
+/// Runs one statement on the connection of the tab `tab_key`, which `cancel_query` can
+/// cancel meanwhile.
+fn run_postgres_query(
+    session: &postgres_client::PostgresSession,
+    query: &str,
+    limit: usize,
+    tab_key: String,
+) -> Result<QueryResult, String> {
+    // The window's own queries (no tab) keep no state, so a connection the server closed
+    // is opened again quietly; a SQL tab's may have held a transaction, so the tab is told.
+    let reopen = if tab_key == running_query_key(None) {
+        postgres_client::Reopen::Quietly
+    } else {
+        postgres_client::Reopen::AfterTelling
+    };
+    // Safe to log: this fails before any statement runs, so `e` cannot contain SQL.
+    let tab = session.tab(&tab_key, reopen).inspect_err(|e| {
+        app_log::warn_throttled(app_log::BRIEF, &format!("connection failed: {e}"))
+    })?;
+    // Filed once the connection is this statement's: the window's own queries share a
+    // connection (and a key), and one waiting its turn must not take the entry of the one
+    // running, or drop it when it ends.
+    let mut conn = tab.lock();
+    let _running =
+        RunningQueryGuard::register(tab_key, RunningQueryEntry::Postgres(Arc::clone(&tab)));
+    conn.run(query, limit)
+}
+
 #[tauri::command]
 async fn cancel_query(tab_id: Option<String>) -> Result<(), String> {
     let tab_key = running_query_key(tab_id);
-    let (cid, pool) = {
+    // What cancels the statement; it reaches the server, so it runs off the lock.
+    let cancel: Box<dyn FnOnce() -> Result<(), String> + Send> = {
         let map = RUNNING_QUERIES
             .lock()
             .map_err(|e| format!("Lock error: {e}"))?;
@@ -2584,27 +2721,50 @@ async fn cancel_query(tab_id: Option<String>) -> Result<(), String> {
             Some(RunningQueryEntry::Mysql {
                 connection_id,
                 pool,
-            }) => (*connection_id, pool.clone()),
+            }) => {
+                let (cid, pool) = (*connection_id, pool.clone());
+                if cid == 0 {
+                    return Ok(());
+                }
+                Box::new(move || {
+                    let mut conn = pool
+                        .get_conn()
+                        .map_err(|e| format!("Failed to get cancel connection: {e}"))?;
+                    conn.query_drop(format!("KILL QUERY {cid}"))
+                        .map_err(|e| format!("Failed to cancel query: {e}"))
+                })
+            }
             Some(RunningQueryEntry::Sqlite(tab)) => {
                 tab.interrupt();
                 return Ok(());
             }
+            Some(RunningQueryEntry::Postgres(tab)) => {
+                let tab = Arc::clone(tab);
+                Box::new(move || tab.cancel())
+            }
             None => return Ok(()),
         }
     };
-    if cid == 0 {
-        return Ok(());
-    }
 
-    tauri::async_runtime::spawn_blocking(move || {
-        let mut conn = pool
-            .get_conn()
-            .map_err(|e| format!("Failed to get cancel connection: {e}"))?;
-        conn.query_drop(format!("KILL QUERY {cid}"))
-            .map_err(|e| format!("Failed to cancel query: {e}"))
-    })
-    .await
-    .map_err(|e| format!("Task error: {e}"))?
+    tauri::async_runtime::spawn_blocking(cancel)
+        .await
+        .map_err(|e| format!("Task error: {e}"))?
+}
+
+/// Closes the connection a SQL tab kept (SQLite and PostgreSQL, which keep one per tab);
+/// the tab was closed. A tab id is used again by a later tab, which then opens its own.
+#[tauri::command]
+fn close_query_tab(
+    tab_id: String,
+    state: tauri::State<'_, Arc<Mutex<Option<ConnectionCache>>>>,
+) -> Result<(), String> {
+    let guard = state.lock().map_err(|e| format!("Lock error: {e}"))?;
+    match guard.as_ref().map(|cached| &cached.backend) {
+        Some(Backend::Sqlite(session)) => session.close(&tab_id),
+        Some(Backend::Postgres(session)) => session.close(&tab_id),
+        Some(Backend::Mysql(_)) | None => {}
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -4326,6 +4486,7 @@ fn main() {
             open_connection_window,
             hide_window,
             disconnect_pool,
+            close_query_tab,
             redis_connect,
             redis_disconnect,
             redis_scan,
@@ -4679,14 +4840,47 @@ Host myserver
         assert!(engine.ensure_mysql_protocol().is_err());
     }
 
+    // PostgreSQL opens in the query window through its own client (#96).
+    #[test]
+    fn postgresql_engine_opens_the_query_window_without_mysql() {
+        let engine: Engine = serde_json::from_str("\"postgresql\"").unwrap();
+        assert_eq!(engine, Engine::Postgresql);
+        assert_eq!(serde_json::to_string(&engine).unwrap(), "\"postgresql\"");
+        assert_eq!(engine.window(), Ok(WIN_QUERY));
+        let refused = engine.ensure_mysql_protocol().unwrap_err();
+        assert!(refused.contains("PostgreSQL"), "{refused}");
+    }
+
+    // A PostgreSQL connection is to one database, so another database is another
+    // connection; MySQL switches databases on the same one.
+    #[test]
+    fn fingerprint_tells_postgresql_databases_apart() {
+        let request = |engine: &str, database: &str| -> ConnectionRequest {
+            serde_json::from_value(json!({
+                "engine": engine,
+                "mysql": {"host": "h", "port": 1, "database": database, "username": "u"},
+                "ssh": null,
+            }))
+            .unwrap()
+        };
+        assert_ne!(
+            connection_fingerprint(&request("postgresql", "a")),
+            connection_fingerprint(&request("postgresql", "b"))
+        );
+        assert_eq!(
+            connection_fingerprint(&request("mysql", "a")),
+            connection_fingerprint(&request("mysql", "b"))
+        );
+    }
+
     // An engine from a later version must keep its spelling through a save (the sync
     // mirror would otherwise turn it into MySQL on every machine), and must never be
     // connected to as MySQL.
     #[test]
     fn unknown_engine_round_trips_and_opens_nothing() {
-        let engine: Engine = serde_json::from_str("\"postgres\"").unwrap();
-        assert_eq!(engine, Engine::Unknown("postgres".to_owned()));
-        assert_eq!(serde_json::to_string(&engine).unwrap(), "\"postgres\"");
+        let engine: Engine = serde_json::from_str("\"oracle\"").unwrap();
+        assert_eq!(engine, Engine::Unknown("oracle".to_owned()));
+        assert_eq!(serde_json::to_string(&engine).unwrap(), "\"oracle\"");
         assert!(engine.window().is_err());
         assert!(engine.ensure_mysql_protocol().is_err());
     }
@@ -4698,6 +4892,7 @@ Host myserver
             Engine::Mariadb,
             Engine::Redis,
             Engine::Sqlite,
+            Engine::Postgresql,
         ];
         for engine in &engines {
             // No wildcard: a new variant stops this compiling until it is listed above.
@@ -4706,6 +4901,7 @@ Host myserver
                 | Engine::Mariadb
                 | Engine::Redis
                 | Engine::Sqlite
+                | Engine::Postgresql
                 | Engine::Unknown(_) => {}
             }
         }

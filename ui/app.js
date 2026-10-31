@@ -113,7 +113,7 @@ function confirmDialog(message, opts) {
 
 // Display names of the connection engines (#132). Must match `Engine::display_name` in
 // main.rs. An engine this version does not know shows as stored.
-const ENGINE_NAMES = { mysql: "MySQL", mariadb: "MariaDB", redis: "Redis", sqlite: "SQLite" };
+const ENGINE_NAMES = { mysql: "MySQL", mariadb: "MariaDB", redis: "Redis", sqlite: "SQLite", postgresql: "PostgreSQL" };
 
 function getItemHint(item) {
   // MySQL is the default and goes unlabelled; any other engine prefixes the hint. Rust
@@ -1004,25 +1004,27 @@ var DOCKER_LAST_ID = "__last__";
 // The defaults per engine. MySQL: REQUIRED skips certificate verification, so it works
 // with a container's self-signed cert and also satisfies servers running with
 // require_secure_transport=ON. Redis (#98): the default user (empty) and no TLS, which is
-// how the official image runs.
+// how the official image runs. PostgreSQL (#96): the official image's superuser, no TLS.
 var DOCKER_DEFAULTS = {
   mysql: { user: "root", ssl_mode: "REQUIRED" },
   redis: { user: "", ssl_mode: "DISABLED" },
+  postgresql: { user: "postgres", ssl_mode: "DISABLED" },
 };
 
 // The defaults and the last-used credentials go by the kind of server: MariaDB counts as
 // MySQL. null for an engine this version does not know (a musql.engine label).
 function dockerKind(engine) {
-  if (engine === "redis") return "redis";
+  if (engine === "redis" || engine === "postgresql") return engine;
   return engine === "mysql" || engine === "mariadb" ? "mysql" : null;
 }
 
 // The last-used credentials are kept per kind: a MySQL root password is no starting
 // point for a Redis container. MySQL keeps the keys it had before Redis was supported.
-// Redis carries no password over: most containers run without one, and a password sent
-// to such a server fails the connection.
+// Only MySQL carries the last password over (the keyring's DOCKER_LAST_ID is its own):
+// most Redis containers run without one, and a password sent to such a server fails the
+// connection.
 function dockerLastKey(kind) {
-  return kind === "redis" ? DOCKER_LAST_KEY + ":redis" : DOCKER_LAST_KEY;
+  return kind === "mysql" ? DOCKER_LAST_KEY : DOCKER_LAST_KEY + ":" + kind;
 }
 
 function loadDockerCreds() {
@@ -1055,12 +1057,12 @@ async function migrateDockerCreds() {
     }
   } catch (_) { /* ignore */ }
 }
-// `kind` is dockerKind's: "mysql" or "redis".
+// `kind` is dockerKind's: "mysql", "redis" or "postgresql".
 async function saveDockerCred(containerId, kind, cred) {
   // Save password to OS keyring (never localStorage)
   var pw = cred.password || "";
   var saves = [safeInvoke("save_docker_password", { containerId: containerId, password: pw })];
-  if (kind !== "redis") {
+  if (kind === "mysql") {
     saves.push(safeInvoke("save_docker_password", { containerId: DOCKER_LAST_ID, password: pw }));
   }
   await Promise.all(saves);
@@ -1077,7 +1079,7 @@ async function getDockerCred(containerId, kind) {
   var keyId = meta ? containerId : DOCKER_LAST_ID;
   if (!meta) {
     try { meta = JSON.parse(localStorage.getItem(dockerLastKey(kind))); } catch (_) { /* ignore */ }
-    if (meta && kind === "redis") return { user: meta.user, password: "", ssl_mode: meta.ssl_mode };
+    if (meta && kind !== "mysql") return { user: meta.user, password: "", ssl_mode: meta.ssl_mode };
   }
   if (!meta) return null;
   var pw = await safeInvoke("get_docker_password", { containerId: keyId });
