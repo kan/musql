@@ -9,7 +9,7 @@
 
 ## マニュアルのスクリーンショット
 - **撮影は `src-tauri/src/screenshots.rs` が行う**（`just screenshots-build` → `just screenshots`、CI は手で起動する `screenshots.yml`）。Cargo の `screenshots` feature を付けたビルドで、環境変数 `MUSQL_SCREENSHOTS_OUT` があるときだけ動く。`SHOTS` の順に各ウィンドウのページへ JS を流して画面を整え（`WebviewWindow::eval`。ページは `screenshots:done` のイベントで終わりを返す）、WebView2 の `CapturePreview` でページを PNG にする。撮り終えたらアプリが終了し、失敗すれば終了コードが 1 になる。**WebdriverIO（pike の方式）にしないこと**（Node.js の依存が要り、複数のウィンドウを扱うのも手間が増えるため）。
-- **配布するビルドに入れないこと**（feature は既定で外してある。撮影用のビルドは identifier が `.screenshots`、更新機能も外す。更新のバナーが写らないように）。撮影の前処理（`PRELUDE`）は localStorage の `musql:` のキーを消し、日本語とダークテーマにする。同期フォルダの候補は撮影用の架空のパス（`screenshots::sync_folders`）に差し替える（撮る人の OneDrive のパスが写らないように）。
+- **配布するビルドに入れないこと**（feature は既定で外してある。撮影用のビルドは identifier が `.screenshots`、更新機能も外す。更新のバナーが写らないように）。撮影の前処理（`PRELUDE`）は、撮影 1 回につき 1 回だけ localStorage の `musql:` のキーを消し、日本語とダークテーマにする。プロファイルは撮影がフィクスチャを書き込む（`Step::Profiles`）。撮るマシンで変わるもの（Docker のコンテナ、同期フォルダ、1Password や AI のキーの有無）は、ページの `safeInvoke` を差し替えて決まった値を返す（`__shot.mock`）。**撮影のための分岐を本番のコマンドに足さないこと**（差し替えは `screenshots.rs` の中で済ませる）。
 - 表示倍率は 1.5（Windows の 150%）にそろえる。撮影用の設定 `tauri.screenshots.conf.json` が WebView2 に `--force-device-scale-factor=1.5` を渡し、撮影はウィンドウの大きさを `tauri.conf.json` の値の 1.5 倍（物理ピクセル）に合わせる。`devicePixelRatio` と画像の寸法が合わなければ失敗させる（違う絵を黙って撮らないため）。**`tauri.conf.json` のウィンドウを変えたら `tauri.screenshots.conf.json` も合わせる**（設定の結合は配列を丸ごと置き換える。テスト `screenshot_config_repeats_the_windows` が照合する）。
 - 撮れるのはページの中だけで、ウィンドウの枠（タイトルバー）は写らない。データは `docs/manual/fixtures/` のプロファイルと MySQL を使う。撮った画像は `artifacts/screenshots/` に出るだけで、`docs/manual/img/` へは中身を見てから手で入れる。
 

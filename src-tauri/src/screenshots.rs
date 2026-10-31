@@ -69,18 +69,28 @@ const PRELUDE: &str = r#"(() => {
         await sleep(100);
       }
     },
+    // The first shown element that matches (hidden modals hold matching elements too).
     waitFor(selector, timeout) {
-      return shot.waitUntil(() => {
-        const el = document.querySelector(selector);
-        return el && el.getClientRects().length > 0 ? el : null;
-      }, selector, timeout);
+      return shot.waitUntil(() => [...document.querySelectorAll(selector)]
+        .find((el) => el.getClientRects().length > 0), selector, timeout);
     },
-    // The button in `scope` whose text contains `text` (buttons carry an icon and a label).
+    // The shown button in `scope` whose text contains `text` (buttons carry an icon and a
+    // label).
     button(scope, text) {
       const found = [...document.querySelectorAll(`${scope} button`)]
-        .find((b) => b.textContent.includes(text));
+        .find((b) => b.textContent.includes(text) && b.getClientRects().length > 0);
       if (!found) throw new Error(`no button "${text}" in ${scope}`);
       return found;
+    },
+    // Answers the page's commands from `table` (a value, or a function of the arguments)
+    // instead of the app, for what would show the capturing machine (its Docker
+    // containers, its sync folders, whether it has 1Password or an AI key). Every page
+    // sends its commands through its own top-level `safeInvoke`, so wrapping it is enough.
+    mock(table) {
+      const real = window.safeInvoke;
+      window.safeInvoke = (command, args) => Object.hasOwn(table, command)
+        ? Promise.resolve(typeof table[command] === "function" ? table[command](args) : table[command])
+        : real(command, args);
     },
     // Fonts loaded and two frames painted: what the capture right after will show.
     async settle() {
@@ -110,23 +120,81 @@ pub fn plugin<R: Runtime>() -> TauriPlugin<R> {
 /// One picture: the steps that set the windows up, then the window to capture.
 struct Shot {
     file: &'static str,
-    steps: &'static [(&'static str, &'static str)],
+    steps: &'static [Step],
     capture: &'static str,
 }
 
+enum Step {
+    /// Runs the script (the body of an async function) in the window's page.
+    Js(&'static str, &'static str),
+    /// Replaces the profiles with a fixture file (the pages reload them in a later step).
+    Profiles(&'static str),
+}
+
+use Step::{Js, Profiles};
+
+const FIXTURE_FULL: &str = include_str!("../../docs/manual/fixtures/connections.debug.json");
+const FIXTURE_SIMPLE: &str = include_str!("../../docs/manual/fixtures/connections.simple.json");
+
 /// The shots, in order. Each starts from where the previous one left the windows, so the
-/// main window comes first (opening a connection hides it).
+/// main and settings windows come first (opening a connection hides main), and the query
+/// shots build on each other (tabs opened by one are still open in the next).
 const SHOTS: &[Shot] = &[
     Shot {
+        file: "screen-layout.png",
+        steps: &[
+            Profiles(FIXTURE_SIMPLE),
+            Js(
+                WIN_MAIN,
+                r#"// What this machine's Docker shows is not the manual's: an available Docker
+                // with the fixture's containers.
+                __shot.mock({
+                  docker_available: true,
+                  docker_list_containers: [
+                    { id: "c1", name: "EC デモ", image: "mysql:8.0", project: null, engine: "mysql", port: 3306, networks: [], host_port: 3306, label_user: "demo", label_password: null, label_name: "EC デモ", label_ssl_mode: null },
+                    { id: "c2", name: "school / mysql", image: "mysql:8.4", project: "school", engine: "mysql", port: 3306, networks: [], host_port: 13306, label_user: null, label_password: null, label_name: null, label_ssl_mode: null },
+                    { id: "c3", name: "analytics / postgres", image: "postgres:17", project: "analytics", engine: "postgresql", port: 5432, networks: [], host_port: 5432, label_user: null, label_password: null, label_name: null, label_ssl_mode: null },
+                    { id: "c4", name: "cache", image: "redis:7", project: null, engine: "redis", port: 6379, networks: [], host_port: 6379, label_user: null, label_password: null, label_name: null, label_ssl_mode: null },
+                  ],
+                  sync_folder_candidates: [
+                    { service: "onedrive", folder: "C:\\Users\\you\\OneDrive", file: "C:\\Users\\you\\OneDrive\\muSQL\\profiles-sync.json", exists: false },
+                    { service: "dropbox", folder: "C:\\Users\\you\\Dropbox", file: "C:\\Users\\you\\Dropbox\\muSQL\\profiles-sync.json", exists: false },
+                  ],
+                });
+                await checkDockerAvailable();
+                await refreshProfiles();
+                await __shot.waitUntil(() => profileData.items.length === 3, "the simple fixture");"#,
+            ),
+        ],
+        capture: WIN_MAIN,
+    },
+    Shot {
         file: "profile-list-colored.png",
-        steps: &[(WIN_MAIN, r#"await __shot.waitFor(".tree-item-tags");"#)],
+        steps: &[
+            Profiles(FIXTURE_FULL),
+            Js(
+                WIN_MAIN,
+                r#"await refreshProfiles();
+                await __shot.waitUntil(() => profileData.items.length === 6, "the full fixture");"#,
+            ),
+        ],
+        capture: WIN_MAIN,
+    },
+    Shot {
+        file: "docker-list.png",
+        steps: &[Js(
+            WIN_MAIN,
+            r#"showDockerModal();
+            await __shot.waitFor("[id=docker-modal] .db-list-item");"#,
+        )],
         capture: WIN_MAIN,
     },
     Shot {
         file: "sync-settings.png",
-        steps: &[(
+        steps: &[Js(
             WIN_MAIN,
-            r#"openSyncModal();
+            r#"document.getElementById("docker-modal-close").click();
+            openSyncModal();
             await __shot.waitFor(".sync-folder-item");"#,
         )],
         capture: WIN_MAIN,
@@ -134,14 +202,20 @@ const SHOTS: &[Shot] = &[
     Shot {
         file: "profile-edit.png",
         steps: &[
-            (
+            Js(
                 WIN_MAIN,
                 r#"document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
                 openSettings("prof-ec-prod");"#,
             ),
-            (
+            Js(
                 WIN_SETTINGS,
-                r#"await __shot.waitUntil(
+                r#"// Whether 1Password's row shows depends on this machine having `op`. The page
+                // asked when it loaded, and that answer may still arrive: whatever it says,
+                // the row is shown as without `op`.
+                const showOpRows = updateOpRowVisibility;
+                updateOpRowVisibility = () => { opAvailable = false; showOpRows(); };
+                updateOpRowVisibility();
+                await __shot.waitUntil(
                   () => document.getElementById("mysql-host").value === "db01.ec-prod.example.internal",
                   "the profile in the form");"#,
             ),
@@ -149,10 +223,24 @@ const SHOTS: &[Shot] = &[
         capture: WIN_SETTINGS,
     },
     Shot {
+        file: "ssh-settings.png",
+        steps: &[Js(
+            WIN_SETTINGS,
+            r#"document.getElementById("ssh-section").scrollIntoView({ block: "start" });"#,
+        )],
+        capture: WIN_SETTINGS,
+    },
+    Shot {
         file: "query-sql.png",
         steps: &[
-            (WIN_MAIN, r#"openQuery("prof-local-docker");"#),
-            (
+            // Before the connection opens, so nothing the page asks while opening it gets
+            // this machine's answer.
+            Js(
+                WIN_QUERY,
+                r#"__shot.mock({ op_available: false, has_ai_api_key: true });"#,
+            ),
+            Js(WIN_MAIN, r#"openQuery("prof-local-docker");"#),
+            Js(
                 WIN_QUERY,
                 r#"await __shot.waitFor(".table-list-item");
                 // Into the SQL tab the connection opens (CodeMirror 5 hangs the instance on
@@ -165,24 +253,95 @@ const SHOTS: &[Shot] = &[
         ],
         capture: WIN_QUERY,
     },
+    Shot {
+        file: "query-layout.png",
+        steps: &[Js(
+            WIN_QUERY,
+            r#"for (const table of ["customers", "orders", "order_items", "customers"]) {
+              openTableTab(table, "data");
+              await __shot.waitFor(`.tab-pane.active table tbody tr`);
+            }"#,
+        )],
+        capture: WIN_QUERY,
+    },
+    Shot {
+        file: "overview.png",
+        steps: &[],
+        capture: WIN_QUERY,
+    },
+    Shot {
+        file: "export-options.png",
+        steps: &[Js(
+            WIN_QUERY,
+            r#"doExportAll("customers", ",", "csv");
+            await __shot.waitFor(".modal-overlay select");"#,
+        )],
+        capture: WIN_QUERY,
+    },
+    Shot {
+        file: "query-data.png",
+        steps: &[Js(
+            WIN_QUERY,
+            r#"__shot.button(".modal-overlay", t("cancel")).click();
+            openTableTab("order_items", "data");
+            await __shot.waitFor(".tab-pane.active .paging-size-btn");
+            __shot.button(".tab-pane.active .paging-sizes", "50").click();
+            // The footer is drawn again once the 50 rows are in; until then the old one
+            // (100 rows a page) is still there.
+            await __shot.waitUntil(() => document.querySelector(".tab-pane.active .paging-size-btn.active")?.textContent === "50", "50 rows a page");
+            __shot.button(".tab-pane.active .paging-nav", t("next")).click();
+            await __shot.waitUntil(() =>
+              document.querySelector(".tab-pane.active .paging-info")?.textContent.startsWith("2 /")
+              && document.querySelector(".tab-pane.active table tbody td")?.textContent === "51",
+              "the rows of page 2");"#,
+        )],
+        capture: WIN_QUERY,
+    },
+    Shot {
+        file: "quickopen.png",
+        steps: &[Js(
+            WIN_QUERY,
+            r#"// The SQL tab the connection opened, whatever its number.
+            let sqlTab = null;
+            tabManager.tabs.forEach((tab) => { if (!sqlTab && tab.type === "sql") sqlTab = tab.id; });
+            tabManager.activate(sqlTab);
+            openQuickOpen();
+            const input = await __shot.waitFor(".quickopen-input");
+            input.value = "cu";
+            input.dispatchEvent(new Event("input"));
+            await __shot.waitFor(".quickopen-item");"#,
+        )],
+        capture: WIN_QUERY,
+    },
+    Shot {
+        file: "ai-settings.png",
+        steps: &[Js(
+            WIN_QUERY,
+            r#"document.querySelector(".quickopen-input").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+            await __shot.waitUntil(() => !document.querySelector(".quickopen-input"), "QuickOpen to close");
+            localStorage.setItem("musql:ai:provider", "claude");
+            localStorage.setItem("musql:ai:model", "claude-sonnet-5");
+            await showAiModal();
+            await __shot.waitFor("[id=ai-modal] select");"#,
+        )],
+        capture: WIN_QUERY,
+    },
+    Shot {
+        file: "ai-chat.png",
+        steps: &[Js(
+            WIN_QUERY,
+            r#"hideAiModal();
+            // A conversation already had, so no AI is called.
+            localStorage.setItem(aiChatKey(currentProfileId, currentDb), JSON.stringify([
+              { role: "user", content: "東京都の顧客を取得するSQL", ts: 1 },
+              { role: "assistant", content: "SELECT * FROM customers WHERE prefecture = '東京都'", ts: 2 },
+            ]));
+            __shot.button(".tab-pane.active .actions", t("ai_assist")).click();
+            await __shot.waitFor("[id=ai-assist-messages] .ai-msg.assistant");"#,
+        )],
+        capture: WIN_QUERY,
+    },
 ];
-
-/// The sync folders the sync settings list while capturing, in place of this machine's
-/// (which would show the user's own paths).
-pub fn sync_folders() -> Vec<crate::sync_folder::SyncFolder> {
-    [
-        ("onedrive", r"C:\Users\you\OneDrive"),
-        ("dropbox", r"C:\Users\you\Dropbox"),
-    ]
-    .into_iter()
-    .map(|(service, folder)| crate::sync_folder::SyncFolder {
-        service,
-        folder: folder.to_owned(),
-        file: format!(r"{folder}\muSQL\profiles-sync.json"),
-        exists: false,
-    })
-    .collect()
-}
 
 #[derive(serde::Deserialize)]
 struct Done {
@@ -243,7 +402,7 @@ impl Runner<'_> {
         if !SHOTS
             .iter()
             .flat_map(|shot| shot.steps)
-            .any(|(_, script)| script.contains(DEMO_PROFILE))
+            .any(|step| matches!(step, Js(_, script) if script.contains(DEMO_PROFILE)))
         {
             return Err(format!(
                 "no shot opens {DEMO_PROFILE}, whose password is set"
@@ -252,6 +411,11 @@ impl Runner<'_> {
         std::fs::create_dir_all(out)
             .map_err(|e| format!("cannot create {}: {e}", out.display()))?;
         crate::set_password(DEMO_PROFILE, DEMO_PASSWORD)?;
+        // A sync path left by an earlier run (saved from the sync settings) would merge
+        // another file into the fixture profiles.
+        if let Ok(file) = crate::sync_path_file(self.app) {
+            let _ = std::fs::remove_file(file);
+        }
         // The pages may still be loading: a script sent before the page commits is lost with
         // the old document, so ask again until each page answers.
         for label in [WIN_MAIN, WIN_SETTINGS, WIN_QUERY] {
@@ -263,9 +427,17 @@ impl Runner<'_> {
         );
         self.step(WIN_MAIN, &check, false, STEP_TIMEOUT)?;
         for shot in SHOTS {
-            for (label, script) in shot.steps {
-                self.step(label, script, false, STEP_TIMEOUT)
-                    .map_err(|e| format!("{}: {label}: {e}", shot.file))?;
+            for step in shot.steps {
+                match step {
+                    Js(label, script) => self.step(label, script, false, STEP_TIMEOUT),
+                    Profiles(fixture) => crate::profiles_path(self.app).and_then(|path| {
+                        path.parent()
+                            .map_or(Ok(()), std::fs::create_dir_all)
+                            .and_then(|()| std::fs::write(&path, fixture))
+                            .map_err(|e| format!("cannot write {}: {e}", path.display()))
+                    }),
+                }
+                .map_err(|e| format!("{}: {e}", shot.file))?;
             }
             self.capture(shot.capture, &out.join(shot.file))
                 .map_err(|e| format!("{}: {e}", shot.file))?;

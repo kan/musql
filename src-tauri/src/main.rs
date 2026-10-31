@@ -1421,11 +1421,6 @@ fn sync_export(app: AppHandle) -> Result<bool, String> {
 // in the sync settings (#143).
 #[tauri::command]
 fn sync_folder_candidates() -> Vec<sync_folder::SyncFolder> {
-    // Fixed folders in the manual's screenshot, not the capturing machine's own.
-    #[cfg(feature = "screenshots")]
-    if screenshots::active() {
-        return screenshots::sync_folders();
-    }
     sync_folder::candidates()
 }
 

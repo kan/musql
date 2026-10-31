@@ -6,14 +6,7 @@
 
 ## 自動撮影
 
-次の 4 枚は自動で撮れます（対象は `src-tauri/src/screenshots.rs` の `SHOTS` が決めます）。
-
-- `profile-list-colored.png`
-- `profile-edit.png`
-- `query-sql.png`
-- `sync-settings.png`
-
-撮り方は 2 つあります。
+下の表の画像は、すべて自動で撮れます（撮る画面の手順は `src-tauri/src/screenshots.rs` の `SHOTS` にあります）。画像を足すときは、表と `SHOTS` の両方に足してください。撮り方は 2 つあります。
 
 - **GitHub Actions**：Actions の画面から `Screenshots` のワークフローを手で起動します。撮った画像は、実行結果のアーティファクト `screenshots` に入ります。
 - **手元**：撮影用の MySQL を起動してから（[`../fixtures/README.md`](../fixtures/README.md) の手順 1）、`just screenshots-build` と `just screenshots` を実行します。画像は `artifacts/screenshots/` に出ます。
@@ -27,7 +20,7 @@
 | `profile-edit.png` | getting-started / connections | 設定ウィンドウ。ホスト/ポート/ユーザー/パスワード/DB、SSL プルダウン、SSH セクション、下部に「接続テスト」「保存」。サンプル値入り |
 | `profile-list-colored.png` | connections | メイン画面。グループ 1〜2 個、プロファイルに色（赤=本番, 緑=検証 など）とタグ |
 | `ssh-settings.png` | ssh | 設定ウィンドウの SSH セクション。踏み台ホスト/ポート/ユーザー、認証方式（公開鍵/パスワード）切替、鍵パス、config 参照 |
-| `docker-list.png` | docker | メイン画面で Docker ボタンを押した状態。検出コンテナ一覧＋資格情報入力（user/password/SSL）モーダル |
+| `docker-list.png` | docker | メイン画面で Docker ボタンを押した状態。検出したコンテナの一覧のモーダル |
 | `query-layout.png` | query | query 画面全体。左サイドバー（DB 名＋テーブル一覧）、上部タブバー、中央に結果テーブル |
 | `query-data.png` | query | テーブルの Data タブ。結果テーブル数十行、下部にページング（前へ/次へ・50/100/200/500・件数） |
 | `query-sql.png` | query | SQL タブ。上部にエディタ（SELECT 文）、下部に結果テーブル、実行/全実行/整形ボタン |

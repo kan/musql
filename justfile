@@ -137,9 +137,8 @@ tauri_cli := env("MUSQL_TAURI_CLI", "cargo tauri")
 screenshots-build:
     CARGO_TARGET_DIR=target/screenshots {{tauri_cli}} build --debug --no-bundle --config tauri.screenshots.conf.json -- --no-default-features --features docker,screenshots
 
-# 撮影する（フィクスチャのプロファイルを置いてから。画像は artifacts/screenshots/ に出る）
+# 撮影する（フィクスチャのプロファイルは撮影が自分で置く。画像は artifacts/screenshots/ に出る）
 screenshots:
-    powershell -NoProfile -ExecutionPolicy Bypass -File docs/manual/fixtures/setup.ps1 -Identifier jp.co.communitylinks.musql.screenshots -NoBackup
     MUSQL_SCREENSHOTS_OUT="$PWD/artifacts/screenshots" src-tauri/target/screenshots/debug/musql.exe
 
 # --- 監査（ci.yml の audit ジョブと同じ内容） ---
