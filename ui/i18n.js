@@ -209,6 +209,8 @@
       confirm_include_passwords: "Include passwords in the export file?",
       import_success: "{n} profile(s) imported.",
       import_conflicts: "Found {groups} duplicate group(s) and {profiles} duplicate profile(s).\nOverwrite existing? (Cancel = add as new)",
+      import_skipped: "Not imported (a kind muSQL does not connect to):\n{names}",
+      import_tableplus_passwords: "Passwords are not imported from TablePlus. You will be asked for them when connecting.",
 
       // ── Update ──
       update_available: "Update v{version} available",
@@ -473,6 +475,8 @@
       confirm_include_passwords: "エクスポートファイルにパスワードを含めますか？",
       import_success: "{n} 件のプロファイルをインポートしました。",
       import_conflicts: "重複するグループが {groups} 件、プロファイルが {profiles} 件あります。\n既存の設定を上書きしますか？（キャンセル = 新規として追加）",
+      import_skipped: "次の接続は muSQL が対応していない種類のため、取り込みませんでした。\n{names}",
+      import_tableplus_passwords: "パスワードは TablePlus から取り込みません。接続するときに入力を求めます。",
 
       // ── アップデート ──
       update_available: "v{version} へのアップデートがあります",

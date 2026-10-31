@@ -1,6 +1,6 @@
 # Rust 実装ルール（`src-tauri/`）
 
-Rust 側を触るときに従う。ロジックの中心は `src-tauri/src/main.rs` で、次の機能だけを別のファイルに分けてある。Docker 連携は `src-tauri/src/docker/`（`discovery.rs`, `tunnel.rs`）、1Password 連携は `src-tauri/src/onepassword.rs`、ログは `src-tauri/src/app_log.rs`、クリックで戻れる通知は `src-tauri/src/toast.rs`、仮想デスクトップは `src-tauri/src/vdesk.rs`、Redis への接続は `src-tauri/src/redis_client.rs`、SQLite のファイルは `src-tauri/src/sqlite_client.rs`、PostgreSQL への接続は `src-tauri/src/postgres_client.rs`。テストでだけ使うものは `src-tauri/src/credits.rs`、`src-tauri/src/docs_consistency.rs`、`src-tauri/src/verify.rs`（`testing.md` を参照）。
+Rust 側を触るときに従う。ロジックの中心は `src-tauri/src/main.rs` で、次の機能だけを別のファイルに分けてある。Docker 連携は `src-tauri/src/docker/`（`discovery.rs`, `tunnel.rs`）、1Password 連携は `src-tauri/src/onepassword.rs`、ログは `src-tauri/src/app_log.rs`、クリックで戻れる通知は `src-tauri/src/toast.rs`、仮想デスクトップは `src-tauri/src/vdesk.rs`、Redis への接続は `src-tauri/src/redis_client.rs`、SQLite のファイルは `src-tauri/src/sqlite_client.rs`、PostgreSQL への接続は `src-tauri/src/postgres_client.rs`、TablePlus の接続設定の読み取りは `src-tauri/src/tableplus.rs`。テストでだけ使うものは `src-tauri/src/credits.rs`、`src-tauri/src/docs_consistency.rs`、`src-tauri/src/verify.rs`（`testing.md` を参照）。
 
 ## 秘密情報
 - **パスワード / API キー**: `keyring`（Windows Credential Manager）で保存。各パスワード（MySQL / SSH パスフレーズ / SSH パスワード）は `save_*` フラグで keyring 保存 or 都度入力を選択可能。都度入力の場合、query 画面で接続前にモーダルプロンプトを表示。
@@ -41,6 +41,12 @@ Rust 側を触るときに従う。ロジックの中心は `src-tauri/src/main.
   - 開発版とインストール版を共存させるには、dev 用の設定ファイル（pike は `tauri.dev.conf.json`）で identifier を別（例: `.debug` サフィックス）に上書きする。window-state 系プラグイン等は identifier 単位で状態を保存するため、identifier が同一のままだと開発版とインストール版で状態が混ざる。導入時はセットで検討する。
   - 素の `listen()`（`@tauri-apps/api/event`）はデフォルト target が `Any` のため、Rust が `emit_to(label, …)` で特定ウィンドウ宛てに送ったイベントでも全ウィンドウで発火する。特定ウィンドウだけで処理したいイベントは `getCurrentWindow().listen()`（target = 自ラベル）で受けること（pike で全ウィンドウが同一ファイルを開こうとする不具合の原因になった）。全ウィンドウにブロードキャストして ID でフィルタする方式とは使い分ける。
 
+
+## TablePlus からの取り込み（#99）
+- `src-tauri/src/tableplus.rs`。`%LOCALAPPDATA%\com.tinyapp.TablePlus\Data`（`Setting.json` の `sharedConnectionPath` があればそちら）の `Connections.plist` と `ConnectionGroups.plist` を読み、`ExportData` に変換する。キーは macOS 版と同じで、TLS モードの番号の並び（`ssl_mode`）は TablePro の取り込み処理に合わせてある。取り込みは `import_tableplus` コマンドで、衝突の検出と追加は JSON のインポートと共通の `merge_import` を通る（1 回目の呼び出しで重複を返し、2 回目は TablePlus を読み直す）。
+- **パスワードは読まない**。Windows 版は独自の形式で `.tpmaster` に暗号化して保存し、その鍵を資格情報マネージャー（`TablePlus`）に置いている。取り込んだプロファイルは `save_password` / `save_ssh_password` を false（都度入力）にする。TablePlus で「パスワード無し」（`*PasswordMode` が 2）の接続だけは true にする。秘密鍵のパスフレーズは true のまま（鍵にパスフレーズがあるか分からず、毎回の入力を求めると無い鍵の利用者の邪魔になるため）。
+- TLS の「Preferred」は muSQL に無いので `DISABLED`、知らない番号は `REQUIRED` にする（TLS を黙って外さないため）。秘密鍵はファイル名だけが入っているので `%USERPROFILE%\.ssh` から探し、無ければ空にする（agent と既定の鍵に落ちる）。muSQL のグループは入れ子にできないので、入れ子のグループは「親 / 子」の名前にする。対応しない種類の接続は `skipped` で画面に返す。既存のプロファイルを上書きするときは、TablePlus が知らない設定（パスワードの保存方式と 1Password の参照）を既存の側から引き継ぐ（`keep_local_settings`。消すと同期先のマシンでも消えるため）。
+- 手元の TablePlus で読めるかは `cargo test tableplus -- --ignored --nocapture` で確かめる（件数と種類だけを出す）。
 
 ## 設定の同期とアップデート
 - **接続プロファイルの外部同期（#47）**: 指定パス（Dropbox 等）の JSON にストアをミラーし複数マシン共有。同期パスは AppConfig `sync_path`（環境依存＝非同期）。**書き出しは `save_profiles` 内で自動ミラー**（全ウィンドウの変更を捕捉、同期的なので focus 取り込みと競合しない）。書き出しはシークレット除去（`sanitized_store_json`。パスワード/SSH 秘密は `skip_serializing` で元々出ないが二重防御）。**取り込み** `sync_import`（`refreshProfiles` が起動時/フォーカス時/`profiles:changed` で呼ぶ）は id ベース merge（既存はファイル優先・ローカル固有は保持・削除は非伝播）、読み取り/parse 失敗はローカルへフォールバック、差分時のみ保存、async+spawn_blocking（クラウド placeholder のフリーズ回避）。UI は main メニュー `main:sync-settings` → `openSyncModal`。競合方針は実質セッション単位 last-write-wins。コマンド: `get_sync_path`/`set_sync_path`/`sync_import`/`sync_export`/`pick_sync_path`。

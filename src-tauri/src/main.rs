@@ -26,6 +26,7 @@ mod onepassword;
 mod postgres_client;
 mod redis_client;
 mod sqlite_client;
+mod tableplus;
 mod toast;
 mod vdesk;
 #[cfg(test)]
@@ -219,6 +220,17 @@ impl Engine {
         }
     }
 
+    /// The port the server listens on unless told otherwise. `None` for SQLite, a file.
+    /// An engine this version does not know is taken to be MySQL.
+    fn default_port(&self) -> Option<u16> {
+        match self {
+            Engine::Redis => Some(6379),
+            Engine::Postgresql => Some(5432),
+            Engine::Sqlite => None,
+            Engine::Mysql | Engine::Mariadb | Engine::Unknown(_) => Some(3306),
+        }
+    }
+
     /// The window that opens a profile of this engine.
     fn window(&self) -> Result<&'static str, String> {
         match self.protocol()? {
@@ -349,6 +361,9 @@ struct ImportResult {
     conflicts: Option<ImportConflicts>,
     #[serde(skip_serializing_if = "Option::is_none")]
     file_path: Option<String>,
+    /// Connections left out of an import from another app, as "name (kind)" (#99).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    skipped: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -413,11 +428,19 @@ struct SshHandler {
     port: u16,
 }
 
-fn ssh_known_hosts_path() -> PathBuf {
+/// `~/.ssh`, or `None` when no home folder is set.
+fn ssh_dir() -> Option<PathBuf> {
     let home = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
-        .unwrap_or_default();
-    PathBuf::from(&home).join(".ssh").join("known_hosts")
+        .ok()
+        .filter(|h| !h.is_empty())?;
+    Some(PathBuf::from(home).join(".ssh"))
+}
+
+fn ssh_known_hosts_path() -> PathBuf {
+    ssh_dir()
+        .unwrap_or_else(|| PathBuf::from(".ssh"))
+        .join("known_hosts")
 }
 
 impl russh::client::Handler for SshHandler {
@@ -1900,13 +1923,10 @@ fn parse_ssh_config_hosts(content: &str) -> Vec<String> {
 
 #[tauri::command]
 fn list_ssh_config_hosts() -> Vec<String> {
-    let home = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .unwrap_or_default();
-    if home.is_empty() {
+    let Some(dir) = ssh_dir() else {
         return vec![];
-    }
-    let path = std::path::Path::new(&home).join(".ssh").join("config");
+    };
+    let path = dir.join("config");
     let content = match std::fs::read_to_string(&path) {
         Ok(c) => c,
         Err(_) => return vec![],
@@ -2189,12 +2209,7 @@ async fn authenticate_ssh(
 
     // 3. Try default key files (only when no specific key was given)
     if key_path.is_none() {
-        let home = std::env::var("USERPROFILE")
-            .or_else(|_| std::env::var("HOME"))
-            .unwrap_or_default();
-
-        if !home.is_empty() {
-            let ssh_dir = std::path::Path::new(&home).join(".ssh");
+        if let Some(ssh_dir) = ssh_dir() {
             for name in &["id_ed25519", "id_rsa", "id_ecdsa"] {
                 let kp = ssh_dir.join(name);
                 if kp.exists() {
@@ -3063,7 +3078,7 @@ async fn import_profiles(
     file_path: Option<String>,
 ) -> Result<Option<ImportResult>, String> {
     // 1. Read file
-    let (import_path, import_data) = if let Some(ref path) = file_path {
+    let (import_path, import_data): (String, ExportData) = if let Some(ref path) = file_path {
         // Second call: read from the specified path
         let content =
             std::fs::read_to_string(path).map_err(|e| format!("Failed to read file: {e}"))?;
@@ -3087,8 +3102,51 @@ async fn import_profiles(
             .map_err(|e| format!("Failed to parse import file: {e}"))?;
         (path_str, data)
     };
+    merge_import(&app, import_data, mode.as_deref(), Some(import_path), false).map(Some)
+}
 
-    let store = load_profiles(&app)?;
+/// Carries over, when another app's connection overwrites a profile, the settings that
+/// app has no notion of: how the passwords are kept (the keyring may hold them, which
+/// the imported "ask every time" would leave unused) and the 1Password references.
+/// The profile is synced, so dropping them would drop them on every machine.
+fn keep_local_settings(existing: &ConnectionRequest, imported: &mut ConnectionRequest) {
+    imported.mysql.save_password = existing.mysql.save_password;
+    imported.mysql.op_ref = existing.mysql.op_ref.clone();
+    if let (Some(old), Some(new)) = (&existing.ssh, &mut imported.ssh) {
+        new.save_ssh_password = old.save_ssh_password;
+        new.save_ssh_passphrase = old.save_ssh_passphrase;
+        new.op_passphrase_ref = old.op_passphrase_ref.clone();
+        new.op_password_ref = old.op_password_ref.clone();
+    }
+}
+
+/// Imports the connections TablePlus keeps (#99), as `import_profiles` does a file: the
+/// first call (`mode` None) reports duplicates instead of importing, and the second reads
+/// TablePlus again with the mode chosen.
+#[tauri::command]
+async fn import_tableplus(app: AppHandle, mode: Option<String>) -> Result<ImportResult, String> {
+    let imported =
+        tauri::async_runtime::spawn_blocking(|| tableplus::read(&tableplus::data_dir()?))
+            .await
+            .map_err(|e| format!("Task error: {e}"))??;
+    let mut result = merge_import(&app, imported.data, mode.as_deref(), None, true)?;
+    result.skipped = imported.skipped;
+    Ok(result)
+}
+
+/// Adds the profiles of an import to the store. With `mode` None it first looks for
+/// groups and profiles that are already there, and returns those without importing
+/// (`import_path` goes back with them, for the second call); "overwrite" replaces them,
+/// "add" (also None without duplicates) adds everything as new. `keep_local` is for a
+/// source that does not know muSQL's own settings (`keep_local_settings`).
+fn merge_import(
+    app: &AppHandle,
+    import_data: ExportData,
+    mode: Option<&str>,
+    import_path: Option<String>,
+    keep_local: bool,
+) -> Result<ImportResult, String> {
+    let store = load_profiles(app)?;
 
     // 2. Conflict detection (first call only, mode == None)
     if mode.is_none() {
@@ -3126,7 +3184,7 @@ async fn import_profiles(
 
         if !dup_groups.is_empty() || !dup_profiles.is_empty() {
             // Return conflicts without importing
-            return Ok(Some(ImportResult {
+            return Ok(ImportResult {
                 groups: store.groups,
                 items: store.items,
                 imported_count: 0,
@@ -3134,13 +3192,14 @@ async fn import_profiles(
                     groups: dup_groups,
                     profiles: dup_profiles,
                 }),
-                file_path: Some(import_path),
-            }));
+                file_path: import_path,
+                skipped: Vec::new(),
+            });
         }
         // No conflicts — fall through to "add" mode
     }
 
-    let effective_mode = mode.as_deref().unwrap_or("add");
+    let effective_mode = mode.unwrap_or("add");
 
     // 3. Execute import
     let mut store = store; // make mutable
@@ -3186,7 +3245,17 @@ async fn import_profiles(
             {
                 // Overwrite: update fields, keep existing ID
                 profile_id_map.insert(item.id.clone(), existing.id.clone());
-                existing.request = item.request.clone();
+                let mut request = item.request.clone();
+                if keep_local {
+                    keep_local_settings(&existing.request, &mut request);
+                }
+                // As `save_profile` does: a SQLite profile keeps no credentials.
+                if request.engine.protocol() == Ok(Protocol::Sqlite) {
+                    delete_password(&existing.id);
+                    delete_ssh_passphrase(&existing.id);
+                    delete_ssh_password(&existing.id);
+                }
+                existing.request = request;
                 existing.color = item.color.clone();
                 existing.tags = item.tags.clone();
                 imported_count += 1;
@@ -3213,7 +3282,7 @@ async fn import_profiles(
         imported_count += 1;
     }
 
-    save_profiles(&app, &store)?;
+    save_profiles(app, &store)?;
 
     // Import passwords
     if let Some(passwords) = &import_data.passwords {
@@ -3233,13 +3302,14 @@ async fn import_profiles(
         }
     }
 
-    Ok(Some(ImportResult {
+    Ok(ImportResult {
         groups: store.groups,
         items: store.items,
         imported_count,
         conflicts: None,
         file_path: None,
-    }))
+        skipped: Vec::new(),
+    })
 }
 
 #[tauri::command]
@@ -3669,6 +3739,7 @@ enum MenuAction {
     NewProfile,
     NewGroup,
     Import,
+    ImportTableplus,
     Export,
     SyncSettings,
     Exit,
@@ -3707,8 +3778,8 @@ impl MenuAction {
     fn windows(self) -> &'static [&'static str] {
         use MenuAction::*;
         match self {
-            NewProfile | NewGroup | Import | Export | SyncSettings | Exit | CheckUpdate
-            | Manual | Github | OpenLogs | About | RememberDesktop => &[WIN_MAIN],
+            NewProfile | NewGroup | Import | ImportTableplus | Export | SyncSettings | Exit
+            | CheckUpdate | Manual | Github | OpenLogs | About | RememberDesktop => &[WIN_MAIN],
             NewSqlTab | SwitchDb | ToggleNotify | Run | RunAll | Cancel | Format => &[WIN_QUERY],
             AiSettings => &[WIN_QUERY, WIN_REDIS],
             Close => &CONNECTION_WINDOWS,
@@ -3761,10 +3832,10 @@ impl MenuAction {
                 });
             }),
             Close => Some(close_connection_window),
-            NewProfile | NewGroup | Import | Export | SyncSettings | Manual | About | NewSqlTab
-            | SwitchDb | AiSettings | ToggleNotify | Run | RunAll | Cancel | Format
-            | TestConnection | Connect | Save | Delete | ThemeLight | ThemeDark | LangEn
-            | LangJa => None,
+            NewProfile | NewGroup | Import | ImportTableplus | Export | SyncSettings | Manual
+            | About | NewSqlTab | SwitchDb | AiSettings | ToggleNotify | Run | RunAll | Cancel
+            | Format | TestConnection | Connect | Save | Delete | ThemeLight | ThemeDark
+            | LangEn | LangJa => None,
         }
     }
 
@@ -3819,6 +3890,7 @@ fn menu_label(lang: &str, item: MenuAction) -> &'static str {
             NewProfile => ("New Profile", "新規プロファイル"),
             NewGroup => ("New Group", "新規グループ"),
             Import => ("Import Profiles...", "インポート..."),
+            ImportTableplus => ("Import from TablePlus...", "TablePlus から取り込む..."),
             Export => ("Export Profiles...", "エクスポート..."),
             SyncSettings => ("Sync Connections...", "接続の同期..."),
             Exit => ("Exit", "終了"),
@@ -3966,6 +4038,7 @@ fn build_main_menu(handle: &AppHandle<Wry>, lang: &str, theme: &str) -> tauri::R
             &item(MenuAction::NewGroup, Some("CmdOrCtrl+Shift+N"))?,
             &PredefinedMenuItem::separator(handle)?,
             &item(MenuAction::Import, None)?,
+            &item(MenuAction::ImportTableplus, None)?,
             &item(MenuAction::Export, None)?,
             &item(MenuAction::SyncSettings, None)?,
             &PredefinedMenuItem::separator(handle)?,
@@ -4530,6 +4603,7 @@ fn main() {
             has_ssh_password,
             export_profiles,
             import_profiles,
+            import_tableplus,
             get_sync_path,
             set_sync_path,
             sync_import,
@@ -5059,6 +5133,32 @@ Host myserver
     }
 
     // ── generate_profile_id ────────────────────────────────────────
+
+    #[test]
+    fn keep_local_settings_carries_what_the_other_app_does_not_know() {
+        let mut existing = make_request("old", 3306, "u", Some(make_ssh(None)));
+        existing.mysql.op_ref = Some("op://v/i/password".to_owned());
+        if let Some(ssh) = existing.ssh.as_mut() {
+            ssh.save_ssh_passphrase = false;
+            ssh.op_passphrase_ref = Some("op://v/i/passphrase".to_owned());
+        }
+        let mut imported = make_request("new", 3307, "u2", Some(make_ssh(None)));
+        imported.mysql.save_password = false;
+        keep_local_settings(&existing, &mut imported);
+        // The connection is the imported one; how its secrets are kept is not.
+        assert_eq!(
+            (imported.mysql.host.as_str(), imported.mysql.port),
+            ("new", 3307)
+        );
+        assert!(imported.mysql.save_password);
+        assert_eq!(imported.mysql.op_ref.as_deref(), Some("op://v/i/password"));
+        let ssh = imported.ssh.unwrap();
+        assert!(!ssh.save_ssh_passphrase);
+        assert_eq!(
+            ssh.op_passphrase_ref.as_deref(),
+            Some("op://v/i/passphrase")
+        );
+    }
 
     #[test]
     fn generate_profile_id_unique() {

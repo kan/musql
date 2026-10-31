@@ -2993,6 +2993,7 @@ dependencies = [
  "log",
  "mysql",
  "native-tls",
+ "plist",
  "postgres",
  "postgres-native-tls",
  "redis",

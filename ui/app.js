@@ -733,38 +733,44 @@ async function exportProfiles() {
   }
 }
 
-async function importProfiles() {
+// Both imports answer the same way: the first call (mode null) imports at once, or
+// reports duplicates without importing; then the second call runs with the mode chosen.
+// `notes` are shown after the count (the TablePlus import's).
+async function runImport(command, args, notes) {
   try {
-    const result = await safeInvoke("import_profiles", {
-      mode: null, filePath: null
-    });
+    let result = await safeInvoke(command, { ...args, mode: null });
     if (!result) return; // cancelled
-
     if (result.conflicts) {
-      // Duplicates found — ask user
       const msg = t('import_conflicts', {
         groups: result.conflicts.groups.length,
         profiles: result.conflicts.profiles.length,
       });
-      const overwrite = await confirmDialog(msg);
-      const mode = overwrite ? "overwrite" : "add";
-      const result2 = await safeInvoke("import_profiles", {
-        mode, filePath: result.file_path,
-      });
-      if (result2) {
-        profileData = result2;
-        renderTree();
-        alert(t('import_success', { n: result2.imported_count }));
-      }
-    } else {
-      // No duplicates — already imported
-      profileData = result;
-      renderTree();
-      alert(t('import_success', { n: result.imported_count }));
+      const mode = (await confirmDialog(msg)) ? "overwrite" : "add";
+      const again = { ...args, mode };
+      if (result.file_path) again.filePath = result.file_path;
+      result = await safeInvoke(command, again);
+      if (!result) return;
     }
+    profileData = result;
+    renderTree();
+    const lines = [t('import_success', { n: result.imported_count })];
+    if (result.skipped && result.skipped.length) {
+      lines.push(t('import_skipped', { names: result.skipped.join("\n") }));
+    }
+    if (result.imported_count > 0) lines.push(...notes);
+    alert(lines.join("\n\n"));
   } catch (error) {
     alert(String(error));
   }
+}
+
+function importProfiles() {
+  return runImport("import_profiles", { filePath: null }, []);
+}
+
+// #99
+function importTablePlus() {
+  return runImport("import_tableplus", {}, [t('import_tableplus_passwords')]);
 }
 
 // ── Connection profile sync (external JSON, path-based) (#47) ──
@@ -1269,6 +1275,7 @@ if (eventApi && eventApi.listen) {
       case "new-profile": openSettings(""); break;
       case "new-group": createGroup(); break;
       case "import": importProfiles(); break;
+      case "import-tableplus": importTablePlus(); break;
       case "export": exportProfiles(); break;
       case "sync-settings": openSyncModal(); break;
       case "manual": window.openManual(); break;

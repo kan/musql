@@ -52,6 +52,9 @@ postgres-native-tls = "0.5"
 native-tls = "0.2"
 # メニューの項目（`MenuAction`）と id の文字列の行き来（#131）
 strum = { version = "0.28", features = ["derive"] }
+# TablePlus の接続設定（`Connections.plist`）の読み取り（#99、`src/tableplus.rs`）。tauri-utils 経由で
+# 既に依存ツリーにいる
+plist = "1"
 bollard = { version = "0.21", optional = true }
 futures-util = { version = "0.3", optional = true }
 

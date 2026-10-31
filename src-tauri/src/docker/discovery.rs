@@ -52,13 +52,9 @@ fn classify(label: impl Fn(&str) -> Option<String>, exposed: &[u16]) -> Option<(
     let port_label: Option<u16> = label("musql.port").and_then(|v| v.trim().parse().ok());
     if let Some(name) = label("musql.engine") {
         let engine = Engine::from(name.trim().to_ascii_lowercase());
-        let default_port = match engine {
-            Engine::Redis => REDIS_PORT,
-            Engine::Postgresql => POSTGRES_PORT,
-            // A file, not a server (#97): a container has nothing to connect to.
-            Engine::Sqlite => return None,
-            _ => MYSQL_PORT,
-        };
+        // SQLite has none: a file, not a server (#97), so a container has nothing to
+        // connect to.
+        let default_port = engine.default_port()?;
         return Some((engine, port_label.unwrap_or(default_port)));
     }
     let mysql_port = port_label.unwrap_or(MYSQL_PORT);
