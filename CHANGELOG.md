@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.11.1] - 2026-11-02
+
+### Changed
+- `.msi` でインストールした場合も、アップデートを `.exe` インストーラで行うようにした（#147）。これまでは更新のたびに UAC の確認が出て、デスクトップにショートカットが作られていた。次のアップデートでユーザー単位のインストールへ移り、そのときの 1 回だけ UAC の確認とショートカットの作成がある
+- 依存関係を更新（tauri 2.12.5、tokio 1.54.1、redis 1.8.0、rusqlite 0.41.0 ほか）
+
+### Fixed
+- SQL タブの実行結果を CSV / TSV でエクスポートしようとしても、ダイアログが出なかったのを直した（#148）
+
+### Security
+- SSH の依存を更新（russh 0.65.0、pageant 0.2.5）。SSH の接続先から細工したパケットを送られると、メモリを使い果たす、または通信が止まる問題を修正（GHSA-4p9f-7p9m-5vfg、GHSA-fw5c-8223-6h42 ほか）
+- libz-sys 1.1.31：ビルド時に環境変数がビルドディレクトリへ書き出される問題を修正（RUSTSEC-2026-0418）
+
 ## [0.11.0] - 2026-10-31
 
 ### Added
@@ -299,6 +312,7 @@
 - アプリ内自動更新（NSIS インストーラー + Ed25519 署名）
 - GitHub Actions CI/CD（cargo check + リリースビルド）
 
+[0.11.1]: https://github.com/kan/musql/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/kan/musql/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/kan/musql/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/kan/musql/compare/v0.9.0...v0.10.0
