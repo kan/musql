@@ -10,7 +10,7 @@ env:
   # 固定しないと、タグを打った時点の最新が検証されないまま走り、attestation の付く
   # 成果物を作る。2 つのジョブで版がずれることも防ぐ。dependabot は上げないので、
   # tauri クレート（src-tauri/Cargo.lock）を上げたときに手で合わせる。
-  TAURI_CLI: "@tauri-apps/cli@2.12.3"
+  TAURI_CLI: "@tauri-apps/cli@2.12.4"
 
 jobs:
   build:

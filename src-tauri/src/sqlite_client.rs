@@ -144,7 +144,7 @@ pub fn run(conn: &Connection, sql: &str, limit: usize) -> Result<QueryResult, St
             ..nothing()
         });
     }
-    let columns: Vec<String> = stmt.column_names().into_iter().map(str::to_owned).collect();
+    let columns: Vec<String> = stmt.column_names().map(str::to_owned).collect();
     let mut rows = Vec::new();
     let mut result = stmt.query([]).map_err(failed)?;
     while let Some(row) = result.next().map_err(|e| format!("Row read failed: {e}"))? {
