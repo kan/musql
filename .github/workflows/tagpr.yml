@@ -1,0 +1,67 @@
+name: tagpr
+
+# リリース PR を作り、マージされたらタグを打ってリリースを走らせる（#149）。設定は `.tagpr`、
+# 手順は `release` スキル、設計の理由は CLAUDE.md の「リリース PR（tagpr）」。
+#
+# - main が進むたびに、版・Cargo.lock・CHANGELOG の見出し・ライセンス一覧を載せたリリース PR
+#   （ブランチ `tagpr-from-v<前回の版>`）を作り直す（`scripts/release-prepare.mjs`）
+# - リリース PR がマージされると、tagpr がタグを打ち、同じ run の `release` ジョブが
+#   Release ワークフローを呼ぶ。**GITHUB_TOKEN で打ったタグでは `on.push.tags` が起動しない**ので、
+#   タグの push には頼らない
+# - `workflow_dispatch` は、リリース PR にラベル（`tagpr:minor`）を付けたあとの作り直し用
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tagpr:
+    name: Prepare the release pull request
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # tagpr どうしは並べない（同じリリース PR のブランチを作り直し合う）。止めもしない
+    # （タグを打った直後に止めると、成果物の無いタグが残る）。release ジョブは含めないので、
+    # ビルドの最中に来た push もリリース PR の作り直しを待たされない
+    concurrency:
+      group: tagpr
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: read
+    outputs:
+      tag: ${{ steps.tagpr.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      # release-prepare.mjs（と credits.mjs）を動かす。npm の依存は無い
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: lts/*
+
+      # Rust はランナーに入っている stable を使う。呼ぶのは `cargo update --workspace` と
+      # `cargo metadata` だけで、build.rs は走らない。**このジョブは書き込みの権限を持つので、
+      # musql と依存のコードを動かさない**（ビルドやテストを足さない）
+
+      - id: tagpr
+        uses: Songmu/tagpr@v1.21.4
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release:
+    name: Release
+    needs: tagpr
+    if: needs.tagpr.outputs.tag != ''
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.tagpr.outputs.tag }}
+    secrets: inherit

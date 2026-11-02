@@ -101,11 +101,15 @@ verify-postgres:
 verify-toast:
     cargo test verify::verify_toast -- --ignored --nocapture
 
-# 依存のライセンス一覧（ui/credits.json）を作り直す（#119。依存を変えたら回してコミットする。
-# just bump からも呼ばれる。本文を同梱していないクレートの標準文を取りに、ネットワークへ出ることがある）
-[working-directory('src-tauri')]
+# 依存のライセンス一覧（ui/credits.json）を作り直す（#119。ふだんはリリース PR が作り直すので、
+# 手で回すのは ui/lib/ の vendor を変えたときくらい（#149）。本文を同梱していないクレートの
+# 標準文を取りに、ネットワークへ出ることがある。Node.js が要る）
 credits:
-    cargo test credits::generate -- --ignored --nocapture
+    node scripts/credits.mjs
+
+# ライセンス一覧が依存と合っているかを見る（just test と CI には入れていない。理由は scripts/credits.mjs）
+check-credits:
+    node scripts/credits.mjs --check
 
 # ドキュメントと実装の乖離の検査だけを回す（just test にも含まれる。#115）
 [working-directory('src-tauri')]
@@ -141,6 +145,19 @@ screenshots-build:
 screenshots:
     MUSQL_SCREENSHOTS_OUT="$PWD/artifacts/screenshots" src-tauri/target/screenshots/debug/musql.exe
 
+# 撮った画像を docs/manual/img/ の同じ名前のファイルへ写す（#149。CI は screenshots.yml の
+# commit: true）。マニュアルにある画像が 1 枚でも撮れていなければ、何も写さずに落ちる
+# （shebang のレシピにしない。set windows-shell の Git Bash を通らず、PATH の bash で動くため）
+screenshots-sync:
+    set -euo pipefail; \
+    missing=""; \
+    for img in docs/manual/img/*.png; do \
+      [ -f "artifacts/screenshots/$(basename "$img")" ] || missing="$missing $(basename "$img")"; \
+    done; \
+    if [ -n "$missing" ]; then echo "撮れていない画像:$missing" >&2; exit 1; fi; \
+    for img in docs/manual/img/*.png; do cp "artifacts/screenshots/$(basename "$img")" "$img"; done; \
+    echo "docs/manual/img/ へ写した"
+
 # --- 監査（ci.yml の audit ジョブと同じ内容） ---
 
 # 依存の脆弱性を見る（cargo install cargo-audit が要る）
@@ -150,11 +167,7 @@ audit:
 
 # --- リリース ---
 
-# バージョンを上げる（Cargo.toml / tauri.conf.json + Cargo.lock）。CHANGELOG は手で書く。
-# 先にライセンス一覧を作り直す（照合のテストは版を比べないので、ここで作り直さないと
-# 出荷する一覧に古い版の番号が残る）
-bump VERSION: credits
-    sed -i -E '0,/^version = /s|^version = ".*"|version = "{{VERSION}}"|' src-tauri/Cargo.toml
-    sed -i -E '0,/"version":/s|"version": ".*"|"version": "{{VERSION}}"|' src-tauri/tauri.conf.json
-    cd src-tauri && cargo check --quiet
-    @echo 'CHANGELOG.md の新セクションは手で書くこと'
+# バージョンを上げる（tauri.conf.json / Cargo.toml + Cargo.lock）。ふだんはリリース PR が
+# 同じスクリプトで上げるので、手で回さない（#149。CLAUDE.md の「リリース PR（tagpr）」）
+bump VERSION:
+    node scripts/bump-version.mjs {{VERSION}}
