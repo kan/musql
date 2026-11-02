@@ -149,7 +149,7 @@ screenshots:
 # commit: true）。マニュアルにある画像が 1 枚でも撮れていなければ、何も写さずに落ちる
 # （shebang のレシピにしない。set windows-shell の Git Bash を通らず、PATH の bash で動くため）
 screenshots-sync:
-    set -euo pipefail; \
+    set -eu; \
     missing=""; \
     for img in docs/manual/img/*.png; do \
       [ -f "artifacts/screenshots/$(basename "$img")" ] || missing="$missing $(basename "$img")"; \
