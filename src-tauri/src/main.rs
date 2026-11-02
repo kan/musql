@@ -4498,10 +4498,16 @@ fn setup_menus(handle: &AppHandle<Wry>) -> tauri::Result<()> {
 
 /// Asks the update server for a newer version. Failures are logged here, so every
 /// caller records them the same way.
+///
+/// Always updates through the NSIS installer, even a copy installed from the MSI (#147).
+/// Left to itself the updater picks the installer the app came from, and the MSI is a
+/// per-machine install: every update asked for UAC and put the desktop shortcut back.
+/// The NSIS installer finds the MSI install, uninstalls it and installs per user, so
+/// the UAC prompt and the shortcut happen once, on the move.
 #[cfg(feature = "self-updater")]
 async fn fetch_update(app: &AppHandle) -> Result<Option<tauri_plugin_updater::Update>, String> {
     use tauri_plugin_updater::UpdaterExt;
-    let result = match app.updater() {
+    let result = match app.updater_builder().target(UPDATER_TARGET).build() {
         Ok(updater) => updater.check().await.map_err(|e| e.to_string()),
         Err(e) => Err(e.to_string()),
     };
@@ -4510,6 +4516,11 @@ async fn fetch_update(app: &AppHandle) -> Result<Option<tauri_plugin_updater::Up
         app_log::warn_throttled(app_log::LONG, &format!("update check failed: {e}"))
     })
 }
+
+/// The `platforms` key of `latest.json` the app updates from (#147, see `fetch_update`).
+/// Only x64 Windows is released.
+#[cfg(feature = "self-updater")]
+const UPDATER_TARGET: &str = "windows-x86_64-nsis";
 
 /// How often a running app looks for a newer version (#114). A database client tends to
 /// stay open for days, so checking only at startup misses whatever ships meanwhile.

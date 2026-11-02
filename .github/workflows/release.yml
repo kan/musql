@@ -52,6 +52,10 @@ jobs:
           releaseDraft: true
           prerelease: false
           uploadUpdaterJson: true
+          # latest.json の `windows-x86_64` を MSI ではなく NSIS（setup.exe）に向ける（#147。
+          # pike と同じ）。アプリは `windows-x86_64-nsis` を指定して取りに来るので
+          # （main.rs の `fetch_update`）、これは種別を指定しない古い版や他のクライアント向け。
+          updaterJsonPreferNsis: true
 
       # 手でダウンロードするインストーラに来歴の証明を付ける（#130）。グロブは拡張子の
       # 末尾まで書く。bundle/ には配布しない .msi.zip / .nsis.zip と各 .sig も並んでいる。
