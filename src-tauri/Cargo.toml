@@ -19,7 +19,7 @@ semver = "1"
 rfd = "0.17"
 tauri = { version = "2", features = [] }
 keyring = { version = "3", features = ["windows-native"] }
-russh = { version = "0.64", default-features = false, features = ["ring", "flate2", "rsa"] }
+russh = { version = "0.65", default-features = false, features = ["ring", "flate2", "rsa"] }
 tokio = { version = "1", features = ["net", "io-util", "time"] }
 # 既定の feature から zip を外す。配布する更新は .exe / .msi で、zip を展開する経路を使わない
 # （zip <9 に RUSTSEC-2026-0367〜0369 がある）
