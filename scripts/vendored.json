@@ -1,0 +1,23 @@
+[
+  {
+    "name": "CodeMirror",
+    "version": "5.65.21",
+    "license": "MIT",
+    "url": "https://codemirror.net/5/",
+    "file": "ui/lib/codemirror/LICENSE"
+  },
+  {
+    "name": "sql-formatter",
+    "version": "15.4.10",
+    "license": "MIT",
+    "url": "https://github.com/sql-formatter-org/sql-formatter",
+    "file": "ui/lib/sql-formatter/LICENSE"
+  },
+  {
+    "name": "Lucide",
+    "version": "",
+    "license": "ISC",
+    "url": "https://lucide.dev",
+    "file": "ui/lib/lucide/LICENSE"
+  }
+]

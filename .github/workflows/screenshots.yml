@@ -1,9 +1,16 @@
 name: Screenshots
 
 # マニュアルのスクリーンショットを Windows ランナーで撮る（`just screenshots`、仕組みは
-# `src-tauri/src/screenshots.rs`）。手で起動し、撮った画像はアーティファクトに上げるだけにする。
-# 中身を見てから、手元で docs/manual/img/ へ入れてコミットする（ワークフローに書き込みの権限を
-# 持たせない）。
+# `src-tauri/src/screenshots.rs`）。リリースの前に `release` スキルの手順から、**リリース PR の
+# ブランチ（`tagpr-from-v<前回の版>`）を ref にして**起動する（#149）。
+#
+# `commit: true`（既定）なら `just screenshots-sync` で `docs/manual/img/` へ写し、差分があれば
+# そのブランチへコミットを 1 つ積む。tagpr はリリース PR を作り直すときもこのコミットを引き継ぐ。
+# 画像の差分はリリース PR の画面で見てからマージする。`commit: false` なら撮った画像を
+# アーティファクトに上げるだけ（どの ref からでも起動できる）。
+#
+# **書き込みの権限はコミットするジョブだけに付ける。** 撮影のジョブは依存（クレートの build.rs）と
+# アプリを動かすので、読み取りの権限だけで走らせ、写した画像をアーティファクトで渡す。
 #
 # 手元の撮影（日本語の Windows、拡大率 150%）と同じ絵にするための前提:
 #
@@ -15,10 +22,16 @@ name: Screenshots
 #   Windows 版の MySQL を入れて init SQL を流す
 on:
   workflow_dispatch:
+    inputs:
+      commit:
+        description: docs/manual/img へ写してリリース PR のブランチへコミットする
+        type: boolean
+        default: true
 
 permissions:
   contents: read
 
+# 続けて起動したら前の run を止める（同じブランチへ画像のコミットを 2 つ積みうる）
 concurrency:
   group: screenshots
   cancel-in-progress: true
@@ -34,9 +47,28 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
+      # コミット先はリリース PR のブランチだけにする（main はリリース PR のマージまで前の版のまま）
+      - name: Check inputs
+        if: inputs.commit && !startsWith(github.ref, 'refs/heads/tagpr-from-')
+        shell: bash
+        run: |
+          echo "::error::commit はリリース PR のブランチ（tagpr-from-v<前回の版>）から起動する"
+          exit 1
+
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
+
+      # その版のタグが既にあるなら、マージ済みのブランチを撮ろうとしている
+      - name: Check the version is not released yet
+        if: inputs.commit
+        shell: bash
+        run: |
+          version=$(jq -r .version src-tauri/tauri.conf.json)
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null; then
+            echo "::error::v$version のタグが既にある（リリース済みのブランチは撮らない）"
+            exit 1
+          fi
 
       - uses: dtolnay/rust-toolchain@master
         with:
@@ -99,3 +131,51 @@ jobs:
           name: screenshots
           path: artifacts/screenshots/
           if-no-files-found: warn
+
+      # 撮れなかった画像があれば落ちる（古い画像が残ったまま、差分にも出ないため）
+      - name: Sync into docs/manual/img
+        if: inputs.commit
+        run: just screenshots-sync
+
+      - name: Hand the images to the commit job
+        if: inputs.commit
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: manual-img
+          path: docs/manual/img/*.png
+          if-no-files-found: error
+          retention-days: 1
+
+  commit:
+    name: Commit to the release pull request
+    needs: capture
+    if: inputs.commit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # 撮影したコミットの上に積む。撮影中に tagpr がブランチを作り直していたら、push が
+      # fast-forward にならずに落ちる（古いツリーで撮った画像を新しいブランチに載せない）。
+      # そのときは起動し直す
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: manual-img
+          path: docs/manual/img/
+
+      # 差分が無ければ何もしない。版は bump 済みの tauri.conf.json から取る
+      - name: Commit and push
+        run: |
+          git add docs/manual/img
+          if git diff --cached --quiet; then
+            echo "画像に差分が無い"
+            exit 0
+          fi
+          version=$(jq -r .version src-tauri/tauri.conf.json)
+          git -c user.name='github-actions[bot]' \
+            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -q -m "v$version でマニュアルのスクリーンショットを撮り直す"
+          git push origin "HEAD:${GITHUB_REF}"

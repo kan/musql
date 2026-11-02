@@ -8,10 +8,10 @@
 
 下の表の画像は、すべて自動で撮れます（撮る画面の手順は `src-tauri/src/screenshots.rs` の `SHOTS` にあります）。画像を足すときは、表と `SHOTS` の両方に足してください。撮り方は 2 つあります。
 
-- **GitHub Actions**：Actions の画面から `Screenshots` のワークフローを手で起動します。撮った画像は、実行結果のアーティファクト `screenshots` に入ります。
-- **手元**：撮影用の MySQL を起動してから（[`../fixtures/README.md`](../fixtures/README.md) の手順 1）、`just screenshots-build` と `just screenshots` を実行します。画像は `artifacts/screenshots/` に出ます。
+- **GitHub Actions**：リリースの前に、リリース PR のブランチ（`tagpr-from-v<前回の版>`）で `Screenshots` のワークフローを起動します。撮った画像を `docs/manual/img/` へ写し、差分があればそのブランチへコミットします。画像はリリース PR の画面で確かめます。`commit` を外して起動すると、アーティファクト `screenshots` に入れるだけになります。
+- **手元**：撮影用の MySQL を起動してから（[`../fixtures/README.md`](../fixtures/README.md) の手順 1）、`just screenshots-build` と `just screenshots` を実行します。画像は `artifacts/screenshots/` に出ます。`just screenshots-sync` で `docs/manual/img/` の同じ名前のファイルへ写します。
 
-どちらも `docs/manual/img/` には自動で入りません。中身を確かめてから、同じ名前で置き換えてコミットしてください。自動撮影の画像はページの中だけを写し、ウィンドウの枠（タイトルバー）は含みません。
+自動撮影の画像はページの中だけを写し、ウィンドウの枠（タイトルバー）は含みません。
 
 | ファイル名 | 使用ページ | 撮影シチュエーション |
 |-----------|-----------|--------------------|

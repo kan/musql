@@ -39,6 +39,9 @@ const EXTERNAL_NAMES: &[&str] = &[
     // JSON fields of `gh release list` / `gh release view`, named by the release skill.
     "isDraft",
     "isLatest",
+    // The conclusion of a GitHub Actions run waiting for approval (the release pull
+    // request that tagpr opens with GITHUB_TOKEN, #149).
+    "action_required",
     // This module's own identifiers. It is left out of the corpus (its allow lists and
     // tests name things that do not exist), so the notes that describe it need these.
     "EXTERNAL_NAMES",
