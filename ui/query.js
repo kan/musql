@@ -2410,8 +2410,8 @@ function addSqlTab(initialContent, tabNum) {
       ev.stopPropagation();
       if (lastColumns.length === 0) return;
       showContextMenu(ev, [
-        { label: "CSV", icon: "download", action: () => doExportCurrent(lastColumns, lastRows, null, ",", "csv") },
-        { label: "TSV", icon: "download", action: () => doExportCurrent(lastColumns, lastRows, null, "\t", "tsv") },
+        { label: "CSV", icon: "download", action: () => exportRows(lastColumns, lastRows, null, ",", "csv") },
+        { label: "TSV", icon: "download", action: () => exportRows(lastColumns, lastRows, null, "\t", "tsv") },
       ]);
     });
 
