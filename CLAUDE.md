@@ -53,7 +53,7 @@ Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`
 「説明が実装と合っているか」は判定できない。バージョン番号や数値の食い違いも拾わない。そこは差分の性質から自分で判断する。
 
 ## How to run
-- 開発タスクの入口は `justfile`。`just` でレシピ一覧、`just dev` で起動、`just check` でコミット前チェック一式（fmt / clippy / test / UI lint）。版はリリース PR が上げるので、`just bump` は手で回さない（下の「リリース PR（tagpr）」）。`ci.yml` の各ステップも同じレシピを呼ぶ（fmt / clippy / test をステップごとに分けて呼ぶので、失敗箇所はステップ単位で分かる）。
+- 開発タスクの入口は `justfile`。`just` でレシピ一覧、`just dev` で起動、`just check` でコミット前チェック一式（fmt / clippy / test / UI lint）。版はリリース PR が上げる（手で上げるレシピは無い。下の「リリース PR（tagpr）」）。`ci.yml` の各ステップも同じレシピを呼ぶ（fmt / clippy / test をステップごとに分けて呼ぶので、失敗箇所はステップ単位で分かる）。
   - just は cargo の薄いファサードで、cargo から直接叩いても同じ。`cargo dev` の alias（`.cargo/config.toml`）でも起動できる。
   - justfile 先頭の `set windows-shell` は必須。just の Windows 既定シェル `sh -c` は PATH に無く、PATH 上の `bash` は WSL ランチャ（`C:\Windows\System32\bash.exe`）で Windows 側の cargo / tauri が見えないため、Git Bash を明示している。Git を別の場所に入れている環境は `just --shell <bash へのパス>` で上書きする。
   - `release.yml` は just を経由しない。ビルドは `tauri-action` と PowerShell スクリプトが主体で、レシピに寄せても重複が減らないため。
@@ -137,17 +137,17 @@ Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`
 ### リリース PR（tagpr、#149）
 
 - **リリースは [tagpr](https://github.com/Songmu/tagpr) のリリース PR をマージして始める**（pike と同じ構成）。main に push があるたびに `tagpr.yml` が、前のタグ以降の変更を載せたリリース PR を作り直す。**ブランチ名は `tagpr-from-v<前回の版>`**。マージすると、次の run がマージ後の main の先頭にタグを打ち、同じ run の `release` ジョブが `release.yml` をそのタグを ref にした `workflow_dispatch` で起動する（#152。`workflow_call` で呼ばない。run の ref と attestation の source ref が main になるため）。設定は `.tagpr`
-- **リリース PR の中身は `scripts/release-prepare.mjs` がそろえる**（`.tagpr` の `postVersionCommand`）。tagpr が `tauri.conf.json` の版を書き換えた後に呼ばれ、`Cargo.toml` と `Cargo.lock`（`scripts/bump-version.mjs`）、CHANGELOG の見出しとリンク（`scripts/tagpr/release-prepare.mjs --changelog-only`）、ライセンス一覧（`scripts/credits.mjs`）をそろえる。PR を作り直すたびに main から走る。CHANGELOG の段を最初に走らせ、そこで落ちたら（リリースの直後は毎回）残りは走らせない
+- **リリース PR の中身は `scripts/release-prepare.mjs` がそろえる**（`.tagpr` の `postVersionCommand`）。tagpr が `tauri.conf.json` と `Cargo.toml` の版を書き換えた後に呼ばれ、CHANGELOG の見出しとリンクと `Cargo.lock` の musql の行（`scripts/tagpr/release-prepare.mjs --changelog-only --cargo src-tauri`、#154）、ライセンス一覧（`scripts/credits.mjs`）をそろえる。PR を作り直すたびに main から走る。tagpr-scripts の段を先に走らせ、そこで落ちたら（リリースの直後は毎回）ライセンス一覧は作らない。この段は検査を済ませてから書くので、落ちたときは CHANGELOG も `Cargo.lock` も書き換えていない（`tauri.conf.json` と `Cargo.toml` は tagpr が先に上げているので、赤い run のリリース PR はファイルが食い違っている）
   - **CHANGELOG に最新のタグより新しい版の節があると失敗する**（`scripts/tagpr/` の検査）。リリース PR はマージされたのにタグが打たれていない印で、多いのはマージの run が後の push で cancelled になったとき。新しいリリース PR をマージせず、マージコミットの tagpr の run を再実行する（`release` スキル）
-  - **`versionFile` は `tauri.conf.json` の 1 つだけ。** tagpr はファイルの中の旧版の文字列を最初の 1 箇所だけ置き換えるので、依存の版を巻き込みうる `Cargo.toml` は、1 箇所だけ当たることを確かめる `bump-version.mjs` に任せる。マージ後のタグもこのファイルの版から決まる
-  - **`Cargo.lock` はビルドせずに更新する**（`cargo update --workspace`。musql 自身の行だけが変わる）。ランナーは ubuntu で、`cargo check` は WebView の開発パッケージが無いと通らない
+  - **`versionFile` は `tauri.conf.json` と `Cargo.toml` の 2 つ。** tagpr は各ファイルで旧版の文字列を最初の 1 箇所だけ置き換える。**`Cargo.toml` の `[package]` より前に、今の版と同じ文字列を書かない**（依存の版などが先に当たると、そちらが書き換わる。tagpr-scripts が `[package]` の版を確かめて落とすので、壊れたリリース PR はマージされないが、リリースできなくなる）
+  - **`Cargo.lock` は cargo を呼ばずに更新する**（tagpr-scripts が musql 自身の `[[package]]` の版の行だけを書き換える。`cargo update --workspace` と同じ結果）。ランナーは ubuntu で、`cargo check` は WebView の開発パッケージが無いと通らない。ネットワークにも出ない
   - **コマンドが失敗しても tagpr はリリース PR を作り、ステップを失敗で終える。** tagpr の run が赤ならリリース PR をマージしない
-- **版は PR のラベルで決まる。** マージ済みの PR に `enhancement` があれば minor（`.tagpr` の `minorLabels`）、無ければ patch。**版を変えたいときは `tauri.conf.json` を手で書き換えない**（残りのファイルがそろわない）。リリース PR に `tagpr:minor` を付けて `gh workflow run tagpr.yml` で作り直す
+- **版は PR のラベルで決まる。** マージ済みの PR に `enhancement` があれば minor（`.tagpr` の `minorLabels`）、無ければ patch。**版を変えたいときは `tauri.conf.json` も `Cargo.toml` も手で書き換えない**（`Cargo.lock` とライセンス一覧がそろわない）。リリース PR に `tagpr:minor` を付けて `gh workflow run tagpr.yml` で作り直す
 - **CHANGELOG と GitHub のリリースは tagpr に作らせない**（`changelog = false` / `release = false`）。tagpr の CHANGELOG は PR タイトルを並べるだけなので、利用者向けの説明は各 PR が書く（上の「CHANGELOG の書き方」）。Immutable releases を有効にしてあるので、tagpr がリリースを公開すると成果物を足せなくなる。ドラフトは `release.yml` の `draft` ジョブが作り、本文は `scripts/release-notes.mjs` が CHANGELOG の節から作る（同じ本文が `latest.json` の `notes` にも入る。公開後は差し替えられない）。リリース PR の本文に出る PR の一覧は `.github/release.yml` の分類に従う
 - **ライセンス一覧はリリース PR が作り直す。** 依存を更新する PR では作り直さず、照合（`just check-credits`）も `just test` と CI から外してある（理由は `scripts/credits.mjs` の冒頭）
 - **スクリーンショットはリリース PR のブランチで撮る**（`screenshots.yml` を `--ref tagpr-from-v<前回の版>` で起動）。`commit: true`（既定）なら画像を `docs/manual/img/` へ写し、差分があればそのブランチへコミットする。tagpr はリリース PR を作り直すときもこのコミットを引き継ぐ。撮影中に tagpr がブランチを作り直すと push が fast-forward にならずに落ちる（古いツリーの画像を載せない）。起動し直す
 - **トークンは GITHUB_TOKEN のまま**（GitHub App は作っていない）。GITHUB_TOKEN で打ったタグの push ではワークフローが起動しないので、`release.yml` を同じ run から `workflow_dispatch` で起動する（`workflow_dispatch` はこの制限の例外。ジョブには `actions: write` を付ける）。その代わり、**ボットが作ったリリース PR の CI と CodeQL の run は承認待ち（`action_required`）で止まる**（撮影のコミットのたびにもできる）。承認は `gh api -X POST repos/kan/musql/actions/runs/<id>/approve` で通る。tagpr が PR を作るには、リポジトリの設定「Allow GitHub Actions to create and approve pull requests」が要る
-- **tagpr のジョブは書き込みの権限（`contents` / `pull-requests`）を持つので、musql と依存のコードを走らせない。** 呼ぶのは `cargo update --workspace` と `cargo metadata` だけで、build.rs は走らない。ビルドやテストをこのジョブに足さない。Rust のツールチェーンも入れない（ランナーの stable を使う）
+- **tagpr のジョブは書き込みの権限（`contents` / `pull-requests`）を持つので、musql と依存のコードを走らせない。** 呼ぶのは `scripts/credits.mjs` の `cargo metadata` だけで、build.rs は走らない。ビルドやテストをこのジョブに足さない。Rust のツールチェーンも入れない（ランナーの stable を使う）
 - **`concurrency` は tagpr のジョブだけに付け、`cancel-in-progress: false`。** tagpr どうしが同じブランチを作り直し合わないように並べず、タグを打った直後に止めて成果物の無いタグを残さないように止めない。`release` ジョブは含めない
 - **attestation の署名者は `release.yml`、source の ref はタグ（`refs/tags/vX.Y.Z`）**（#152 から。タグで dispatch するため）。#152 より前の版（v0.11.1 まで）は `workflow_call` で呼んでいたので、source の ref が `refs/heads/main` になっている。それらを検証するときは `--source-ref` にタグを渡さない
 

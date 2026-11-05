@@ -164,10 +164,3 @@ screenshots-sync:
 [working-directory('src-tauri')]
 audit:
     cargo audit
-
-# --- リリース ---
-
-# バージョンを上げる（tauri.conf.json / Cargo.toml + Cargo.lock）。ふだんはリリース PR が
-# 同じスクリプトで上げるので、手で回さない（#149。CLAUDE.md の「リリース PR（tagpr）」）
-bump VERSION:
-    node scripts/bump-version.mjs {{VERSION}}
