@@ -5,7 +5,7 @@
 	vPrefix = true
 	# 版は tagpr が 2 つのファイルに書く（各ファイルで今の版の文字列の最初の 1 か所）。
 	# Cargo.lock は tagpr が触らないので、postVersionCommand が `--cargo src-tauri` で合わせる
-	# （#154。Cargo.toml の [package] の版が提案と違えば、そこで落ちる）
+	# （#154。ここに並べたファイルのどれかの版が提案と違えば、そこで落ちる）
 	versionFile = src-tauri/tauri.conf.json,src-tauri/Cargo.toml
 	postVersionCommand = node scripts/release-prepare.mjs
 	# CHANGELOG は各 PR が `## [Unreleased]` に書く。tagpr の生成（PR タイトルの列挙）は使わない

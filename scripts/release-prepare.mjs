@@ -8,8 +8,8 @@
 // 走らせ直すと、CHANGELOG の段が「タグより新しい版の節がある」で落ちる）。
 //
 // 1. CHANGELOG の `## [Unreleased]` を `## [X.Y.Z] - 日付` にし、空の `## [Unreleased]` を
-//    上に戻して、末尾にその版のリンクを足す。Cargo.toml の `[package]` の版が提案と同じかを
-//    確かめ、Cargo.lock の musql の行を合わせる（kan/tagpr-scripts の subtree、#152 / #154。
+//    上に戻して、末尾にその版のリンクを足す。.tagpr の versionFile のすべてのファイルの版が
+//    提案と同じかを確かめ、Cargo.lock の musql の行を合わせる（kan/tagpr-scripts の subtree、#152 / #154。
 //    `scripts/tagpr/` の中は編集しない。直すときは kan/tagpr-scripts を直して subtree pull する）
 // 2. ライセンス一覧（ui/credits.json）を作り直す（credits.mjs）
 //

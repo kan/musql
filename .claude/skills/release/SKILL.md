@@ -33,7 +33,7 @@ gh run list --workflow tagpr.yml --branch main -L 3
 
 **ブランチ名は `tagpr-from-v<前回の版>`**（v0.12.0 を出すリリース PR なら `tagpr-from-v0.11.1`）。以下の `<ブランチ>` は上の一覧に出るブランチ名を使う。
 
-**最新の tagpr の run が success であること。** 失敗していたら、run の注釈（`postVersionCommand` の失敗）を読む。多いのは `## [Unreleased]` が空のとき。`Cargo.toml` の `[package]` の版が提案と違うと言われたら、`[package]` より前に今の版と同じ文字列がある（CLAUDE.md の「リリース PR（tagpr）」）。直す PR を main にマージすると作り直される。
+**最新の tagpr の run が success であること。** 失敗していたら、run の注釈（`postVersionCommand` の失敗）を読む。多いのは `## [Unreleased]` が空のとき。`tauri.conf.json` か `Cargo.toml` の版が提案と違う（`says X, but tagpr proposes Y`）と言われたら、そのファイルの版のキーより前に今の版と同じ文字列がある（CLAUDE.md の「リリース PR（tagpr）」）。直す PR を main にマージすると作り直される。
 
 **版が正しいか**（PR のタイトルの `vX.Y.Z`）。機能の PR（`enhancement`）があれば minor、無ければ patch になる。違うときは `tauri.conf.json` も `Cargo.toml` も手で直さず、ラベルを付けて作り直す:
 
