@@ -31,6 +31,8 @@ workflows:
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-node@v7.1.0'
         - 'songmu/tagpr@v1.21.4'
+    '.github/workflows/verify-lockfile.yml':
+        - 'actions/checkout@v7.0.1'
 dependencies:
     'actions-rust-lang/audit@v1.2.7':
         ref: 'v1.2.7'

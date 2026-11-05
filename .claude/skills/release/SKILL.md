@@ -7,7 +7,7 @@ description: muSQL の新しいバージョンをリリースする（dependabot
 
 **リリースの依頼は end-to-end の依頼。** リリース PR の確認と調整、スクリーンショットの撮影、リリース PR のマージ、Release の完了待ち、ドラフトの確認と公開までを Claude が実行する。通常の PR 運用と異なり、リリース PR のマージの個別確認は要らない（CLAUDE.md「Git workflow」の例外規定）。CI の完了待ちは、バックグラウンドで `gh run watch` を走らせて待つ（前景でポーリングしない）。以下を順番に最後まで実行する。
 
-**版、`Cargo.lock`、CHANGELOG の見出しと比較リンク、ライセンス一覧は、tagpr が作るリリース PR に載る**（#149）。main に push があるたびに `tagpr.yml` がリリース PR を作り直し、`scripts/release-prepare.mjs` が中身をそろえる。仕組みと理由は CLAUDE.md の「リリース PR（tagpr）」。**`just bump` を手で走らせない。リリース PR のブランチへ手でコミットしない**（画像のコミットは手順 4 のワークフローが積む）。
+**版、`Cargo.lock`、CHANGELOG の見出しとリンク、ライセンス一覧は、tagpr が作るリリース PR に載る**（#149）。main に push があるたびに `tagpr.yml` がリリース PR を作り直し、`scripts/release-prepare.mjs` が中身をそろえる。仕組みと理由は CLAUDE.md の「リリース PR（tagpr）」。**`just bump` を手で走らせない。リリース PR のブランチへ手でコミットしない**（画像のコミットは手順 4 のワークフローが積む）。
 
 ## 0. dependabot の PR を取り込む
 
@@ -42,7 +42,7 @@ gh pr edit <番号> --add-label tagpr:minor
 gh workflow run tagpr.yml --ref main
 ```
 
-Files changed が、版の表記（`tauri.conf.json` / `Cargo.toml` / `Cargo.lock`）、`ui/credits.json`、`CHANGELOG.md` の見出しと比較リンクだけであることを確かめる。
+Files changed が、版の表記（`tauri.conf.json` / `Cargo.toml` / `Cargo.lock`）、`ui/credits.json`、`CHANGELOG.md` の見出しとリンク（版の節の見出し、その上に戻した空の `## [Unreleased]`、末尾の `releases/tag` のリンク）だけであることを確かめる。
 
 **リリース PR にも Copilot のレビューが付く**（ルールセットの条件は PR の向き先でしか絞れないため）。差分は上の生成物だけで、コードの中身は各 PR で見てあるので、指摘は読むだけにする。版の食い違いのような生成物の誤りを指していたら、手で直さずに原因（`scripts/release-prepare.mjs` か main の CHANGELOG）を直す PR を作る。
 
@@ -99,13 +99,22 @@ gh run list --workflow tagpr.yml --commit "$sha" --json databaseId,status -q '.[
 gh run watch <run id> --exit-status
 ```
 
-マージの push で走る tagpr の run が、**タグ `vX.Y.Z` を打ってから、同じ run の `release` ジョブで Release ワークフローを呼ぶ**（GITHUB_TOKEN で打ったタグの push では Release は起動しない）。`release` の中は `draft`（ドラフトを 1 つ作る）→ `build` と `build-store` が並列 → `publish-store`（Store のファイルをドラフトへ足す）の順に走る。Windows のフルビルド 2 回が並列なので、15〜20 分ほどかかる。
+マージの push で走る tagpr の run が、**タグ `vX.Y.Z` を打ってから、同じ run の `release` ジョブで Release ワークフローをそのタグで起動する**（`workflow_dispatch`。GITHUB_TOKEN で打ったタグの push では Release は起動しない）。Release は tagpr とは別の run になる。中は `draft`（ドラフトを 1 つ作る）→ `build` と `build-store` が並列 → `publish-store`（Store のファイルをドラフトへ足す）の順に走る。Windows のフルビルド 2 回が並列なので、15〜20 分ほどかかる。
 
-**タグが打たれ、`release` のジョブがすべて success であることを確かめる。**
+```bash
+gh run list --workflow release.yml --branch vX.Y.Z -L 1 --json databaseId,status
+gh run watch <run id> --exit-status
+```
 
-- `draft` が落ちたら、タグが `vX.Y.Z` の形か、`tauri.conf.json` の version と合っているか、タグのコミットの CHANGELOG に `## [X.Y.Z] - 日付` の節が 1 つだけあるかを見る
+**マージの tagpr の run が cancelled になっていたら**（待っている間に main へ push が来ると、GitHub は古いほうを取り消す）、タグは打たれていない。その run を再実行する（`gh run rerun <run id>`。マージコミットをチェックアウトしてタグを打つ）。後の push の tagpr の run は「タグより新しい版の節がある」で赤になっているが、再実行でタグが打たれれば次の run から通る。**新しいリリース PR をマージしてやり過ごさない**（打たれていない版の上に次の版を重ねることになる）。
+
+**タグは打たれたのに Release の run が無いとき**（tagpr の run の `Start the release` ジョブが赤）は、起動だけが失敗している。tagpr の run を再実行せず（タグを打ち直そうとする）、`gh workflow run release.yml --ref vX.Y.Z` で手で起動する。
+
+**タグが打たれ、Release の run のジョブがすべて success であることを確かめる。**
+
+- `draft` が落ちたら、タグで起動されているか、タグが `vX.Y.Z` の形か、`tauri.conf.json` の version と合っているか、タグのコミットの CHANGELOG に `## [X.Y.Z] - 日付` の節が 1 つだけあり空でないかを見る
 - ビルドのどちらかが落ちたら、一時的な失敗なら落ちたジョブだけを再実行する（`gh run rerun <run-id> --failed`）
-- 打ってあるタグで丸ごとやり直すなら `gh workflow run release.yml --ref main -f tag=vX.Y.Z`（`draft` が同じタグのドラフトを消してから作り直す）
+- 打ってあるタグで丸ごとやり直すなら `gh workflow run release.yml --ref vX.Y.Z`（**`--ref` にはタグを渡す**。ブランチで起動すると `draft` が止める。`draft` が同じタグのドラフトを消してから作り直す）
 - コードや CHANGELOG を直す必要があるなら、下の「タグを打ち直す場合」
 
 ## 6. ドラフトの確認
@@ -124,7 +133,7 @@ gh release view vX.Y.Z --json isDraft,assets --jq '.isDraft, (.assets[].name)'
 
 **`latest.json` が付いているか必ず確認する。** 無いまま公開すると、セルフアップデータが黙って壊れる（`tauri-action` v1.0.0 で `includeUpdaterJson` が `uploadUpdaterJson` に改名された経緯があり、設定漏れが起きやすい）。中身の `windows-x86_64` が NSIS の setup.exe を指し、`notes` が CHANGELOG の節になっていることも見る。足りないものがあれば公開せず、原因を直してタグを打ち直す。
 
-署名には GitHub Secrets の `TAURI_SIGNING_PRIVATE_KEY` と `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` が要る（未署名のビルドは updater の検証に失敗する）。`release.yml` は tagpr のワークフローから `secrets: inherit` で受け取る。
+署名には GitHub Secrets の `TAURI_SIGNING_PRIVATE_KEY` と `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` が要る（未署名のビルドは updater の検証に失敗する）。`release.yml` はリポジトリの secrets を直接読む（`workflow_dispatch` で起動するため）。
 
 **手でダウンロードする 4 つのファイルに attestation（来歴の証明）が付いていることを確認する**（#130）。ドラフトから落として 1 つずつ検証する:
 
@@ -136,11 +145,12 @@ gh release download vX.Y.Z --repo kan/musql --dir "$dir" \
 ls "$dir"   # 4 件あること
 for f in "$dir"/*; do
   gh attestation verify "$f" --repo kan/musql \
-    --signer-workflow kan/musql/.github/workflows/release.yml || echo "FAILED: $f"
+    --signer-workflow kan/musql/.github/workflows/release.yml \
+    --source-ref refs/tags/vX.Y.Z || echo "FAILED: $f"
 done
 ```
 
-**4 つとも通ること。** attest のステップはグロブが 1 件も当たらなくても、他が当たれば通るので、取りこぼしは CI の結果からは分からない。1 つでも落ちたら公開せず、直してタグを打ち直す。Release は reusable workflow として呼ばれるが、署名者は `release.yml` のまま（source の ref はタグではなく `refs/heads/main` になるので、`--source-ref` にタグを渡さない）。
+**4 つとも通ること。** attest のステップはグロブが 1 件も当たらなくても、他が当たれば通るので、取りこぼしは CI の結果からは分からない。1 つでも落ちたら公開せず、直してタグを打ち直す。Release はタグで起動されるので、source の ref はタグになる（#152。v0.11.1 までは `workflow_call` で呼んでいたので `refs/heads/main`。それらの版を検証するときは `--source-ref` を外す）。
 
 ## 7. 公開
 
@@ -180,7 +190,7 @@ Store 版の提出（Partner Center への MSIX のアップロード）は、�
    git switch main && git pull --ff-only
    git tag vX.Y.Z
    git push origin vX.Y.Z
-   gh workflow run release.yml --ref main -f tag=vX.Y.Z
+   gh workflow run release.yml --ref vX.Y.Z
    ```
 
-前の実行のドラフトは消さなくてよい（`draft` ジョブが同じタグのドラフトを消してから作り直す）。タグを消したあいだに main が進むと、tagpr が前の版からの patch のリリース PR を作る。タグを打ち直したら、次の run が作り直すので放っておいてよい。
+前の実行のドラフトは消さなくてよい（`draft` ジョブが同じタグのドラフトを消してから作り直す）。タグを消したあいだに main が進むと、その tagpr の run は「タグより新しい版の節がある」で赤になる（手順 2 の PR のマージでもそうなる）。タグを打ち直したら次の run から通るので、放っておいてよい。

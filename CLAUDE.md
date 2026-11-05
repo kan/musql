@@ -58,6 +58,7 @@ Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`
   - justfile 先頭の `set windows-shell` は必須。just の Windows 既定シェル `sh -c` は PATH に無く、PATH 上の `bash` は WSL ランチャ（`C:\Windows\System32\bash.exe`）で Windows 側の cargo / tauri が見えないため、Git Bash を明示している。Git を別の場所に入れている環境は `just --shell <bash へのパス>` で上書きする。
   - `release.yml` は just を経由しない。ビルドは `tauri-action` と PowerShell スクリプトが主体で、レシピに寄せても重複が減らないため。
   - リリースまわりのスクリプト（`scripts/*.mjs`。版の更新、CHANGELOG の見出し、ライセンス一覧、リリースノート）は Node.js で書いてある（#149）。「Node.js 不要」はアプリと UI の方針で、これらは CI と開発者の手元でだけ動く。npm の依存は持たない（標準のモジュールだけを使う）。
+  - CHANGELOG の読み書き（リリース PR の見出しとリンク、リリースノートの抜き出し）は、lily などと共有する [kan/tagpr-scripts](https://github.com/kan/tagpr-scripts) を subtree で `scripts/tagpr/` に取り込んで使う（#152）。`scripts/release-prepare.mjs` と `scripts/release-notes.mjs` は、版とライセンス一覧の処理を足したラッパー。**`scripts/tagpr/` の中は編集しない**（kan/tagpr-scripts を直し、`git subtree pull -S --prefix=scripts/tagpr https://github.com/kan/tagpr-scripts.git main --squash` で取り込む。使い方は `scripts/tagpr/README.md`）。Biome の対象からも外してある（`biome.json`）。
 - `cargo dev`（= `just dev`）で起動（リポジトリ直下 / src-tauri のどちらからでも可。`.cargo/config.toml` の alias で `cargo tauri dev --config tauri.dev.conf.json` に展開される）。dev config は identifier を `...musql.debug` に上書きし、インストール版とウィンドウ状態（`tauri-plugin-window-state`）・アプリデータを分離する。
 - `cargo check` / `cargo test` / `cargo fmt --check` / `cargo clippy --all-targets -- -D warnings`。clippy で常時当てる追加の lint は `src-tauri/Cargo.toml` の `[lints.clippy]`（文字列まわり。`&str` には `.to_string()` ではなく `.to_owned()`、`push_str(&format!(…))` ではなく `write!`）、整形の設定は `src-tauri/rustfmt.toml`。
 - UI (`ui/*.js`) と `scripts/*.mjs` の lint: `just lint-ui`（= `npx @biomejs/biome@2.4.10 lint --error-on-warnings`。Biome、package.json 不要。設定は `biome.json`、`ui/lib/**` の vendor は除外）。CI は `setup-biome` が入れた `biome` を使うため、レシピは PATH にあればそちらを優先し、無ければ npx にフォールバックする。
@@ -77,9 +78,9 @@ Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`
 - Partner Center Identity: `58967CommunitylinksInc.muSQL` / `CN=46BBEF28-6777-4EF5-AD2C-F9AD9123AA82`。
 
 ## action の固定（workflow lockfile、#139）
-- **action は `.github/workflows/actions.lock` でコミットに固定する**（GitHub Actions の workflow lockfile、public preview。pike と同じ運用）。生成と更新は GitHub CLI の拡張 `gh actions-lock`（`gh extension install github/gh-actions-lock`）で行い、**手で編集しない**。推移的な依存（composite action が呼ぶ action。今は `extractions/setup-just` の中の `extractions/setup-crate` と、`actions-rust-lang/audit` の中の `actions/cache`）と、参照先リポジトリの ID も記録される。`github/codeql-action/init` と `/analyze` のようなサブパス付きの参照は、リポジトリ単位の 1 エントリになる。
+- **action は `.github/workflows/actions.lock` でコミットに固定する**（GitHub Actions の workflow lockfile。2026-10-28 に GA。pike と同じ運用）。生成と更新は GitHub CLI の拡張 `gh actions-lock`（`gh extension install github/gh-actions-lock`）で行い、**手で編集しない**。推移的な依存（composite action が呼ぶ action。今は `extractions/setup-just` の中の `extractions/setup-crate` と、`actions-rust-lang/audit` の中の `actions/cache`）と、参照先リポジトリの ID も記録される。`github/codeql-action/init` と `/analyze` のようなサブパス付きの参照は、リポジトリ単位の 1 エントリになる。
 - **`uses:` には SHA を書かず、タグかブランチで書く**（`actions/checkout@v7.0.1`）。SHA を直接書くと lockfile に入らず、生成そのものが失敗する（解決できない参照が 1 つでもあると何も書き込まれない）。
-- **`uses:` を足す・消す・ワークフローを足したら `gh actions-lock` を流し直し、lockfile も同じコミットに入れる。** 載っていない参照があると、そのワークフローはジョブが始まる前に startup_failure で止まる。コミット前の確認は `gh actions-lock --verify`（書き込まずに検査する。ネットワークに出る）。
+- **`uses:` を足す・消す・ワークフローを足したら `gh actions-lock` を流し直し、lockfile も同じコミットに入れる。** 載っていない参照があると、そのワークフローはジョブが始まる前に startup_failure で止まる。コミット前の確認は `gh actions-lock --verify`（書き込まずに検査する。ネットワークに出る）。CI でも `verify-lockfile.yml` が PR と main への push のたびに同じ検査を回す（#152。拡張の版は `--pin` で固定してあり、Dependabot は上げない。lockfile の形式が上がって落ちたら、手元の拡張と同じ版に上げる）。
 - **タグの更新は Dependabot が lockfile ごと上げる**（github-actions の更新 PR が対応するエントリも作り直す）。`@v4` のような部分版は生成時に完全な版（`@v4.0.0`）へ書き換わる。
 - **`dtolnay/rust-toolchain` は `@master` で参照する**（ツールチェーンは `toolchain: stable` の入力で選ぶ）。この action の `stable` などのブランチは上流で作り直されるため、固定した SHA がどのブランチにもタグにも無くなり、lockfile に拒否される（pike で起きた）。ブランチ参照は Dependabot が追わないので、上げるときは `gh actions-lock --relock` で全参照を解決し直し、`commit` の差分を確かめてからコミットする。
 
@@ -112,15 +113,17 @@ Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`
    - 採らなかった指摘には、理由をその指摘への返信で書く（`gh api -X POST repos/kan/musql/pulls/<番号>/comments/<id>/replies -f body=...`）。ユーザーへの報告にも理由を添えて並べる
 6. CI が通り、Copilot の指摘を片付けたら、**ユーザーの承認を得てから** `gh pr merge <番号> --squash --delete-branch` でマージする（コミットの承認とは別に聞く）。マージしたら手元の main を `git pull --ff-only` で進める
 
+- **例外：subtree の取り込み。** `scripts/tagpr/` を `git subtree add` / `pull` する PR は、**squash せずマージコミットでマージする**（`gh pr merge <番号> --merge --delete-branch`）。`git subtree` は前回の取り込みを自分が作ったコミットから探すので、squash すると次の pull が壊れる。取り込みは `-S` を付けて署名する（`git subtree` は `commit.gpgsign` を見ない）。取り込みは CHANGELOG に書かない。`git subtree` はその場でコミットを作るので、コミットの承認を得てから実行する
 - **dependabot の PR** も PR のまま squash でマージする。cargo の PR は同じ `Cargo.lock` を触るので、1 件マージするたびに残りが作り直しになる（`.github/dependabot.yml` の `groups` で ecosystem ごとに 1 つにまとめてある）。**dependabot のブランチへ手で push しない**（以後 dependabot が rebase しなくなる）。直しが要るときは、マージしてから直す PR を作る。CHANGELOG の行はその PR か、リリースの前の PR で足す
 - **例外：リリース依頼。** 「リリースして」は、リリース PR の確認からマージ、ドラフトの公開までの一括の依頼。リリース PR のマージに個別の確認は要らない。`release` スキルの手順を最後まで実行する
 
 ## CHANGELOG の書き方
 
-- **各 PR が `## [Unreleased]` の節に自分の項目を足す。** 節が無ければ、いちばん上の版の節の上に作る。中の小見出し（`### Added` / `### Changed` / `### Fixed` / `### Security`）と項目の書式は過去の節に合わせ、末尾近くに issue 番号を `（#148）` の形で入れる
-- `## [Unreleased]` は常に 1 つ。**版と日付、末尾の比較リンクは書かない**。リリース PR で `scripts/release-prepare.mjs` が `## [X.Y.Z] - 日付` に書き換えて比較リンクを足し、その節がリリースノートと `latest.json` の `notes` になる
+- **各 PR が `## [Unreleased]` の節に自分の項目を足す。** 節はいちばん上の版の節の上に常にある（リリース PR が版の節を作るたびに、空の節を戻す）。中の小見出し（`### Added` / `### Changed` / `### Fixed` / `### Security`）と項目の書式は過去の節に合わせ、末尾近くに issue 番号を `（#148）` の形で入れる
+- `## [Unreleased]` は常に 1 つ。**版と日付、末尾のリンクは書かない**。リリース PR で `scripts/release-prepare.mjs` が `## [X.Y.Z] - 日付` に書き換え、空の `## [Unreleased]` を上に戻し、末尾のリンク定義の先頭に `[X.Y.Z]: https://github.com/kan/musql/releases/tag/vX.Y.Z` を足す（`[Unreleased]` のリンクは置かない）。その節がリリースノートと `latest.json` の `notes` になる
+- 節は、次の `## ` の見出しか、ファイル末尾のリンク定義のまとまりで終わる。項目の中のリンクはインラインで書く（参照リンクの定義は節の外にあるので、リリースノートではリンクにならない）。リリースノートでは、段落と項目の中の折り返しが 1 行につながる（日本語どうしと全角の句読点・括弧の前後は空白なし）。改行は LF
 - 利用者に届かない変更（CI、開発ノート、テストだけの変更）は書かない
-- `## [Unreleased]` が無いか空のまま main が進むと、tagpr の run がリリース PR の準備で失敗する（リリースできない状態の印。利用者に届く変更の PR が入れば解消する）
+- `## [Unreleased]` が空のまま main が進むと、tagpr の run がリリース PR の準備で失敗する（リリースの直後は毎回そうなる。リリースできない状態の印で、利用者に届く変更の PR が入れば解消する）
 
 ## Release procedure
 
@@ -133,8 +136,9 @@ Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`
 
 ### リリース PR（tagpr、#149）
 
-- **リリースは [tagpr](https://github.com/Songmu/tagpr) のリリース PR をマージして始める**（pike と同じ構成）。main に push があるたびに `tagpr.yml` が、前のタグ以降の変更を載せたリリース PR を作り直す。**ブランチ名は `tagpr-from-v<前回の版>`**。マージすると、次の run がマージ後の main の先頭にタグを打ち、同じ run の `release` ジョブが `release.yml` を `workflow_call` で呼ぶ。設定は `.tagpr`
-- **リリース PR の中身は `scripts/release-prepare.mjs` がそろえる**（`.tagpr` の `postVersionCommand`）。tagpr が `tauri.conf.json` の版を書き換えた後に呼ばれ、`Cargo.toml` と `Cargo.lock`（`scripts/bump-version.mjs`）、CHANGELOG の見出しと比較リンク、ライセンス一覧（`scripts/credits.mjs`）をそろえる。PR を作り直すたびに走るので、何度走っても同じ結果になるようにしてある
+- **リリースは [tagpr](https://github.com/Songmu/tagpr) のリリース PR をマージして始める**（pike と同じ構成）。main に push があるたびに `tagpr.yml` が、前のタグ以降の変更を載せたリリース PR を作り直す。**ブランチ名は `tagpr-from-v<前回の版>`**。マージすると、次の run がマージ後の main の先頭にタグを打ち、同じ run の `release` ジョブが `release.yml` をそのタグを ref にした `workflow_dispatch` で起動する（#152。`workflow_call` で呼ばない。run の ref と attestation の source ref が main になるため）。設定は `.tagpr`
+- **リリース PR の中身は `scripts/release-prepare.mjs` がそろえる**（`.tagpr` の `postVersionCommand`）。tagpr が `tauri.conf.json` の版を書き換えた後に呼ばれ、`Cargo.toml` と `Cargo.lock`（`scripts/bump-version.mjs`）、CHANGELOG の見出しとリンク（`scripts/tagpr/release-prepare.mjs --changelog-only`）、ライセンス一覧（`scripts/credits.mjs`）をそろえる。PR を作り直すたびに main から走る。CHANGELOG の段を最初に走らせ、そこで落ちたら（リリースの直後は毎回）残りは走らせない
+  - **CHANGELOG に最新のタグより新しい版の節があると失敗する**（`scripts/tagpr/` の検査）。リリース PR はマージされたのにタグが打たれていない印で、多いのはマージの run が後の push で cancelled になったとき。新しいリリース PR をマージせず、マージコミットの tagpr の run を再実行する（`release` スキル）
   - **`versionFile` は `tauri.conf.json` の 1 つだけ。** tagpr はファイルの中の旧版の文字列を最初の 1 箇所だけ置き換えるので、依存の版を巻き込みうる `Cargo.toml` は、1 箇所だけ当たることを確かめる `bump-version.mjs` に任せる。マージ後のタグもこのファイルの版から決まる
   - **`Cargo.lock` はビルドせずに更新する**（`cargo update --workspace`。musql 自身の行だけが変わる）。ランナーは ubuntu で、`cargo check` は WebView の開発パッケージが無いと通らない
   - **コマンドが失敗しても tagpr はリリース PR を作り、ステップを失敗で終える。** tagpr の run が赤ならリリース PR をマージしない
@@ -142,10 +146,10 @@ Windows向け MySQL クライアント。Tauri v2 + Rust backend + 静的 UI（`
 - **CHANGELOG と GitHub のリリースは tagpr に作らせない**（`changelog = false` / `release = false`）。tagpr の CHANGELOG は PR タイトルを並べるだけなので、利用者向けの説明は各 PR が書く（上の「CHANGELOG の書き方」）。Immutable releases を有効にしてあるので、tagpr がリリースを公開すると成果物を足せなくなる。ドラフトは `release.yml` の `draft` ジョブが作り、本文は `scripts/release-notes.mjs` が CHANGELOG の節から作る（同じ本文が `latest.json` の `notes` にも入る。公開後は差し替えられない）。リリース PR の本文に出る PR の一覧は `.github/release.yml` の分類に従う
 - **ライセンス一覧はリリース PR が作り直す。** 依存を更新する PR では作り直さず、照合（`just check-credits`）も `just test` と CI から外してある（理由は `scripts/credits.mjs` の冒頭）
 - **スクリーンショットはリリース PR のブランチで撮る**（`screenshots.yml` を `--ref tagpr-from-v<前回の版>` で起動）。`commit: true`（既定）なら画像を `docs/manual/img/` へ写し、差分があればそのブランチへコミットする。tagpr はリリース PR を作り直すときもこのコミットを引き継ぐ。撮影中に tagpr がブランチを作り直すと push が fast-forward にならずに落ちる（古いツリーの画像を載せない）。起動し直す
-- **トークンは GITHUB_TOKEN のまま**（GitHub App は作っていない）。GITHUB_TOKEN で打ったタグの push ではワークフローが起動しないので、`release.yml` を同じ run から呼ぶ。その代わり、**ボットが作ったリリース PR の CI と CodeQL の run は承認待ち（`action_required`）で止まる**（撮影のコミットのたびにもできる）。承認は `gh api -X POST repos/kan/musql/actions/runs/<id>/approve` で通る。tagpr が PR を作るには、リポジトリの設定「Allow GitHub Actions to create and approve pull requests」が要る
+- **トークンは GITHUB_TOKEN のまま**（GitHub App は作っていない）。GITHUB_TOKEN で打ったタグの push ではワークフローが起動しないので、`release.yml` を同じ run から `workflow_dispatch` で起動する（`workflow_dispatch` はこの制限の例外。ジョブには `actions: write` を付ける）。その代わり、**ボットが作ったリリース PR の CI と CodeQL の run は承認待ち（`action_required`）で止まる**（撮影のコミットのたびにもできる）。承認は `gh api -X POST repos/kan/musql/actions/runs/<id>/approve` で通る。tagpr が PR を作るには、リポジトリの設定「Allow GitHub Actions to create and approve pull requests」が要る
 - **tagpr のジョブは書き込みの権限（`contents` / `pull-requests`）を持つので、musql と依存のコードを走らせない。** 呼ぶのは `cargo update --workspace` と `cargo metadata` だけで、build.rs は走らない。ビルドやテストをこのジョブに足さない。Rust のツールチェーンも入れない（ランナーの stable を使う）
 - **`concurrency` は tagpr のジョブだけに付け、`cancel-in-progress: false`。** tagpr どうしが同じブランチを作り直し合わないように並べず、タグを打った直後に止めて成果物の無いタグを残さないように止めない。`release` ジョブは含めない
-- **attestation の署名者は `release.yml` のまま**（reusable workflow で呼ばれても、証明書の Build Signer は呼ばれた側になる）。source の ref はタグではなく、呼び出し元の `refs/heads/main` になる（pike の v0.69.0 で確かめた）。検証で `--source-ref` にタグを渡すと落ちる
+- **attestation の署名者は `release.yml`、source の ref はタグ（`refs/tags/vX.Y.Z`）**（#152 から。タグで dispatch するため）。#152 より前の版（v0.11.1 まで）は `workflow_call` で呼んでいたので、source の ref が `refs/heads/main` になっている。それらを検証するときは `--source-ref` にタグを渡さない
 
 ## 計画
 
