@@ -49,9 +49,10 @@ jobs:
         with:
           node-version: lts/*
 
-      # Rust はランナーに入っている stable を使う。呼ぶのは `cargo update --workspace` と
-      # `cargo metadata` だけで、build.rs は走らない。**このジョブは書き込みの権限を持つので、
-      # musql と依存のコードを動かさない**（ビルドやテストを足さない）
+      # Rust はランナーに入っている stable を使う。呼ぶのは credits.mjs の `cargo metadata`
+      # だけで、build.rs は走らない（Cargo.lock は tagpr-scripts が cargo を呼ばずに書く）。
+      # **このジョブは書き込みの権限を持つので、musql と依存のコードを動かさない**
+      # （ビルドやテストを足さない）
 
       - id: tagpr
         uses: Songmu/tagpr@v1.21.4

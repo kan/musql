@@ -1,0 +1,4 @@
+# リリース PR で node のスクリプトが読み書きするファイル。CR を含むと tagpr-scripts が断るので、
+# Windows の手元でも LF で取り出す（#154。scripts/tagpr/README.md の案内）
+CHANGELOG.md text eol=lf
+src-tauri/Cargo.lock text eol=lf

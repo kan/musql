@@ -7,7 +7,7 @@ description: muSQL の新しいバージョンをリリースする（dependabot
 
 **リリースの依頼は end-to-end の依頼。** リリース PR の確認と調整、スクリーンショットの撮影、リリース PR のマージ、Release の完了待ち、ドラフトの確認と公開までを Claude が実行する。通常の PR 運用と異なり、リリース PR のマージの個別確認は要らない（CLAUDE.md「Git workflow」の例外規定）。CI の完了待ちは、バックグラウンドで `gh run watch` を走らせて待つ（前景でポーリングしない）。以下を順番に最後まで実行する。
 
-**版、`Cargo.lock`、CHANGELOG の見出しとリンク、ライセンス一覧は、tagpr が作るリリース PR に載る**（#149）。main に push があるたびに `tagpr.yml` がリリース PR を作り直し、`scripts/release-prepare.mjs` が中身をそろえる。仕組みと理由は CLAUDE.md の「リリース PR（tagpr）」。**`just bump` を手で走らせない。リリース PR のブランチへ手でコミットしない**（画像のコミットは手順 4 のワークフローが積む）。
+**版、`Cargo.lock`、CHANGELOG の見出しとリンク、ライセンス一覧は、tagpr が作るリリース PR に載る**（#149）。main に push があるたびに `tagpr.yml` がリリース PR を作り直し、`scripts/release-prepare.mjs` が中身をそろえる。仕組みと理由は CLAUDE.md の「リリース PR（tagpr）」。**版のファイル（`tauri.conf.json`、`Cargo.toml`、`Cargo.lock`）を手で書き換えない。リリース PR のブランチへ手でコミットしない**（画像のコミットは手順 4 のワークフローが積む）。
 
 ## 0. dependabot の PR を取り込む
 
@@ -33,9 +33,9 @@ gh run list --workflow tagpr.yml --branch main -L 3
 
 **ブランチ名は `tagpr-from-v<前回の版>`**（v0.12.0 を出すリリース PR なら `tagpr-from-v0.11.1`）。以下の `<ブランチ>` は上の一覧に出るブランチ名を使う。
 
-**最新の tagpr の run が success であること。** 失敗していたら、run の注釈（`postVersionCommand` の失敗）を読む。多いのは `## [Unreleased]` が無いとき。直す PR を main にマージすると作り直される。
+**最新の tagpr の run が success であること。** 失敗していたら、run の注釈（`postVersionCommand` の失敗）を読む。多いのは `## [Unreleased]` が空のとき。`tauri.conf.json` か `Cargo.toml` の版が提案と違う（`says X, but tagpr proposes Y`）と言われたら、そのファイルの版のキーより前に今の版と同じ文字列がある（CLAUDE.md の「リリース PR（tagpr）」）。直す PR を main にマージすると作り直される。
 
-**版が正しいか**（PR のタイトルの `vX.Y.Z`）。機能の PR（`enhancement`）があれば minor、無ければ patch になる。違うときは `tauri.conf.json` を手で直さず、ラベルを付けて作り直す:
+**版が正しいか**（PR のタイトルの `vX.Y.Z`）。機能の PR（`enhancement`）があれば minor、無ければ patch になる。違うときは `tauri.conf.json` も `Cargo.toml` も手で直さず、ラベルを付けて作り直す:
 
 ```bash
 gh pr edit <番号> --add-label tagpr:minor
@@ -44,7 +44,7 @@ gh workflow run tagpr.yml --ref main
 
 Files changed が、版の表記（`tauri.conf.json` / `Cargo.toml` / `Cargo.lock`）、`ui/credits.json`、`CHANGELOG.md` の見出しとリンク（版の節の見出し、その上に戻した空の `## [Unreleased]`、末尾の `releases/tag` のリンク）だけであることを確かめる。
 
-**リリース PR にも Copilot のレビューが付く**（ルールセットの条件は PR の向き先でしか絞れないため）。差分は上の生成物だけで、コードの中身は各 PR で見てあるので、指摘は読むだけにする。版の食い違いのような生成物の誤りを指していたら、手で直さずに原因（`scripts/release-prepare.mjs` か main の CHANGELOG）を直す PR を作る。
+**リリース PR にも Copilot のレビューが付く**（ルールセットの条件は PR の向き先でしか絞れないため）。差分は上の生成物だけで、コードの中身は各 PR で見てあるので、指摘は読むだけにする。版の食い違いのような生成物の誤りを指していたら、手で直さずに原因（`.tagpr` の `versionFile`、`scripts/release-prepare.mjs`、main の CHANGELOG か `Cargo.toml`）を直す PR を作る。原因が `scripts/tagpr/` の中なら、上流の kan/tagpr-scripts を直して subtree pull する。
 
 ## 2. CHANGELOG の節を確かめる
 
