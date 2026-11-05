@@ -31,4 +31,5 @@
 
 ## CI（`ci.yml`）
 - `check` ジョブ（windows-latest）が `just fmt` / `just clippy` / `just test`、`lint-ui` ジョブ（ubuntu-latest）が `just lint-ui`。ローカルの `just check` と同じ内容。
+- `verify-lockfile.yml` が PR と main への push で `gh actions-lock --verify` を回す（#152。CLAUDE.md の「action の固定」）。
 - `audit` ジョブは `cargo audit` を push / PR と週次 cron で回す。起票はしない（warning まで大量に issue 化されるため）。抑止する RUSTSEC は `ignore:` に理由コメント付きで並べる。
