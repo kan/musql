@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-07
+
 ### Changed
 - 依存関係を更新（tauri-plugin-updater 2.14.1、tauri-plugin-notification 2.8.0、redis 1.8.1 ほか。#161）
 
@@ -317,6 +319,7 @@
 - アプリ内自動更新（NSIS インストーラー + Ed25519 署名）
 - GitHub Actions CI/CD（cargo check + リリースビルド）
 
+[0.12.0]: https://github.com/kan/musql/releases/tag/v0.12.0
 [0.11.1]: https://github.com/kan/musql/releases/tag/v0.11.1
 [0.11.0]: https://github.com/kan/musql/releases/tag/v0.11.0
 [0.10.1]: https://github.com/kan/musql/releases/tag/v0.10.1
