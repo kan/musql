@@ -108,21 +108,9 @@ gh run watch <run id> --exit-status
 
 **マージの run で `credits` ジョブだけが赤なら**（SPDX の取得の一時的な失敗など）、run は赤になるが、タグと Release の起動には影響しない（呼ぶジョブは `credits` が落ちても走る。マージの run はライセンス一覧を使わない）。タグが打たれ、Release の run が始まっていれば、そのまま進む。再実行しない。
 
-**マージの tagpr の run が cancelled になっていたら**（待っている間に main へ push が来ると、GitHub は古いほうを取り消す）、タグは打たれていない。その run を再実行する（`gh run rerun <run id>`。マージコミットをチェックアウトしてタグを打つ）。後の push の tagpr の run は「タグより新しい版の節がある」で赤になっているが、再実行でタグが打たれれば次の run から通る。**新しいリリース PR をマージしてやり過ごさない**（打たれていない版の上に次の版を重ねることになる）。置き換えた側の run は赤になり、版だけ上がったリリース PR が draft で残ることがある。**その PR はマージせず、タグが打たれた後に閉じる。** 共通の workflow は、成功した run でラベル `tagpr` の付いた draft をすべて ready に戻す（kan/tagpr-scripts#11）。閉じる前に push が入ると古いまま ready になるが、**ready になっていてもマージしない**。
+**マージの tagpr の run が cancelled になっていたら**（待っている間に main へ push が来ると、GitHub は古いほうを取り消す）、タグは打たれていない。その run を再実行する（`gh run rerun <run id>`。マージコミットをチェックアウトしてタグを打つ）。後の push の tagpr の run は「タグより新しい版の節がある」で赤になっているが、再実行でタグが打たれれば次の run から通る。**新しいリリース PR をマージしてやり過ごさない**（打たれていない版の上に次の版を重ねることになる）。置き換えた側の run は赤になり、版だけ上がったリリース PR が draft で残ることがある。**その PR はマージしない。** タグが打たれた後、main への push で走る次の成功した run が、コメントを付けて閉じる（`scripts/tagpr/README.md` の「The tagpr workflow」）。閉じられた PR を開き直してマージしない。
 
-**タグは打たれたのに Release の run が無いとき**は、tagpr の run を再実行しない（tagpr はタグを打ち直さず、起動もしない）。タグの種類を確かめて分ける:
-
-```bash
-git fetch --force origin tag vX.Y.Z && git cat-file -t vX.Y.Z   # tag なら annotated、commit なら lightweight
-```
-
-- **annotated**（`Start the release` ジョブだけが赤か skipped）: 起動だけが失敗している。`gh workflow run release.yml --ref vX.Y.Z` で手で起動する
-- **lightweight**（annotated に打ち直すステップが落ちたか、その前に止まった）: 手で打ち直してから起動する。musql の `release.yml` は `push: tags` を持たないので、タグの push だけでは起動しない:
-
-  ```bash
-  git tag -a -f -m "Release vX.Y.Z" vX.Y.Z 'vX.Y.Z^{commit}' && git push -f origin vX.Y.Z
-  gh workflow run release.yml --ref vX.Y.Z
-  ```
+**タグは打たれたのに Release の run が無いとき**（annotated に打ち直すステップか、Release の起動が落ちた）は、**そのマージの tagpr の run を再実行する**（`gh run rerun <run id>`。tagpr はマージコミットに付いた既にあるタグを受け入れて、続きをもう一度走らせる）。**Release の run が既に始まっている run は再実行しない**（同じタグで Release が 2 回起動する）。30 日を過ぎて再実行できないときの手での直し方は、`scripts/tagpr/README.md` の「The tagpr workflow」にある。musql の `release.yml` は `push: tags` を持たないので、手でタグを打ち直したあとも `gh workflow run release.yml --ref vX.Y.Z` で起動する。
 
 **タグが打たれ、Release の run のジョブがすべて success であることを確かめる。**
 
@@ -208,4 +196,4 @@ Store 版の提出（Partner Center への MSIX のアップロード）は、�
    gh workflow run release.yml --ref vX.Y.Z
    ```
 
-前の実行のドラフトは消さなくてよい（`draft` ジョブが同じタグのドラフトを消してから作り直す）。タグを消したあいだに main が進むと、その tagpr の run は「タグより新しい版の節がある」で赤になる（手順 2 の PR のマージでもそうなる）。タグを打ち直したら次の run から通るので、放っておいてよい。手順 2 の run が残した版だけ上がったリリース PR（draft）は、マージせず、手順 3 の後に閉じる。閉じる前に push が入ると、成功した run がこの PR を ready に戻す（kan/tagpr-scripts#11）。それでもマージしない。
+前の実行のドラフトは消さなくてよい（`draft` ジョブが同じタグのドラフトを消してから作り直す）。タグを消したあいだに main が進むと、その tagpr の run は「タグより新しい版の節がある」で赤になる（手順 2 の PR のマージでもそうなる）。タグを打ち直したら次の run から通るので、放っておいてよい。手順 2 の run が残した版だけ上がったリリース PR（draft）は、マージしない。手順 3 の後に main への push で走る成功した run が、コメントを付けて閉じる。

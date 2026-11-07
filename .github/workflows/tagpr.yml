@@ -66,7 +66,7 @@ jobs:
     # SHA は scripts/tagpr/ に取り込んだ kan/tagpr-scripts の commit（subtree の squash のコミットにある
     # `git-subtree-split`）。**subtree pull をする PR で一緒に上げる。** 別の repo の reusable workflow は
     # actions.lock が固定しないので SHA で書き、Dependabot には上げさせない（dependabot.yml の ignore）
-    uses: kan/tagpr-scripts/.github/workflows/tagpr.yml@d2c8940e8dabc64a4e978a90c465ef6a8697d1d6
+    uses: kan/tagpr-scripts/.github/workflows/tagpr.yml@966347b01e86b2aea4d71da0604588b17642b880
     # 共通の workflow が使える上限。GitHub は run の始めに、飛ばされるジョブの権限まで検査するので、
     # 4 つとも書く
     permissions:
