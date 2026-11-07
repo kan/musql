@@ -1,13 +1,43 @@
 name: CodeQL
 
+# 解析する言語のファイルと、CodeQL と workflow の設定が変わったときだけ回す。依存の更新
+# (Cargo.lock / Cargo.toml だけの Dependabot の PR) やドキュメントの変更では回さない。依存の
+# 脆弱性は Dependabot alerts が見る。vendor したライブラリ (ui/lib/) は解析しない
+# (codeql-config.yml の paths-ignore) ので、そこだけの変更でも回さない。paths と paths-ignore は
+# 同じイベントに併用できないので、`!` の否定で外す。push と pull_request の paths は同じ一覧にそろえる。
 on:
   push:
     branches: [main]
+    paths:
+      - "**/*.rs"
+      - "**/*.js"
+      - "**/*.mjs"
+      - "**/*.cjs"
+      - "**/*.ts"
+      - "**/*.mts"
+      - "**/*.cts"
+      - "**/*.html"
+      - ".github/workflows/**"
+      - ".github/codeql/**"
+      - "!ui/lib/**"
   pull_request:
     branches: [main]
+    paths:
+      - "**/*.rs"
+      - "**/*.js"
+      - "**/*.mjs"
+      - "**/*.cjs"
+      - "**/*.ts"
+      - "**/*.mts"
+      - "**/*.cts"
+      - "**/*.html"
+      - ".github/workflows/**"
+      - ".github/codeql/**"
+      - "!ui/lib/**"
   schedule:
     # 週次 (毎週月曜 01:00 UTC): コミットがない期間もクエリの更新分を検査する
     - cron: "0 1 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -40,6 +70,9 @@ jobs:
           # 3 言語ともビルド不要 (Rust も build-mode: none で解析できる)。
           build-mode: none
           config-file: .github/codeql/codeql-config.yml
+          # 既定の suite より多くのセキュリティのクエリを含む security-extended にする
+          # (default setup の query_suite: extended と同じ)。誤検知は dismiss で扱う。
+          queries: security-extended
 
       - name: Analyze
         uses: github/codeql-action/analyze@v4.39.1
