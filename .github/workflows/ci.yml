@@ -57,6 +57,11 @@ jobs:
         # just lint-ui は PATH の biome (setup-biome が入れたもの) を優先し、
         # 無ければ npx にフォールバックする
         run: just lint-ui
+      # scripts/tagpr/ の subtree と、tagpr.yml が共通の workflow を呼ぶ行の SHA が揃っているか
+      # （kan/tagpr-scripts#10。subtree pull で SHA を上げ忘れた、SHA だけを上げた、scripts/tagpr/ を
+      # 手で編集した、のどれでも落ちる）。Node はランナーのもの（組み込みのモジュールしか使わない）
+      - name: Check scripts/tagpr/ against the tagpr workflow pin
+        run: node scripts/tagpr/verify-subtree.mjs
 
   audit:
     runs-on: ubuntu-latest
