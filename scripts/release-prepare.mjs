@@ -20,8 +20,8 @@
 //    含まないので、版を上げる前のツリーで作っても同じものになる。
 //    手元で試すときは、先に `just credits` を走らせて TAGPR_ARTIFACT_DIR=ui を渡す
 //
-// TAGPR_ARTIFACT_DIR に credits.json が無いか、1 が落ちたら（リリースの直後は `## [Unreleased]` が
-// 空なので毎回落ちる）、CHANGELOG も Cargo.lock も ui/credits.json も書き換えずに失敗で終える
+// TAGPR_ARTIFACT_DIR に credits.json が無いか、1 が落ちたら（`## [Unreleased]` が空なときなど。
+// リリースの直後の push の run では、共通の workflow が tagpr を走らせないのでここまで来ない）、CHANGELOG も Cargo.lock も ui/credits.json も書き換えずに失敗で終える
 // （credits.json の有無は 1 より前に見る。1 は検査をすべて済ませてから書く）。ただし
 // tauri.conf.json と Cargo.toml は tagpr がこれを呼ぶ前に上げている。tagpr は失敗してもその状態で
 // リリース PR を作るので、共通の workflow がそれを draft にする。tagpr の run が赤ならマージしない。
