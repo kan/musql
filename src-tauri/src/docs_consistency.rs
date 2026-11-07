@@ -51,11 +51,7 @@ const EXTERNAL_NAMES: &[&str] = &[
 
 /// Names the notes mention to say they do not (or must not) exist. When removing one,
 /// reread the sentence that mentions it.
-const GONE_NAMES: &[&str] = &[
-    // The tauri-action option before v1.0.0 renamed it to `uploadUpdaterJson`. CLAUDE.md
-    // names it to explain why the setting is easy to get wrong.
-    "includeUpdaterJson",
-];
+const GONE_NAMES: &[&str] = &[];
 
 // ── The repository ───────────────────────────────────────────────────────────
 

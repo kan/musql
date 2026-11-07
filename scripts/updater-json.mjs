@@ -1,0 +1,114 @@
+#!/usr/bin/env node
+// リリースのドラフトから updater の latest.json を組み立てる（Release ワークフローの updater-json ジョブ、
+// kan/tagpr-scripts#9。kan/pike#586 と同じ形）。
+//
+//   node scripts/updater-json.mjs <release-id> <出力先>
+//
+// アセットがそろったドラフトから組み立て、書き出す前に各 URL の実ファイルの署名を tauri.conf.json の
+// 公開鍵で検証する。中身の形は v0.11.1 まで tauri-action v1 が書いていたもの（`updaterJsonPreferNsis: true`）に
+// 合わせてある。キーは version / notes / pub_date / platforms、url は API のアセット URL、
+// `windows-x86_64` は NSIS の setup.exe を指す（#147。アプリは `windows-x86_64-nsis` を指定して取りに来る）。
+// notes はドラフトの本文（CHANGELOG の節）。
+//
+// gh の認証（CI では GH_TOKEN）を使う。リポジトリは GITHUB_REPOSITORY、無ければ kan/musql。
+
+import { execFileSync } from 'node:child_process'
+import { createHash, createPublicKey, verify } from 'node:crypto'
+import { readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { fail, root, VERSION_RE } from './release-common.mjs'
+import { releaseAssets } from './release-assets.mjs'
+
+const [releaseId, outPath] = process.argv.slice(2)
+const repo = process.env.GITHUB_REPOSITORY || 'kan/musql'
+
+if (!/^\d+$/.test(releaseId ?? '') || !outPath) {
+  fail('usage: node scripts/updater-json.mjs <release-id> <出力先>')
+}
+
+/** gh api の応答を Buffer で返す（アセットの本体はバイナリなので文字列にしない）。 */
+function ghApi(path, accept) {
+  const headers = accept ? ['-H', `Accept: ${accept}`] : []
+  return execFileSync('gh', ['api', ...headers, path], { maxBuffer: 1024 * 1024 * 1024 })
+}
+
+const conf = JSON.parse(readFileSync(join(root, 'src-tauri/tauri.conf.json'), 'utf8'))
+const release = JSON.parse(ghApi(`repos/${repo}/releases/${releaseId}`))
+const { assets } = release
+
+const version = release.tag_name.replace(/^v/, '')
+if (!VERSION_RE.test(version)) fail(`タグ名がバージョンの形ではありません: ${release.tag_name}`)
+
+// updater が落とす成果物と、それを指す platforms のキー（`release-assets.mjs` の表）
+const updaters = releaseAssets(version)
+  .filter((asset) => asset.updater)
+  .map(({ name, updater }) => ({ name, keys: updater }))
+
+/** minisign の鍵や署名の本体（base64 の行）をバイト列にする。`.sig` と pubkey はどちらも全体が base64。 */
+function minisignLines(base64) {
+  return Buffer.from(base64, 'base64').toString('utf8').split('\n')
+}
+
+const [, pubLine] = minisignLines(conf.plugins.updater.pubkey)
+const pub = Buffer.from(pubLine, 'base64') // "Ed" 2 バイト + 鍵 ID 8 バイト + 公開鍵 32 バイト
+const pubKeyId = pub.subarray(2, 10)
+const publicKey = createPublicKey({
+  // Ed25519 の生の公開鍵に SPKI の DER の頭を付ける
+  key: Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), pub.subarray(10)]),
+  format: 'der',
+  type: 'spki',
+})
+
+/** tauri の updater と同じ検証をする（minisign。本体の署名と trusted comment の署名の 2 つ）。 */
+function checkSignature(name, file, signature) {
+  // minisign の署名は 4 行（コメント、署名、trusted comment、その署名）。形が違えば理由を出して止める
+  const [, sigLine, trustedLine, globalLine] = minisignLines(signature)
+  if (!sigLine || !trustedLine?.startsWith('trusted comment: ') || !globalLine) {
+    fail(`${name}: .sig が minisign の形ではありません`)
+  }
+  const sig = Buffer.from(sigLine, 'base64') // アルゴリズム 2 バイト + 鍵 ID 8 バイト + 署名 64 バイト
+  const algorithm = sig.subarray(0, 2).toString('latin1')
+  if (sig.length !== 74 || !['ED', 'Ed'].includes(algorithm)) {
+    fail(`${name}: 署名の長さかアルゴリズムが想定と違います（${sig.length} バイト、${algorithm}）`)
+  }
+  if (!sig.subarray(2, 10).equals(pubKeyId)) fail(`${name}: 署名の鍵 ID が公開鍵と違います`)
+  // "ED" は本体の BLAKE2b-512 に署名する方式（tauri の既定）、"Ed" は本体そのものに署名する方式
+  const message = algorithm === 'ED' ? createHash('blake2b512').update(file).digest() : file
+  if (!verify(null, message, publicKey, sig.subarray(10))) fail(`${name}: 署名が本体と合いません`)
+
+  const trusted = trustedLine.replace(/^trusted comment: /, '')
+  const global = Buffer.from(globalLine, 'base64')
+  if (!verify(null, Buffer.concat([sig.subarray(10), Buffer.from(trusted)]), publicKey, global)) {
+    fail(`${name}: trusted comment の署名が合いません`)
+  }
+  // 古いビルドの .sig が残っていても通らないように、署名した時点のバージョンも見る
+  if (!trusted.split('\t').includes(`version:${version}`)) {
+    fail(`${name}: 署名のバージョンが ${version} ではありません（${trusted}）`)
+  }
+}
+
+function findAsset(name) {
+  return assets.find((asset) => asset.name === name) ?? fail(`${name} がドラフトにありません`)
+}
+
+const platforms = {}
+for (const { name, keys } of updaters) {
+  const asset = findAsset(name)
+  const signature = ghApi(findAsset(`${name}.sig`).url, 'application/octet-stream')
+    .toString('utf8')
+    .trim()
+  checkSignature(name, ghApi(asset.url, 'application/octet-stream'), signature)
+  // tauri-action と同じく API のアセット URL を使う（updater は octet-stream を付けて取りに来る）
+  for (const key of keys) platforms[key] = { signature, url: asset.url }
+  console.log(`ok: ${name} -> ${keys.join(', ')}`)
+}
+
+const latest = {
+  version,
+  // ドラフトの本文（draft ジョブが release-notes.mjs で CHANGELOG の節から作ったもの）
+  notes: release.body ?? '',
+  pub_date: new Date().toISOString(),
+  platforms,
+}
+writeFileSync(outPath, JSON.stringify(latest, null, 2))
+console.log(`wrote ${outPath}`)

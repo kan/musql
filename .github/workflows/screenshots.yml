@@ -37,8 +37,6 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # release.yml の TAURI_CLI と同じ版にする（dependabot は上げない）
-  TAURI_CLI: "@tauri-apps/cli@2.12.4"
   MYSQL_VERSION: 8.0.43
 
 jobs:
@@ -116,9 +114,14 @@ jobs:
             if ($LASTEXITCODE) { throw "loading $($sql.Name) failed" }
           }
 
+      # Tauri CLI は release.yml と同じく tools/tauri-cli/ の package-lock.json で固定したものを使う
+      - name: Install the Tauri CLI (no scripts)
+        run: npm ci --ignore-scripts --no-audit --no-fund --prefix tools/tauri-cli
+
       - name: Build capture binary
         env:
-          MUSQL_TAURI_CLI: npx --yes ${{ env.TAURI_CLI }}
+          # レシピは src-tauri で走るので、そこからの相対パス
+          MUSQL_TAURI_CLI: ../tools/tauri-cli/node_modules/.bin/tauri
         run: just screenshots-build
 
       - name: Capture

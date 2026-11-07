@@ -9,8 +9,31 @@ name: Release
 # - `workflow_call` で tagpr の run から呼ばない。呼ぶと run の ref が `refs/heads/main` になり、
 #   attestation の source ref もそれを名乗る。dispatch ならタグが残る（lily / notify-slack と同じ形）
 # - ワークフローの定義もタグの時点のものが使われる
+#
+# ジョブは権限と鍵ごとに分ける（kan/tagpr-scripts#9。kan/pike#586 と同じ形）。**依存のコードを動かす
+# ジョブには、書き込みの権限も署名の鍵も持たせない。** アセットの名前と性質は `scripts/release-assets.mjs`
+# の表にだけ書く。
+#
+# - draft: ドラフトを作る（contents: write）
+# - build / build-store: コンパイルだけを行う（contents: read、secret なし）。依存の build.rs と
+#   proc macro が動くのはここだけ
+# - bundle: build の musql.exe からインストーラを作り、updater の署名（`.sig`）を付ける（contents: read、
+#   updater の鍵を持つ）。動くのは Tauri CLI とバンドラのツール（NSIS / WiX）だけ
+# - attest: 来歴の証明を付ける（id-token: write / attestations: write だけ）
+# - upload: ドラフトへ上げる（contents: write だけ）
+# - updater-json: latest.json を組み立てて上げる（contents: write）
+#
+# この形が守るのは、依存のコードから書き込みのトークンと鍵が抜かれないこと。bundle が署名する
+# musql.exe は依存のコードが動いた build の出力なので、乗っ取られた依存が exe に仕込んだものまでは防げない
 on:
   workflow_dispatch:
+    inputs:
+      dry-run:
+        # build、bundle、build-store だけを走らせ、成果物を artifact に残す。ドラフト・attestation・
+        # upload・latest.json は飛ばすので、ブランチで起動して release.yml の変更を確かめられる
+        description: build、bundle、build-store だけを走らせる（ブランチで確かめるとき）
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -21,26 +44,22 @@ concurrency:
   group: release-${{ github.ref_name }}
   cancel-in-progress: false
 
+# タグは起動した ref から取る。ブランチで起動したら draft ジョブが止める
 env:
-  # タグは起動した ref から取る。ブランチで起動したら draft ジョブが止める
   TAG: ${{ github.ref_name }}
-  # 両ジョブが使う Tauri CLI（npm のビルド済みのもの）の版。完全な版で固定する（#138）。
-  # 固定しないと、タグを打った時点の最新が検証されないまま走り、attestation の付く
-  # 成果物を作る。2 つのジョブで版がずれることも防ぐ。dependabot は上げないので、
-  # tauri クレート（src-tauri/Cargo.lock）を上げたときに手で合わせる。
-  TAURI_CLI: "@tauri-apps/cli@2.12.4"
 
 jobs:
-  # ドラフトは先に 1 つだけ作り、build にその ID と本文を渡す（#149）。build-store はドラフトに
-  # 触らず、publish-store がタグ名でこのドラフトへ足す。
+  # ドラフトは先に 1 つだけ作る（#149）。アセットは upload が 1 回で上げ、ID は updater-json が使う
   draft:
     name: Create the draft release
+    # dry-run ではドラフトを作らない。**タグの検査は dry-run でない起動にはそのまま効く**
+    # （build と build-store は、このジョブが成功したときか、dry-run のときにしか走らない）
+    if: ${{ !inputs.dry-run }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
     outputs:
       release-id: ${{ steps.draft.outputs.id }}
-      notes: ${{ steps.draft.outputs.notes }}
     steps:
       # ブランチで起動すると、TAG がブランチ名になる。形の検査（vX.Y.Z）は scripts/release-notes.mjs が行う。
       # checkout は ref を指定しない（起動したタグのコミットを取る）
@@ -62,14 +81,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          # 本文は CHANGELOG の節から作る。build が latest.json の notes にも入れる。
+          # 本文は CHANGELOG の節から作る。latest.json の notes にもなる（updater-json.mjs が写す）。
           # タグが vX.Y.Z の形でないとき、tauri.conf.json の版（成果物の名前はこれから付く）と
           # 食い違うとき、節が無いか空のときは、スクリプトが止める。
           notes="$RUNNER_TEMP/notes.md"
           node scripts/release-notes.mjs "$TAG" > "$notes"
           # 同じタグのドラフトが残っていたら（再実行やタグの打ち直し）消してから作り直す。
-          # ドラフトを常に 1 つにしておくと、releaseId で上げる build と、タグ名で上げる
-          # publish-store が同じドラフトに当たる。公開済みなら止める。
+          # ドラフトを常に 1 つにしておくと、タグ名で上げる upload と updater-json が
+          # 同じドラフトに当たり、前の実行の latest.json やアセットも残らない。公開済みなら止める。
           releases=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" \
             --jq ".[] | select(.tag_name == \"$TAG\") | \"\(.id) \(.draft)\"")
           while read -r old_id is_draft; do
@@ -87,23 +106,22 @@ jobs:
             --title "muSQL $TAG" --notes-file "$notes"
           id=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json databaseId -q .databaseId)
           echo "id=$id" >> "$GITHUB_OUTPUT"
-          {
-            echo "notes<<MUSQL_NOTES_EOF"
-            cat "$notes"
-            echo "MUSQL_NOTES_EOF"
-          } >> "$GITHUB_OUTPUT"
 
+  # **コンパイルだけを行う。書き込みの権限も secret も持たない。** 依存のコード（cargo の build.rs と
+  # proc macro）が動くのは、このジョブと build-store だけ
   build:
+    name: Build
     needs: draft
+    # dry-run でない起動は、draft のタグの検査を通ったときだけ走る（タグでない ref では止まる）。
+    # draft は dry-run で飛ばされるので、状態の関数を書く（暗黙の success() だと dry-run で走らない）
+    if: ${{ !cancelled() && (inputs.dry-run || needs.draft.result == 'success') }}
     runs-on: windows-latest
     permissions:
-      contents: write
-      # Artifact attestations（#130）。署名は Actions の OIDC トークンで Sigstore の
-      # 短命証明書を取って行うので、鍵の secret は増えない。
-      id-token: write
-      attestations: write
+      contents: read
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@master
@@ -115,47 +133,125 @@ jobs:
       # キー（ジョブ）もプロファイル（dev と release）も違うので当たらない。保存の
       # 時間だけがかかる。
 
-      - name: Build and release
-        uses: tauri-apps/tauri-action@v1.0.0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          # 指定しないと、tauri-action は npm の @tauri-apps/cli@v2 の最新を入れる。
-          tauriScript: npx --yes ${{ env.TAURI_CLI }}
-          # draft が作ったドラフトへ上げる（自分ではリリースを作らない）
-          releaseId: ${{ needs.draft.outputs.release-id }}
-          # latest.json の notes になる（tauri-action は releaseId があっても releaseBody を使う）。
-          # 公開後は差し替えられないので、ドラフトの本文と同じ CHANGELOG の節を渡す
-          releaseBody: ${{ needs.draft.outputs.notes }}
-          uploadUpdaterJson: true
-          # latest.json の `windows-x86_64` を MSI ではなく NSIS（setup.exe）に向ける（#147。
-          # pike と同じ）。アプリは `windows-x86_64-nsis` を指定して取りに来るので
-          # （main.rs の `fetch_update`）、これは種別を指定しない古い版や他のクライアント向け。
-          updaterJsonPreferNsis: true
+      # Tauri CLI は tools/tauri-cli/ の package-lock.json で版と integrity を固定する。
+      # install scripts は走らせない（CLI はビルド済みのバイナリを optional dependency で持つ）
+      - name: Install the Tauri CLI (no scripts)
+        run: npm ci --ignore-scripts --no-audit --no-fund --prefix tools/tauri-cli
 
-      # 手でダウンロードするインストーラに来歴の証明を付ける（#130）。グロブは拡張子の
-      # 末尾まで書く。bundle/ には配布しない .msi.zip / .nsis.zip と各 .sig も並んでいる。
-      # .sig と latest.json は対象外（updater の経路は minisign の検証で足りている）。
-      - name: Attest the installers
-        uses: actions/attest@v4.2.2
-        with:
-          subject-path: |
-            src-tauri/target/release/bundle/nsis/*-setup.exe
-            src-tauri/target/release/bundle/msi/*.msi
+      # バンドルは bundle のジョブで行う（tauri.conf.json は beforeBuildCommand を持たない）
+      - name: Compile
+        shell: bash
+        working-directory: src-tauri
+        run: ../tools/tauri-cli/node_modules/.bin/tauri build --no-bundle
 
-  build-store:
-    # build と並列に走らせる（#138）。Release には触らず、ファイルを artifact で
-    # publish-store へ渡す。ドラフトを作るのは draft ジョブだけにしておく。
-    # draft を待つのは、タグ以外で起動した run や、CHANGELOG の節が無いタグで、
-    # Store のビルドだけが走らないようにするため（#152）
-    needs: draft
+      # bundle に渡すファイルを `release-assets.mjs handoff` の一覧のとおり、リポジトリと同じ配置で
+      # 1 つのディレクトリに写して上げる。一覧は `scripts/release-assets.mjs` の `handoffFiles()` が持つ
+      # （**バンドラは crate の bin をすべて同梱する**ので、bin を足したらそこに足す）。bundle は同じ一覧の
+      # ファイルしか受け取らない
+      - name: Stage the build output
+        shell: bash
+        run: |
+          set -euo pipefail
+          while read -r file; do
+            mkdir -p "handoff/$(dirname "$file")"
+            cp "$file" "handoff/$file"
+          done < <(node scripts/release-assets.mjs handoff)
+
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: build
+          path: handoff/
+          # 落ちたジョブだけの再実行（`gh run rerun --failed`）で bundle がまた落とすので、短くしない
+          retention-days: 30
+          if-no-files-found: error
+
+  # **インストーラを作って署名する。updater の鍵を持つが、依存のコードは動かさない。** 動くのは
+  # Tauri CLI（`tauri bundle`）と、バンドラが使うツール（NSIS / WiX）だけ。updater の署名（`.sig`）は
+  # バンドラが `createUpdaterArtifacts` の生成の中で付けるので、鍵はここに置く。
+  # ツールチェーンを入れる action は使わない
+  bundle:
+    name: Bundle & sign
+    needs: build
+    # dry-run では上流の draft が skipped なので、暗黙の success() だと飛ばされる
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
     runs-on: windows-latest
     permissions:
       contents: read
-      id-token: write
-      attestations: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      # `tauri bundle` は cargo metadata で target のディレクトリを調べる（コンパイルはしない）。
+      # ランナーに入っている rustup で build と同じ stable にそろえる
+      - name: Set up the Rust toolchain
+        shell: bash
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      # **build の出力は信用しない**（依存のコードが動いたジョブの出力）。作業ツリーの外に落とし、
+      # `release-assets.mjs handoff` の一覧にあるファイルだけを、通常のファイルであることを確かめてから
+      # 決まった場所へ写す。一覧は checkout したリポジトリから作るので、artifact に `tauri.conf.json`
+      # などを紛れ込ませても作業ツリーは上書きされない（上書きされると、`beforeBundleCommand` を
+      # 足すなどして、鍵を持つこのジョブで依存のコードを動かせてしまう）。
+      # **artifact を作業ツリーへそのまま展開しないこと**
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: build
+          path: ${{ runner.temp }}/handoff
+
+      - name: Take the build output
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/handoff"
+          while read -r file; do
+            if [ -L "$src/$file" ] || [ ! -f "$src/$file" ]; then
+              echo "$file が build の出力に無いか、通常のファイルではない" >&2
+              exit 1
+            fi
+            mkdir -p "$(dirname "$file")"
+            cp "$src/$file" "$file"
+          done < <(node scripts/release-assets.mjs handoff)
+
+      - name: Install the Tauri CLI (no scripts)
+        run: npm ci --ignore-scripts --no-audit --no-fund --prefix tools/tauri-cli
+
+      # build のジョブがコンパイルした musql.exe から作る（tauri.conf.json は beforeBundleCommand を
+      # 持たない。**足さないこと**）
+      - name: Bundle
+        shell: bash
+        working-directory: src-tauri
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: ../tools/tauri-cli/node_modules/.bin/tauri bundle
+
+      # **リリースに上げる名前でそろえる。** 名前は `scripts/release-assets.mjs` の表が持ち、
+      # 1 つずつ名指しして写し、欠けていれば止める（`bundle/` には配布しない `.msi.zip` なども
+      # 並ぶので、グロブで集めない）
+      - name: Collect the release assets
+        run: node scripts/release-assets.mjs collect bundle release-assets
+
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: release-bundle
+          path: release-assets/
+          # 落ちたジョブだけの再実行で attest / upload がまた落とすので、短くしない。dry-run の分は
+          # 1 日で消す（レビュー前のブランチのビルドに、本物の updater の鍵の `.sig` が付いているため）
+          retention-days: ${{ inputs.dry-run && 1 || 30 }}
+          if-no-files-found: error
+          # インストーラは圧縮済みなので圧縮し直さない
+          compression-level: 0
+
+  # Store 版（#138）。アップデータを外したビルドなので鍵は要らず、**書き込みの権限も持たない**。
+  # build と並列に走らせ、成果物は artifact で attest と upload へ渡す
+  build-store:
+    name: Build the Store variant
+    needs: draft
+    if: ${{ !cancelled() && (inputs.dry-run || needs.draft.result == 'success') }}
+    runs-on: windows-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -166,79 +262,145 @@ jobs:
         with:
           toolchain: stable
 
-      # rust-cache を使わない理由は build と同じ。
-      # Tauri CLI は npm のビルド済みのものを使う（#138。`cargo install tauri-cli` は
-      # 毎回ソースからコンパイルして 7 分かかる）。版は先頭の env の TAURI_CLI。
-      - name: Build Store variant
-        run: npx --yes ${{ env.TAURI_CLI }} build --config tauri.store.conf.json -- --no-default-features --features docker
+      # rust-cache を使わない理由は build と同じ
+      - name: Install the Tauri CLI (no scripts)
+        run: npm ci --ignore-scripts --no-audit --no-fund --prefix tools/tauri-cli
+
+      # インストーラは作らない（Store へは MSIX で出す）
+      - name: Compile the Store variant
+        shell: bash
         working-directory: src-tauri
+        run: ../tools/tauri-cli/node_modules/.bin/tauri build --no-bundle --config tauri.store.conf.json -- --no-default-features --features docker
 
-      - name: Rename Store EXE
-        shell: pwsh
-        run: |
-          Copy-Item "src-tauri/target/release/musql.exe" "muSQL-store-x64.exe"
-
-      - name: Derive MSIX version
-        id: msix-version
-        shell: pwsh
-        run: |
-          $tag = $env:TAG -replace '^v',''
-          $parts = $tag.Split('.')
-          while ($parts.Count -lt 4) { $parts += '0' }
-          $ver = $parts[0..3] -join '.'
-          echo "version=$ver" >> $env:GITHUB_OUTPUT
-
+      # MSIX の版は tauri.conf.json の版に `.0` を足したもの（タグとの一致は、dry-run でない起動なら
+      # draft が確かめる。dry-run ではタグが無いので、タグからは取らない。dry-run の MSIX は提出に使わない）
       - name: Build MSIX
         shell: pwsh
         run: |
+          $version = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
           .\store\build-msix.ps1 `
-            -Version "${{ steps.msix-version.outputs.version }}" `
+            -Version "$version.0" `
             -ExePath  "src-tauri\target\release\musql.exe" `
             -OutputPath "muSQL-store-x64.msix"
 
-      # 成果物への最後の書き換え（MSIX の生成）のあとに置く（#130）。検証はダイジェストで
-      # 行うので、Releases から落としたファイルなら通る。Store が配る MSIX は Microsoft が
-      # 署名し直すので対象外。
-      - name: Attest the Store artifacts
-        uses: actions/attest@v4.2.2
-        with:
-          subject-path: |
-            muSQL-store-x64.exe
-            muSQL-store-x64.msix
+      # exe の名前の付け替え（musql.exe → muSQL-store-x64.exe）も表のとおりに行う
+      - name: Collect the release assets
+        run: node scripts/release-assets.mjs collect store release-assets
 
-      # attestation はダイジェストで検証するので、artifact を経由しても通る。
-      - name: Hand the Store artifacts to publish-store
-        uses: actions/upload-artifact@v7.0.2
+      - uses: actions/upload-artifact@v7.0.2
         with:
-          name: store
-          path: |
-            muSQL-store-x64.exe
-            muSQL-store-x64.msix
+          name: release-store
+          path: release-assets/
+          retention-days: 30
           if-no-files-found: error
-          # build の失敗を直して「Re-run failed jobs」で publish-store だけを
-          # 走らせ直せるように、数日は残す。
-          retention-days: 7
+          # MSIX は圧縮済み。exe もそのまま上げる（圧縮し直す時間のほうが大きい）
+          compression-level: 0
 
-  publish-store:
-    # draft が作ったドラフトに、Store のファイルを足す。build を待つのは、build が落ちた
-    # ドラフトへ Store の分だけが載るのを避けるため。
-    needs: [build, build-store]
+  # **来歴の証明だけを行う**（#130）。`id-token: write` と `attestations: write` を持つのは
+  # このジョブだけ。署名は Actions の OIDC トークンで Sigstore の短命証明書を取って行うので、
+  # 鍵の secret は要らない。
+  attest:
+    name: Attest the artifacts
+    needs: [bundle, build-store]
+    if: ${{ !inputs.dry-run }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      # 表（`scripts/release-assets.mjs`）を読むためだけに取る。依存は入れない
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      # 2 つの artifact は混ぜずに、名前で 1 つずつ別のディレクトリへ落とす（依存のコードが動いた
+      # build-store の出力が、bundle のファイルの名前で差し替えられないように。ジョブごとに表と照らす）
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: release-bundle
+          path: release/bundle
+
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: release-store
+          path: release/store
+
+      # 利用者が手でダウンロードする 4 つ（表の `attest`）。`.sig` と `latest.json` は付けない
+      # （updater の経路は minisign の検証で足りる）。Store が配る MSIX は Microsoft が署名し直すが、
+      # Releases から落とすものに付ける。表と artifact がそろっていることを先に確かめる
+      # （欠けたファイルを黙って飛ばさない）
+      - name: List the subjects
+        id: subjects
+        run: |
+          set -euo pipefail
+          for job in bundle store; do node scripts/release-assets.mjs check "$job" "release/$job"; done
+          {
+            echo 'paths<<EOF'
+            for job in bundle store; do node scripts/release-assets.mjs attest "$job" "release/$job"; done
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/attest@v4.2.2
+        with:
+          subject-path: ${{ steps.subjects.outputs.paths }}
+
+  # **ドラフトへ上げるだけ。依存のコードは動かさない。** contents: write を持つ。bundle と build-store の
+  # 両方を待つので、片方だけが載ったドラフトはできない
+  upload:
+    name: Upload to the draft
+    needs: [draft, bundle, build-store]
+    if: ${{ !inputs.dry-run }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      # 表（`scripts/release-assets.mjs`）を読むためだけに取る。依存は入れない
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      # attest と同じく、混ぜずに 1 つずつ落とす
       - uses: actions/download-artifact@v8.0.2
         with:
-          name: store
+          name: release-bundle
+          path: release/bundle
 
-      # gh はタグ名からドラフトの Release も引ける。Release が無ければ失敗する
-      # (新しく作らない) ので、draft が作ったドラフト以外へ上げてしまうことが無い
-      # (同じタグのドラフトは draft ジョブが 1 つにしてある)。
-      - name: Upload to the draft release
-        shell: pwsh
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: release-store
+          path: release/store
+
+      # 表のアセットがちょうどそろっていなければ上げない。gh はタグ名からドラフトの Release も引ける。
+      # Release が無ければ失敗する（新しく作らない）ので、draft が作ったドラフト以外へは上がらない
+      - name: Upload the assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload "$env:TAG" `
-            muSQL-store-x64.exe muSQL-store-x64.msix `
-            --clobber --repo "$env:GITHUB_REPOSITORY"
+          set -euo pipefail
+          for job in bundle store; do node scripts/release-assets.mjs check "$job" "release/$job"; done
+          gh release upload "$TAG" release/bundle/* release/store/* --clobber --repo "$GITHUB_REPOSITORY"
+
+  # アセットがそろったドラフトから latest.json を組み立て、署名を検証して 1 回だけ上げる。
+  # **attest も待つ。** 証明が落ちたまま latest.json がそろうと、仕上がったドラフトに見える
+  # （Immutable releases なので、公開してから証明は足せない）
+  updater-json:
+    name: Upload latest.json
+    needs: [draft, upload, attest]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      # Node はランナーに入っているもので足りる（組み込みのモジュールしか使わない）
+      - name: Build and upload latest.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.draft.outputs.release-id }}
+        run: |
+          set -euo pipefail
+          node scripts/updater-json.mjs "$RELEASE_ID" latest.json
+          gh release upload "$TAG" latest.json --clobber --repo "$GITHUB_REPOSITORY"

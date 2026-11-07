@@ -10,5 +10,7 @@ src-tauri/gen/
 !.claude/skills/
 .claude/settings.local.json
 *.msix
+# CI 用の Tauri CLI（tools/tauri-cli/ の package-lock.json で固定。npm ci --ignore-scripts --prefix tools/tauri-cli で入る）
+tools/tauri-cli/node_modules/
 # just screenshots の出力（マニュアルへは中身を見てから docs/manual/img/ へ手で入れる）
 artifacts/
