@@ -26,6 +26,7 @@ workflows:
         - 'dtolnay/rust-toolchain@master'
         - 'extractions/setup-just@v4.0.0'
         - 'swatinem/rust-cache@v2.9.3'
+    '.github/workflows/tagpr-label.yml': []
     '.github/workflows/tagpr.yml':
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-node@v7.1.0'
