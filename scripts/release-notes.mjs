@@ -3,7 +3,7 @@
 //
 //   node scripts/release-notes.mjs vX.Y.Z > notes.md
 //
-// ドラフトの本文になり、tauri-action が latest.json の notes にも入れる。latest.json は公開前に
+// ドラフトの本文になり、updater-json.mjs がそれを latest.json の notes に写す。latest.json は公開前に
 // 上がり、公開後は Immutable releases で差し替えられないので、本文はタグの時点の CHANGELOG から
 // 作る。タグが vX.Y.Z の形でない、または tauri.conf.json の版と食い違うときは止める（成果物の
 // 名前はこの版から付く）。

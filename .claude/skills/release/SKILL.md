@@ -99,7 +99,7 @@ gh run list --workflow tagpr.yml --commit "$sha" --json databaseId,status -q '.[
 gh run watch <run id> --exit-status
 ```
 
-マージの push で走る tagpr の run が、**タグ `vX.Y.Z` を打ち、annotated に打ち直してから、同じ run の `release` ジョブで Release ワークフローをそのタグで起動する**（どれも kan/tagpr-scripts の共通の workflow が行う。`workflow_dispatch`。GITHUB_TOKEN で打ったタグの push では Release は起動しない）。Release は tagpr とは別の run になる。中は `draft`（ドラフトを 1 つ作る）→ `build` と `build-store` が並列 → `publish-store`（Store のファイルをドラフトへ足す）の順に走る。Windows のフルビルド 2 回が並列なので、15〜20 分ほどかかる。
+マージの push で走る tagpr の run が、**タグ `vX.Y.Z` を打ち、annotated に打ち直してから、同じ run の `release` ジョブで Release ワークフローをそのタグで起動する**（どれも kan/tagpr-scripts の共通の workflow が行う。`workflow_dispatch`。GITHUB_TOKEN で打ったタグの push では Release は起動しない）。Release は tagpr とは別の run になる。中は `draft`（ドラフトを 1 つ作る）→ `build`（コンパイルだけ）と `build-store` が並列 → `bundle`（インストーラと `.sig`）→ `attest` と `upload` → `updater-json`（`latest.json`）の順に走る。ジョブの分け方は CLAUDE.md の「Build variants」。Windows のリリースビルド 2 回が並列なので、20 分ほどかかる。
 
 ```bash
 gh run list --workflow release.yml --branch vX.Y.Z -L 1 --json databaseId,status
@@ -127,7 +127,8 @@ git fetch --force origin tag vX.Y.Z && git cat-file -t vX.Y.Z   # tag なら ann
 **タグが打たれ、Release の run のジョブがすべて success であることを確かめる。**
 
 - `draft` が落ちたら、タグで起動されているか、タグが `vX.Y.Z` の形か、`tauri.conf.json` の version と合っているか、タグのコミットの CHANGELOG に `## [X.Y.Z] - 日付` の節が 1 つだけあり空でないかを見る
-- ビルドのどちらかが落ちたら、一時的な失敗なら落ちたジョブだけを再実行する（`gh run rerun <run-id> --failed`）
+- ビルドのどれかが落ちたら、一時的な失敗なら落ちたジョブだけを再実行する（`gh run rerun <run-id> --failed`。ジョブの間で渡す artifact は 30 日残る）
+- `bundle` の `Take the build output` が落ちたら、`build` の出力が `scripts/release-assets.mjs handoff` の一覧と合っていない（bin を足した、など）。`Collect the release assets` が落ちたら、バンドラの出力の名前が表と合っていない。どちらも表かワークフローを直す PR を作り、タグを打ち直す
 - 打ってあるタグで丸ごとやり直すなら `gh workflow run release.yml --ref vX.Y.Z`（**`--ref` にはタグを渡す**。ブランチで起動すると `draft` が止める。`draft` が同じタグのドラフトを消してから作り直す）
 - コードや CHANGELOG を直す必要があるなら、下の「タグを打ち直す場合」
 
@@ -145,9 +146,9 @@ gh release view vX.Y.Z --json isDraft,assets --jq '.isDraft, (.assets[].name)'
 - `muSQL-store-x64.exe`
 - `muSQL-store-x64.msix`
 
-**`latest.json` が付いているか必ず確認する。** 無いまま公開すると、セルフアップデータが黙って壊れる（`tauri-action` v1.0.0 で `includeUpdaterJson` が `uploadUpdaterJson` に改名された経緯があり、設定漏れが起きやすい）。中身の `windows-x86_64` が NSIS の setup.exe を指し、`notes` が CHANGELOG の節になっていることも見る。足りないものがあれば公開せず、原因を直してタグを打ち直す。
+**`latest.json` が付いているか必ず確認する。** 無いまま公開すると、セルフアップデータが黙って壊れる（`updater-json` ジョブは `attest` と `upload` の両方が通ったときだけ走るので、どちらかが落ちると付かない）。中身の `windows-x86_64` が NSIS の setup.exe を指し、`notes` が CHANGELOG の節になっていることも見る。足りないものがあれば公開せず、原因を直してタグを打ち直す。
 
-署名には GitHub Secrets の `TAURI_SIGNING_PRIVATE_KEY` と `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` が要る（未署名のビルドは updater の検証に失敗する）。`release.yml` はリポジトリの secrets を直接読む（`workflow_dispatch` で起動するため）。
+署名には GitHub Secrets の `TAURI_SIGNING_PRIVATE_KEY` と `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` が要る（未署名のビルドは updater の検証に失敗する）。読むのは `bundle` ジョブだけ。`release.yml` はリポジトリの secrets を直接読む（`workflow_dispatch` で起動するため）。`updater-json` は、上がった `.sig` を `tauri.conf.json` の公開鍵で検証してから `latest.json` を書くので、鍵が食い違っていればそこで落ちる。
 
 **手でダウンロードする 4 つのファイルに attestation（来歴の証明）が付いていることを確認する**（#130）。ドラフトから落として 1 つずつ検証する:
 
@@ -164,7 +165,7 @@ for f in "$dir"/*; do
 done
 ```
 
-**4 つとも通ること。** attest のステップはグロブが 1 件も当たらなくても、他が当たれば通るので、取りこぼしは CI の結果からは分からない。1 つでも落ちたら公開せず、直してタグを打ち直す。Release はタグで起動されるので、source の ref はタグになる（#152。v0.11.1 までは `workflow_call` で呼んでいたので `refs/heads/main`。それらの版を検証するときは `--source-ref` を外す）。
+**4 つとも通ること。** `attest` ジョブは `scripts/release-assets.mjs` の表のファイルを名指しで渡し、表とそろっていなければ落ちるが、検証は配るファイルそのもので確かめる最後の確認になる。1 つでも落ちたら公開せず、直してタグを打ち直す。Release はタグで起動されるので、source の ref はタグになる（#152。v0.11.1 までは `workflow_call` で呼んでいたので `refs/heads/main`。それらの版を検証するときは `--source-ref` を外す）。
 
 ## 7. 公開
 

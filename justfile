@@ -131,7 +131,8 @@ lint-docs:
 # --- マニュアルのスクリーンショット（src-tauri/src/screenshots.rs。CI は screenshots.yml） ---
 #
 # 撮影には docs/manual/fixtures の MySQL（127.0.0.1:3306、demo / demo1234）が要る。
-# Tauri CLI は既定で cargo tauri。CI は npm のビルド済みのものを MUSQL_TAURI_CLI で渡す。
+# Tauri CLI は既定で cargo tauri。CI は tools/tauri-cli/ の package-lock.json で固定したビルド済みのものを
+# MUSQL_TAURI_CLI で渡す（npm ci --ignore-scripts --prefix tools/tauri-cli で入れ、src-tauri からの相対パスで指す）。
 
 tauri_cli := env("MUSQL_TAURI_CLI", "cargo tauri")
 

@@ -1,0 +1,8 @@
+{
+  "name": "musql-tauri-cli",
+  "private": true,
+  "description": "CI が使う Tauri CLI を、版と integrity で固定するためだけの package（kan/tagpr-scripts#9）。アプリと UI は Node.js を使わない。入れ方は npm ci --ignore-scripts --prefix tools/tauri-cli",
+  "devDependencies": {
+    "@tauri-apps/cli": "2.12.4"
+  }
+}

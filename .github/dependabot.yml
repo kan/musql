@@ -17,6 +17,19 @@ updates:
       cargo:
         patterns:
           - "*"
+  # CI（release.yml / screenshots.yml）が使う Tauri CLI（kan/tagpr-scripts#9）。版と integrity を
+  # tools/tauri-cli/package-lock.json で固定し、ここで上げる
+  - package-ecosystem: npm
+    directory: /tools/tauri-cli
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+    groups:
+      tauri-cli:
+        patterns:
+          - "*"
   # github-actions は semver 別の日数に対応していないので default-days だけ。
   - package-ecosystem: github-actions
     directory: /
