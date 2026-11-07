@@ -3,9 +3,14 @@ name: tagpr
 # リリース PR を作り、マージされたらタグを打ってリリースを走らせる（#149）。設定は `.tagpr`、
 # 手順は `release` スキル、設計の理由は CLAUDE.md の「リリース PR（tagpr）」。
 #
+# tagpr のジョブは kan/tagpr-scripts の共通の workflow を呼ぶ（kan/tagpr-scripts#6。
+# `scripts/tagpr/.github/workflows/tagpr.yml` がその写し）。動きと落ちたときの扱いは
+# `scripts/tagpr/README.md` の「The tagpr workflow」。
+#
 # - main が進むたびに、版・Cargo.lock・CHANGELOG の見出し・ライセンス一覧を載せたリリース PR
-#   （ブランチ `tagpr-from-v<前回の版>`）を作り直す（`scripts/release-prepare.mjs`）
-# - リリース PR がマージされると、tagpr がタグを打ち、同じ run の `release` ジョブが
+#   （ブランチ `tagpr-from-v<前回の版>`）を作り直す（`scripts/release-prepare.mjs`）。run が落ちると
+#   リリース PR は draft になり、次に成功した run が ready に戻す
+# - リリース PR がマージされると、tagpr がタグを打ち、共通の workflow がそれを annotated に打ち直してから
 #   Release ワークフローをそのタグで起動する（`workflow_dispatch`）。**GITHUB_TOKEN で打った
 #   タグでは `on.push.tags` が起動しない**ので、タグの push には頼らない
 # - `workflow_dispatch` は、リリース PR にラベル（`tagpr:minor`）を付けたあとの作り直し用
@@ -17,63 +22,59 @@ on:
 permissions:
   contents: read
 
+# **concurrency は付けない。** run を並べるのは共通の workflow の tagpr のジョブ（group は
+# `tagpr-scripts-release-pr`）。同じ名前の group をここにも付けると GitHub が deadlock として止め、
+# 別の名前を付けると、待っている run が置き換えられる場所が 2 つに増える
 jobs:
-  tagpr:
-    name: Prepare the release pull request
+  # ライセンス一覧の作り直しは `cargo metadata`（依存のソースをレジストリから取る）と SPDX の
+  # 標準文の取得でネットワークに出るので、書き込みの権限を持たないこのジョブで行い、tagpr の
+  # ジョブへ artifact で渡す（kan/tagpr-scripts#6）。一覧は musql 自身を含まないので、版を上げる前の
+  # main のツリーで作っても、リリース PR のツリーで作ったものと同じになる
+  credits:
+    name: Generate the credits
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # tagpr どうしは並べない（同じリリース PR のブランチを作り直し合う）。止めもしない
-    # （タグを打った直後に止めると、成果物の無いタグが残る）。release ジョブは含めないので、
-    # ビルドの最中に来た push もリリース PR の作り直しを待たされない。
-    #
-    # それでも GitHub は待っている run を 1 つしか持たない。リリース PR のマージの run が
-    # 待っている間に push が来ると、その run は cancelled になりタグが打たれない。後の push の
-    # run は `scripts/tagpr/release-prepare.mjs` の検査（タグより新しい版の節がある）で赤になるので、
-    # マージコミットの run を再実行する（release スキル）
-    concurrency:
-      group: tagpr
-      cancel-in-progress: false
-    permissions:
-      contents: write
-      pull-requests: write
-      issues: read
-    outputs:
-      tag: ${{ steps.tagpr.outputs.tag }}
     steps:
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 
-      # release-prepare.mjs（と credits.mjs）を動かす。npm の依存は無い
+      # credits.mjs は npm の依存を持たない。版は共通の workflow の tagpr のジョブと同じ 24 に固定する
+      # （ランナーの既定の版が変わっても、一覧を作る Node が変わらないように）。キャッシュは使わない
+      # （別のワークフローが書いたキャッシュを、tagpr のジョブがコミットするものに混ぜない）
       - uses: actions/setup-node@v7.1.0
         with:
-          node-version: lts/*
+          node-version: 24
 
-      # Rust はランナーに入っている stable を使う。呼ぶのは credits.mjs の `cargo metadata`
-      # だけで、build.rs は走らない（Cargo.lock は tagpr-scripts が cargo を呼ばずに書く）。
-      # **このジョブは書き込みの権限を持つので、musql と依存のコードを動かさない**
-      # （ビルドやテストを足さない）
+      # Rust はランナーに入っている stable を使う。呼ぶのは `cargo metadata` だけで、build.rs は走らない
+      - name: Generate the credits
+        run: node scripts/credits.mjs
 
-      - id: tagpr
-        uses: Songmu/tagpr@v1.21.4
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: credits
+          path: ui/credits.json
+          retention-days: 1
+          if-no-files-found: error
 
-  # **GITHUB_TOKEN で push したタグでは `push: tags` が起動しない。** `workflow_dispatch` は
-  # その例外なので、タグを ref にして release.yml を起動する（#152）。`workflow_call` で同じ
-  # run から呼ばないのは、run の ref が main になり、attestation の source ref もそれを名乗るため
-  release:
-    name: Start the release
-    needs: tagpr
-    if: needs.tagpr.outputs.tag != ''
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
+  tagpr:
+    needs: credits
+    # credits が落ちても走らせる。リリース PR のマージの run はタグを打つだけでライセンス一覧を
+    # 使わないので、ネットワークの一時的な失敗でタグを打ち損ねないようにする。リリース PR を
+    # 作り直す run は、TAGPR_ARTIFACT_DIR が空になるので release-prepare.mjs が何も書き換えずに落ちる
+    if: ${{ !cancelled() }}
+    # SHA は scripts/tagpr/ に取り込んだ kan/tagpr-scripts の commit（subtree の squash のコミットにある
+    # `git-subtree-split`）。**subtree pull をする PR で一緒に上げる。** 別の repo の reusable workflow は
+    # actions.lock が固定しないので SHA で書き、Dependabot には上げさせない（dependabot.yml の ignore）
+    uses: kan/tagpr-scripts/.github/workflows/tagpr.yml@d2c8940e8dabc64a4e978a90c465ef6a8697d1d6
+    # 共通の workflow が使える上限。GitHub は run の始めに、飛ばされるジョブの権限まで検査するので、
+    # 4 つとも書く
     permissions:
-      actions: write  # workflow_dispatch
-    steps:
-      - name: Dispatch release.yml on the tag
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          TAG: ${{ needs.tagpr.outputs.tag }}
-        run: gh workflow run release.yml --ref "$TAG"
+      contents: write       # リリース PR のブランチとタグを push する
+      pull-requests: write  # リリース PR を作る・更新する、draft と ready を切り替える
+      issues: read          # ラベルを読む
+      actions: write        # release.yml を workflow_dispatch で起動する
+    with:
+      release-workflow: release.yml
+      # 展開すると TAGPR_ARTIFACT_DIR の直下に credits.json ができる（scripts/release-prepare.mjs が読む）
+      artifact: credits

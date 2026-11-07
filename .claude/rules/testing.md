@@ -7,7 +7,7 @@
   - 依存との照合は `just check-credits`（`scripts/credits.mjs --check`）。`just test` と CI には入れない（dependabot の PR がクレートを足すと落ち、直すには dependabot のブランチへ push するしかなくなるため）。**クレートについて比べるのは名前とライセンス名だけで、版は比べない**。vendor の分は版も比べる（dependabot が触らないため）
   - `src-tauri/src/credits.rs` の `vendored_list_covers_what_is_vendored` は `just test` で回る。`ui/lib/` 直下のディレクトリすべてに `scripts/vendored.json` の項目とライセンスファイルがあること、CodeMirror の版が vendor のファイルの先頭と合っていること、`ui/credits.json` の vendor の項目が一覧どおりであることを見る
   - **リリースするターゲットを増やす、または `default` に入らない feature を足すときは、`scripts/credits.mjs` の `TARGET` と依存のたどり方を合わせる**（合わせないと、その分の依存が一覧から漏れ、照合も同じたどり方なので落ちない）
-  - `scripts/credits.mjs` は musql も依存もビルドしない（`cargo metadata` と SPDX の標準文の取得だけ）。書き込みの権限を持つ tagpr のジョブから呼ぶため。ビルドやテストを呼ぶ形に戻さないこと
+  - `scripts/credits.mjs` は musql も依存もビルドしない（`cargo metadata` と SPDX の標準文の取得だけ）。リリース PR の一覧は `tagpr.yml` の `credits` ジョブ（読み取りの権限だけ）が作り、書き込みの権限を持つ tagpr のジョブへ artifact で渡す（kan/tagpr-scripts#6）。ビルドやテストを呼ぶ形に戻さないこと
 - **GUI の挙動は自動テストで担保しない**。接続・タブ操作・メニューは実際に `just dev` で触って確認する。コミット前にユーザーの動作確認 OK を取るのはこのため（CLAUDE.md「Git workflow」参照）。
 - **UI の静的検査**は Biome（`just lint-ui`）のみ。JS のユニットテストは持たない（Node.js を要求しない方針のため）。
 

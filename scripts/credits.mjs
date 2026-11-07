@@ -3,8 +3,10 @@
 //
 //   node scripts/credits.mjs        （just credits）
 //
-// ふだんはリリース PR の release-prepare.mjs が呼ぶ（#149）。そのジョブは書き込みの権限を
-// 持つので、musql も依存もビルドしない。使うのは `cargo metadata`（依存のソースはレジストリへ
+// ふだんは tagpr.yml の credits ジョブが main のツリーで走らせ、artifact で tagpr のジョブへ渡す
+// （#149、kan/tagpr-scripts#6。release-prepare.mjs がそれで ui/credits.json を置き換える）。
+// 書き込みの権限を持つ tagpr のジョブでは走らせない（依存のソースの取得とネットワークを離すため）。
+// musql も依存もビルドしない。使うのは `cargo metadata`（依存のソースはレジストリへ
 // 展開されるだけで、build.rs は走らない）と、SPDX の標準文の取得だけ。
 //
 // 載せるもの:
