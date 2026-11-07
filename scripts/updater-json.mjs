@@ -61,9 +61,16 @@ const publicKey = createPublicKey({
 
 /** tauri の updater と同じ検証をする（minisign。本体の署名と trusted comment の署名の 2 つ）。 */
 function checkSignature(name, file, signature) {
+  // minisign の署名は 4 行（コメント、署名、trusted comment、その署名）。形が違えば理由を出して止める
   const [, sigLine, trustedLine, globalLine] = minisignLines(signature)
+  if (!sigLine || !trustedLine?.startsWith('trusted comment: ') || !globalLine) {
+    fail(`${name}: .sig が minisign の形ではありません`)
+  }
   const sig = Buffer.from(sigLine, 'base64') // アルゴリズム 2 バイト + 鍵 ID 8 バイト + 署名 64 バイト
   const algorithm = sig.subarray(0, 2).toString('latin1')
+  if (sig.length !== 74 || !['ED', 'Ed'].includes(algorithm)) {
+    fail(`${name}: 署名の長さかアルゴリズムが想定と違います（${sig.length} バイト、${algorithm}）`)
+  }
   if (!sig.subarray(2, 10).equals(pubKeyId)) fail(`${name}: 署名の鍵 ID が公開鍵と違います`)
   // "ED" は本体の BLAKE2b-512 に署名する方式（tauri の既定）、"Ed" は本体そのものに署名する方式
   const message = algorithm === 'ED' ? createHash('blake2b512').update(file).digest() : file

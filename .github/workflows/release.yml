@@ -145,8 +145,9 @@ jobs:
         run: ../tools/tauri-cli/node_modules/.bin/tauri build --no-bundle
 
       # bundle に渡すファイルを `release-assets.mjs handoff` の一覧のとおり、リポジトリと同じ配置で
-      # 1 つのディレクトリに写して上げる。**バンドラは crate の bin をすべて同梱する**ので、一覧は
-      # `src-tauri/src/bin/` からも作る。bundle は同じ一覧のファイルしか受け取らない
+      # 1 つのディレクトリに写して上げる。一覧は `scripts/release-assets.mjs` の `handoffFiles()` が持つ
+      # （**バンドラは crate の bin をすべて同梱する**ので、bin を足したらそこに足す）。bundle は同じ一覧の
+      # ファイルしか受け取らない
       - name: Stage the build output
         shell: bash
         run: |
