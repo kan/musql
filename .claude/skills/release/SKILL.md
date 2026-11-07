@@ -60,7 +60,7 @@ git log --oneline "$(git describe --tags --abbrev=0 origin/main)"..origin/main
 
 ## 3. CI の確認
 
-**リリース PR の run は、ボット（GITHUB_TOKEN）が作った PR なので承認待ち（`action_required`）で止まる。** 撮影のコミット（手順 4）にも run ができる。**今の head の run（CI と CodeQL）だけを API で承認し**、通ることを確かめる。古い head の run は承認しなくてよい:
+**リリース PR の run は、ボット（GITHUB_TOKEN）が作った PR なので承認待ち（`action_required`）で止まる。** 撮影のコミット（手順 4）にも run ができる。**今の head の run（CI と Verify Lockfile）だけを API で承認し**、通ることを確かめる。古い head の run は承認しなくてよい。**CodeQL の run は待たない**（解析する言語のファイルが変わったときだけ回る。リリース PR が変えるのは版、`Cargo.lock`、CHANGELOG、ライセンス一覧、画像だけなので、run ができない。#157）:
 
 ```bash
 gh run list --branch <ブランチ> -L 6 --json databaseId,workflowName,conclusion,headSha
