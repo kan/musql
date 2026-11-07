@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- 依存関係を更新（tauri-plugin-updater 2.14.1、tauri-plugin-notification 2.8.0、redis 1.8.1 ほか。#161）
+
 ## [0.11.1] - 2026-11-02
 
 ### Changed
