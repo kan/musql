@@ -3,7 +3,11 @@
 ## [Unreleased]
 
 ### Changed
-- 依存関係を更新（tauri-plugin-updater 2.14.1、tauri-plugin-notification 2.8.0、redis 1.8.1 ほか。#161）
+- 依存関係を更新（tauri-plugin-updater 2.14.1、tauri-plugin-notification 2.8.1、redis 1.8.2、rusqlite 0.42.0 ほか。#161）
+
+### Security
+- url 2.5.9：入れ子の `blob:` URL を処理するとスタックオーバーフローする問題を修正（RUSTSEC-2026-0592）
+- libz-sys 1.1.33：ヒープバッファオーバーフローを修正（RUSTSEC-2026-0544）
 
 ## [0.11.1] - 2026-11-02
 
